@@ -138,6 +138,15 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Whether the parts, not the whole root, will be withdrawn.</summary>
         internal bool WithdrawsParts => withdrawal != null && withdrawal.UsesParts;
 
+        /// <summary>
+        /// What is told when the character's own drawing stops (its cut's display beginning, its withdrawal), so that a
+        /// drawing of it outside its renderer -- the skin draw (DESIGN 4.5.12) -- stops in the same frame. Null for none.
+        /// </summary>
+        public void SetDrawingStopped(Action onStopped)
+        {
+            if (withdrawal != null) withdrawal.DrawingStopped = onStopped;
+        }
+
         /// <summary>Whether the character has been withdrawn.</summary>
         public string LastFailure { get; private set; }
         // How the character moves as it now stands: the velocity of characterRoot's origin and the angular velocity, in

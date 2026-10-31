@@ -48,7 +48,7 @@ namespace Zantetsu.Rendering.Tests
                 if (noClip) ordinary++; else clips++;
             }
             Assert.That(clips, Is.EqualTo(26));
-            Assert.That(ordinary, Is.EqualTo(14));
+            Assert.That(ordinary, Is.EqualTo(14 + 12), "the 14 no-clip variants and the 12 skin draw variants, no clip too (DESIGN 4.5.12)");
 
             VpClipShaderPolicy.PixelClipOverrideForTests = false;
             Assert.That(Shader.IsKeywordEnabled(VpClipShaderPolicy.PixelClipKeyword), Is.False);

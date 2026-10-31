@@ -311,6 +311,10 @@ namespace Zantetsu.Sandbox
             // Unity's skinning of the uncut characters (DESIGN 9, D-196), for the log. The counts are of this check's own
             // frames; the times and calls are the Profiler's recorders of Unity's own markers, each frame's read in the next.
             private long _cwSkinFrames, _cwSkinLive, _cwSkinDrawn, _cwSkinVisible, _cwSkinOnlyWhenSeen, _cwSkinVisibleOnlyWhenSeen;
+            // The skin draw's share of the live characters, and why the rest were not in it (SKIN-BENCH-3, TL review 3):
+            // character-frames by refusal reason, as SandboxNpcCharacter.SkinDrawRefusal says it.
+            private long _cwSkinDrawnBySkinDraw;
+            private readonly Dictionary<string, long> _cwSkinRefusals = new Dictionary<string, long>();
             private long _cwSkinBoundsSamples, _cwSkinBoundsOutside;
             private float _cwSkinBoundsLargest = float.NegativeInfinity;
             private string _cwSkinBoundsWorst = "";
@@ -352,6 +356,13 @@ namespace Zantetsu.Sandbox
                         SandboxNpcCharacter c = slots[i];
                         if (c == null || !c.IsTarget) continue;
                         _cwSkinLive++;
+                        if (c.IsDrawnBySkinDraw) _cwSkinDrawnBySkinDraw++;
+                        else if (c.SkinDrawRefusal != null)
+                        {
+                            _cwSkinRefusals.TryGetValue(c.SkinDrawRefusal, out long seen);
+                            _cwSkinRefusals[c.SkinDrawRefusal] = seen + 1;
+                        }
+
                         SkinnedMeshRenderer r = c.Renderer;
                         if (r == null || !r.enabled) continue;
                         _cwSkinDrawn++;
@@ -384,6 +395,7 @@ namespace Zantetsu.Sandbox
                 var text = new System.Text.StringBuilder();
                 text.Append("skinned when unseen: ").Append(SandboxNpcCharacter.SkinWhenUnseen ? "kept (every frame)" : "skipped")
                     .Append("; frames watched ").Append(_cwSkinFrames).Append("; characters, summed over those frames: live ").Append(_cwSkinLive).Append(", drawn (renderer enabled) ").Append(_cwSkinDrawn)
+                    .Append(", drawn by the skin draw ").Append(_cwSkinDrawnBySkinDraw)
                     .Append(", visible to Unity (a camera or a shadow pass) ").Append(_cwSkinVisible).Append(", drawn and not visible ").Append(_cwSkinDrawn - _cwSkinVisible)
                     .Append(", skinned only when seen ").Append(_cwSkinOnlyWhenSeen).Append(" (of them visible ").Append(_cwSkinVisibleOnlyWhenSeen).Append(")");
                 for (int m = 0; m < k_cwSkinMarkers.Length; m++)
@@ -401,6 +413,11 @@ namespace Zantetsu.Sandbox
                     text.Append(", the farthest ").Append(_cwSkinBoundsLargest.ToString("F4", Inv)).Append(" m (").Append(_cwSkinBoundsWorst).Append("; below zero: inside)");
                 }
 
+                // The skin draw itself (SKIN-BENCH-3, TL review 2): its gather, its arrays' size and peaks, its counters.
+                if (_world != null && _world.DrawsSkins) text.Append("; skin draw: ").Append(_world.SkinDisplay.Describe());
+                text.Append("; skin draw refusals (character-frames by reason): ");
+                if (_cwSkinRefusals.Count == 0) text.Append("none");
+                else text.Append(string.Join("; ", _cwSkinRefusals.OrderByDescending(p => p.Value).Select(p => p.Key + ": " + p.Value)));
                 return text.ToString();
             }
 

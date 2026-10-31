@@ -22,6 +22,8 @@ namespace Zantetsu.Sandbox
             {
                 public int slots, brokenSlots, individuals, reusedIndividuals, directCreations;
                 public bool drawn, posed, hitTarget;
+                public bool drawnByRenderer, drawnBySkinDraw;   // which route drew it (SKIN-BENCH-3, TL review 3)
+                public string skinRefusal;                       // the first reason a live individual of it was not in the skin draw
                 public int rootAccepted, rootPublished, rootCommitted, reusedRootCommitted, childCommitted;
                 public int rootFailed, childAccepted, childFailed;
                 public readonly Dictionary<string, int> failureKinds = new Dictionary<string, int>();
@@ -79,7 +81,16 @@ namespace Zantetsu.Sandbox
                     if (!c.IsTarget || c.Handle == null) continue;
                     if (!_mpActorOf.TryGetValue(c, out (int id, bool replacement, int addedFrame) a) || _mpRetired.ContainsKey(a.id)) continue;
                     ModelTally tally = ModelOf(c.Family);
-                    if (!tally.drawn && c.Renderer != null && c.Renderer.enabled && c.Renderer.gameObject.activeInHierarchy) tally.drawn = true;
+                    // Drawn: a draw target by either route -- the renderer enabled and active, or the skin draw's active
+                    // record of it (registered and gathered: SandboxNpcCharacter.IsDrawnBySkinDraw; SKIN-BENCH-3, TL review 3,
+                    // the renderer alone counted a skin-drawn model as never drawn). The skin draw's actual issues are the
+                    // native route's counts, read apart.
+                    bool byRenderer = c.Renderer != null && c.Renderer.enabled && c.Renderer.gameObject.activeInHierarchy;
+                    bool bySkinDraw = c.IsDrawnBySkinDraw;
+                    if (byRenderer) tally.drawnByRenderer = true;
+                    if (bySkinDraw) tally.drawnBySkinDraw = true;
+                    if (byRenderer || bySkinDraw) tally.drawn = true;
+                    if (tally.skinRefusal == null && c.SkinDrawRefusal != null) tally.skinRefusal = c.SkinDrawRefusal;
                     if (!tally.posed)
                     {
                         PoseTablePlayer pose = c.CharacterRoot != null ? c.CharacterRoot.GetComponent<PoseTablePlayer>() : null;
@@ -144,17 +155,19 @@ namespace Zantetsu.Sandbox
                     foreach (KeyValuePair<string, int> k in c.Value.kinds) tally.failureKinds[k.Key] = k.Value;
                 }
 
-                var csv = new StringBuilder("family,slots,brokenSlots,individuals,reusedIndividuals,drawn,posed,hitTarget,directCreations,rootAccepted,rootPublished,rootCommitted,reusedRootCommitted,childCommitted,failures,rootFailed,childAccepted,childFailed,cutFailureKinds\n");
+                var csv = new StringBuilder("family,slots,brokenSlots,individuals,reusedIndividuals,drawn,posed,hitTarget,drawnByRenderer,drawnBySkinDraw,skinRefusal,directCreations,rootAccepted,rootPublished,rootCommitted,reusedRootCommitted,childCommitted,failures,rootFailed,childAccepted,childFailed,cutFailureKinds\n");
                 foreach (KeyValuePair<string, ModelTally> m in _mpModels.OrderBy(p => p.Key, System.StringComparer.Ordinal))
                 {
                     ModelTally t = m.Value;
                     csv.Append(string.Join(",", m.Key, t.slots, t.brokenSlots, t.individuals, t.reusedIndividuals, t.drawn ? 1 : 0, t.posed ? 1 : 0, t.hitTarget ? 1 : 0,
+                        t.drawnByRenderer ? 1 : 0, t.drawnBySkinDraw ? 1 : 0, "\"" + (t.skinRefusal ?? "").Replace("\"", "'") + "\"",
                         t.directCreations, t.rootAccepted, t.rootPublished, t.rootCommitted, t.reusedRootCommitted, t.childCommitted,
                         "\"" + string.Join("; ", t.failures).Replace("\"", "'") + "\"", t.rootFailed, t.childAccepted, t.childFailed,
                         "\"" + string.Join("; ", t.failureKinds.OrderBy(k => k.Key, System.StringComparer.Ordinal).Select(k => k.Key + " " + k.Value)) + "\"")).Append('\n');
                     if (t.size != null) Log("mobplan model " + m.Key + " size: " + t.size);
                     Log("mobplan model " + m.Key + ": slots " + t.slots + " (broken " + t.brokenSlots + ") individuals " + t.individuals + " (on a reused slot "
-                        + t.reusedIndividuals + ") drawn=" + t.drawn + " posed=" + t.posed + " hitTarget=" + t.hitTarget + " directSkin=" + t.directCreations
+                        + t.reusedIndividuals + ") drawn=" + t.drawn + " (renderer " + t.drawnByRenderer + ", skin draw " + t.drawnBySkinDraw
+                        + (t.skinRefusal != null ? ", skin draw refusal: " + t.skinRefusal : "") + ") posed=" + t.posed + " hitTarget=" + t.hitTarget + " directSkin=" + t.directCreations
                         + " root cuts accepted/published/committed " + t.rootAccepted + "/" + t.rootPublished + "/" + t.rootCommitted
                         + " (reused individual committed " + t.reusedRootCommitted + ") child cuts committed " + t.childCommitted
                         + " cut failures root " + t.rootFailed + "/" + t.rootAccepted + " child " + t.childFailed + "/" + t.childAccepted
@@ -183,7 +196,9 @@ namespace Zantetsu.Sandbox
                 int activated = _mpModels.Count(p => p.Value.individuals > 0);
                 int cut = _mpModels.Count(p => p.Value.rootCommitted > 0);
                 string line = "mobplan models: " + models + " models in the slots, " + activated + " carried an individual, "
-                              + _mpModels.Count(p => p.Value.drawn && p.Value.posed && p.Value.hitTarget) + " drawn, posed and a hit candidate, "
+                              + _mpModels.Count(p => p.Value.drawn && p.Value.posed && p.Value.hitTarget) + " drawn, posed and a hit candidate (drawn by the renderer "
+                              + _mpModels.Count(p => p.Value.drawnByRenderer) + ", by the skin draw " + _mpModels.Count(p => p.Value.drawnBySkinDraw) + ", with a skin draw refusal "
+                              + _mpModels.Count(p => p.Value.skinRefusal != null) + "), "
                               + cut + " cut by a real Slash through to the commit; not cut: ["
                               + string.Join(" ", _mpModels.Where(p => p.Value.rootCommitted == 0).Select(p => p.Key).OrderBy(k => k, System.StringComparer.Ordinal)) + "]";
                 Log(line);

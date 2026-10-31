@@ -82,6 +82,7 @@ namespace Zantetsu.Sandbox
 
         private VpFixedScaleSkinCache _scaleCache;
         private VpFixedScaleSkinInput _fixedInput;
+        private Mesh _skinShareMesh;   // the prepared mesh this slot is counted under in its share (CountSkinMesh)
         private VpPhysicsColdPreparation _cold;
         private PoseTablePlayer _pose;
 
@@ -164,6 +165,28 @@ namespace Zantetsu.Sandbox
             internal HullFile fixture;
             internal VpFixedScaleSkinCache scaleCache;
             internal int users;
+
+            // The 24-byte inputs of the share's prepared meshes (DESIGN 4.5.12), one a Mesh: made once by the first slot
+            // that needs it, read by every slot's direct skin input and by the skin draw (which registers each once and
+            // is asked which number it gave). A slot whose renderer carries another prepared mesh takes that mesh's own
+            // entry: no entry is replaced, so no registered model is lost (review 1, item 3). Disposed with the share;
+            // a display or a bake that still reads a model holds it past that.
+            internal readonly Dictionary<Mesh, SkinShareEntry> skinModels = new Dictionary<Mesh, SkinShareEntry>();
+
+            internal sealed class SkinShareEntry
+            {
+                internal VpSkinModel model;
+                internal string failure;
+                // How many of the share's prepared slots carry this mesh: the capacity its model is registered with (review
+                // 2, item 1). Counted as the slots are prepared (before any is activated), given back at their end.
+                internal int users;
+            }
+
+            internal SkinShareEntry SkinEntry(Mesh mesh)
+            {
+                if (!skinModels.TryGetValue(mesh, out SkinShareEntry entry)) skinModels.Add(mesh, entry = new SkinShareEntry());
+                return entry;
+            }
 
             // How far the model's skin stands outside its hulls' box at the bind pose (metres); NaN until a slot found it.
             internal float skinMargin = float.NaN;
@@ -383,6 +406,29 @@ namespace Zantetsu.Sandbox
         private VpDirectSkinInput _direct;
         private int[] _directTopology;
 
+        // The skin draw (DESIGN 4.5.12): this individual's registration while the world draws it through the indirect
+        // draw, its model's registration (a slot of a crowd reads its share's), and a model of this character's own
+        // where there is no share.
+        private VpSkinHandle _skinHandle;
+        private VpSkinModel _ownSkinModel;
+
+        /// <summary>Whether the world's skin draw draws this character now (its renderer is then off).</summary>
+        public bool DrawnBySkinDraw => _skinHandle.IsSet;
+
+        /// <summary>
+        /// Whether the skin draw is drawing this character now: registered, and the display's record of it active (its
+        /// palette gathered at least once) -- the check's "drawn" under the skin draw (SKIN-BENCH-3, TL review 3).
+        /// <see cref="DrawnBySkinDraw"/> says only that the handle is set.
+        /// </summary>
+        public bool IsDrawnBySkinDraw => _skinHandle.IsSet && world != null && world.SkinDisplay != null && !world.SkinDisplay.IsDisposed && world.SkinDisplay.IsActive(_skinHandle);
+
+        /// <summary>Why the skin draw did not take this character, when it did not; null otherwise.</summary>
+        public string SkinDrawRefusal { get; private set; }
+
+        /// <summary>How many characters the skin draw took, and how many left it, in this process.</summary>
+        public static int SkinRegistrations { get; private set; }
+        public static int SkinRemovals { get; private set; }
+
         /// <summary>How many direct skin inputs this slot has made (one, unless its renderer, mesh or topology changed).</summary>
         public int DirectCreations { get; private set; }
         private static readonly ProfilerMarker s_reprepare = new ProfilerMarker("Zantetsu.Npc.Reprepare");
@@ -442,7 +488,7 @@ namespace Zantetsu.Sandbox
         {
             // Before anything returns: the drawn skin's history, whatever the slot is doing (a reused slot's renderer was
             // off, a character out of view was not skinned).
-            if (skinMotionHistory && _fixedInput != null && _fixedInput.Renderer != null) VpSkinMotionHistory.Settle(_fixedInput.Renderer);
+            if (skinMotionHistory && !_skinHandle.IsSet && _fixedInput != null && _fixedInput.Renderer != null) VpSkinMotionHistory.Settle(_fixedInput.Renderer);
 
             if (Pooled)
             {
@@ -489,6 +535,137 @@ namespace Zantetsu.Sandbox
             hit.Detector.AddCharacter(Handle, poseLod != null && poseLod.NeededOnly ? null : Lod);
             IsTarget = true;
             PreparationFrames = Time.frameCount - _startFrame;
+            // The world's skin draw takes it from here, where there is one; its renderer is then off (DESIGN 4.5.12).
+            if (TryRegisterSkin()) _fixedInput.Renderer.enabled = false;
+        }
+
+        // ----- the skin draw (DESIGN 4.5.12) ------------------------------------------------------------------------------
+
+        /// <summary>
+        /// The model's 24-byte input for this character's renderer: the share's, made by the first slot that needs it,
+        /// or this character's own. Null, with the reason kept, when the mesh is refused.
+        /// </summary>
+        private VpSkinModel SkinModelOf(SkinnedMeshRenderer skin)
+        {
+            if (skin == null || _entry == null) return null;
+            if (Pooled)
+            {
+                Mesh mesh = skin.sharedMesh;
+                if (mesh == null) return null;
+                SlotShare.SkinShareEntry entry = _share.SkinEntry(mesh);
+                if (entry.model != null) return !entry.model.IsDisposed && entry.model.Describes(skin) ? entry.model : null;
+                if (entry.failure != null) return null;
+                if (!VpSkinModel.TryCreate(skin, _entry.topologyMap, _entry.topologyCount, world != null ? world.CutInputConnectivity : null, out entry.model, out entry.failure))
+                {
+                    entry.model = null;
+                    return null;
+                }
+
+                return entry.model;
+            }
+
+            if (_ownSkinModel != null && !_ownSkinModel.IsDisposed && _ownSkinModel.Describes(skin)) return _ownSkinModel;
+            _ownSkinModel?.Dispose();
+            _ownSkinModel = null;
+            VpSkinModel.TryCreate(skin, _entry.topologyMap, _entry.topologyCount, world != null ? world.CutInputConnectivity : null, out _ownSkinModel, out _);
+            return _ownSkinModel;
+        }
+
+        // The draw bounds in the renderer's frame (as the renderer is told them, SettleHowTheRendererIsSeen), or the
+        // model's bind box widened by a metre where there is no level of detail.
+        private Bounds SkinLocalBounds(SkinnedMeshRenderer skin, VpSkinModel model)
+        {
+            if (TryGetDrawBounds(out Bounds range) && Lod != null)
+            {
+                Matrix4x4 toRenderer = skin.transform.worldToLocalMatrix * Lod.Root.localToWorldMatrix;
+                Vector3 lo = range.min, hi = range.max;
+                var local = new Bounds(toRenderer.MultiplyPoint3x4(lo), Vector3.zero);
+                for (int c = 1; c < 8; c++)
+                {
+                    local.Encapsulate(toRenderer.MultiplyPoint3x4(new Vector3((c & 1) == 0 ? lo.x : hi.x, (c & 2) == 0 ? lo.y : hi.y, (c & 4) == 0 ? lo.z : hi.z)));
+                }
+
+                return local;
+            }
+
+            Bounds bind = model.BindBounds;
+            bind.Expand(2f);
+            return bind;
+        }
+
+        /// <summary>
+        /// Registers this character with the world's skin draw: its model once (the share's registration), then the
+        /// individual -- the renderer's frame and bones, the pose player's applied frame as the pose version, and the
+        /// level of detail's stop as the gap the history resets over. False, with the reason kept, where there is no
+        /// skin draw or it has no room; the renderer then draws as before.
+        /// </summary>
+        private bool TryRegisterSkin()
+        {
+            if (_skinHandle.IsSet) return true;
+            SkinDrawRefusal = null;
+            VpSkinDisplay skins = world != null ? world.SkinDisplay : null;
+            SkinnedMeshRenderer skin = _fixedInput != null ? _fixedInput.Renderer : null;
+            if (skins == null || skins.IsDisposed || skin == null || world.SkinDrawMaterial == null || _pose == null)
+            {
+                SkinDrawRefusal = skins == null ? "no skin draw" : "no renderer, material or pose player";
+                return false;
+            }
+
+            VpSkinModel model = SkinModelOf(skin);
+            if (model == null)
+            {
+                string why = !Pooled ? "refused" : skin.sharedMesh == null ? "no mesh"
+                    : _share.SkinEntry(skin.sharedMesh).failure ?? "the share's model of the mesh does not describe this renderer";
+                SkinDrawRefusal = "no model: " + why;
+                return false;
+            }
+
+            // The display says whether it has this model (by reference): a number kept here could name another display's.
+            int modelId = skins.ModelIdOf(model);
+            if (modelId < 0)
+            {
+                // Room for the share's slots that carry this mesh, not for the whole share: another mesh's slots have
+                // their own model, and a share-wide count would take their room and palette (review 2, item 1).
+                int capacity = Pooled ? Math.Max(1, _share.SkinEntry(skin.sharedMesh).users) : 1;
+                if (!skins.TryRegisterModel(model, world.SkinDrawMaterial, SkinLocalBounds(skin, model), capacity, out modelId, out string failure))
+                {
+                    SkinDrawRefusal = "the model was not registered: " + failure;
+                    return false;
+                }
+            }
+
+            if (!skins.TryAdd(modelId, skin.transform, skin.bones, PoseVersion, StoppedOutOfView, out _skinHandle))
+            {
+                SkinDrawRefusal = "the skin draw has no slot left for the model";
+                return false;
+            }
+
+            SkinRegistrations++;
+            return true;
+        }
+
+        // The share's count of prepared slots under this slot's prepared mesh (SkinShareEntry.users): moved when the slot
+        // comes to carry another mesh, given back with null at the slot's end (review 2, item 1).
+        private void CountSkinMesh(Mesh mesh)
+        {
+            if (ReferenceEquals(mesh, _skinShareMesh)) return;
+            if (!(_skinShareMesh is null) && _share.skinModels.TryGetValue(_skinShareMesh, out SlotShare.SkinShareEntry before)) before.users--;
+            _skinShareMesh = mesh;
+            if (!(mesh is null)) _share.SkinEntry(mesh).users++;
+        }
+
+        // The bones' revision, not the frame: a hit's forced pose after the ordinary update is a change too (SKIN-BENCH-3).
+        private int PoseVersion() => _pose != null ? _pose.ApplyRevision : -1;
+
+        private bool StoppedOutOfView() => Lod != null && Lod.IsStoppedOutOfView;
+
+        /// <summary>Leaves the skin draw (the cut's display beginning, the withdrawal, dormancy, destruction). Nothing when not in it.</summary>
+        private void UnregisterSkin()
+        {
+            if (!_skinHandle.IsSet) return;
+            VpSkinDisplay skins = world != null ? world.SkinDisplay : null;
+            if (skins != null && !skins.IsDisposed && skins.Remove(_skinHandle)) SkinRemovals++;
+            _skinHandle = default;
         }
 
         /// <summary>
@@ -522,6 +699,7 @@ namespace Zantetsu.Sandbox
                 hit.Detector.RemoveCharacter(Handle);
             }
 
+            UnregisterSkin();
             Handle?.Dispose();
             Handle = null;
             if (_direct != null)
@@ -530,6 +708,9 @@ namespace Zantetsu.Sandbox
                 _direct.DisposeWhenReturned();
                 _direct = null;
             }
+
+            _ownSkinModel?.Dispose();
+            _ownSkinModel = null;
 
             // This slot's hold only: the meshes go when the handle and every piece that inherited one have let go too.
             _baked?.Dispose();
@@ -542,15 +723,18 @@ namespace Zantetsu.Sandbox
                 _cold = null;
             }
 
+            if (Pooled) CountSkinMesh(null);
             _fixedInput?.Dispose();
             _fixedInput = null;
             if (Pooled)
             {
-                // The shared cache goes with the last slot that used it.
+                // The shared cache goes with the last slot that used it, and the model's shared input with it.
                 if (_scaleCache != null && --_share.users == 0)
                 {
                     _share.scaleCache.Dispose();
                     _share.scaleCache = null;
+                    foreach (SlotShare.SkinShareEntry entry in _share.skinModels.Values) entry.model?.Dispose();
+                    _share.skinModels.Clear();
                 }
             }
             else
@@ -708,6 +892,8 @@ namespace Zantetsu.Sandbox
             {
                 _fixedInput = _scaleCache.Prepare(original, characterRoot.transform);
             }
+
+            if (Pooled) CountSkinMesh(_fixedInput.Renderer != null ? _fixedInput.Renderer.sharedMesh : null);
 
             s_prepareHulls.Begin();
             SkinnedMeshRenderer skin = _fixedInput.Renderer;
@@ -911,7 +1097,12 @@ namespace Zantetsu.Sandbox
                     bool made;
                     using (s_slotDirect.Auto())
                     {
-                        made = VpDirectSkinInput.TryCreate(skin, _entry.topologyMap, _entry.topologyCount, world.CutInputConnectivity, out _direct);
+                        // Over the model's shared 24-byte input where it can be made (the skin draw's and the bake's
+                        // one input, DESIGN 4.5.12); over an input of its own otherwise.
+                        VpSkinModel shared = SkinModelOf(skin);
+                        made = shared != null
+                            ? VpDirectSkinInput.TryCreate(skin, shared, out _direct)
+                            : VpDirectSkinInput.TryCreate(skin, _entry.topologyMap, _entry.topologyCount, world.CutInputConnectivity, out _direct);
                     }
 
                     if (!made)
@@ -959,6 +1150,7 @@ namespace Zantetsu.Sandbox
             }
 
             Handle = handle;
+            handle.SetDrawingStopped(UnregisterSkin);
 
             // Its withdrawal at the first cut: the renderer and the Pose Table's update, if the hierarchy is confirmed to
             // hold nothing else live; the whole root otherwise.
@@ -979,6 +1171,7 @@ namespace Zantetsu.Sandbox
         // Dormant: not drawn, not posed. A hit target it is not, and nothing registers it.
         private void Dormant()
         {
+            UnregisterSkin();
             if (_fixedInput != null && _fixedInput.Renderer != null) _fixedInput.Renderer.enabled = false;
             if (_pose != null) _pose.enabled = false;
         }
@@ -1029,11 +1222,6 @@ namespace Zantetsu.Sandbox
                     _pose.ApplyNow(null, 0);
                 }
 
-                using (s_activateDraw.Auto())
-                {
-                    _fixedInput.Renderer.enabled = true;
-                }
-
                 using (s_activateLod.Auto())
                 {
                     if (poseLod != null && poseLod.isActiveAndEnabled && _lodReferences != null)
@@ -1049,6 +1237,13 @@ namespace Zantetsu.Sandbox
 
                         SettleHowTheRendererIsSeen();
                     }
+                }
+
+                using (s_activateDraw.Auto())
+                {
+                    // The world's skin draw where there is one (DESIGN 4.5.12; the level of detail's bounds are the
+                    // model's draw bounds), the renderer otherwise. Its history begins here: placed before this.
+                    _fixedInput.Renderer.enabled = !TryRegisterSkin();
                 }
 
                 using (s_activateHit.Auto())

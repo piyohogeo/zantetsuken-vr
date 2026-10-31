@@ -794,6 +794,12 @@ namespace Zantetsu.Rendering.Tests
             VpGpuCullSetup.Read(new[] { "player.exe", VpGpuCullSetup.Argument, VpGpuCullSetup.Vp3Argument }, out requested, out slices);
             Assert.That(new[] { requested, slices }, Is.EqualTo(new[] { false, true }), "both: VP Stage 3");
             VpGpuCullSetup.Read(new[] { "player.exe", VpGpuCullSetup.NoSliceSelectionArgument }, out requested, out slices);
+            // SKIN-BENCH-3: a caster issue's shared-constant context tells its split and its slice selection apart.
+            Assert.That(VpGpuCullSetup.CasterConstantContext(0, 0f), Is.EqualTo(0));
+            Assert.That(VpGpuCullSetup.CasterConstantContext(0, 1f), Is.EqualTo(1));
+            Assert.That(VpGpuCullSetup.CasterConstantContext(3, 0f), Is.EqualTo(6));
+            Assert.That(VpGpuCullSetup.CasterConstantContext(3, 1f), Is.EqualTo(7));
+            Assert.That(VpGpuCullSetup.CasterConstantContext(1, 0f), Is.Not.EqualTo(VpGpuCullSetup.CasterConstantContext(0, 1f)));
             Assert.That(new[] { requested, slices }, Is.EqualTo(new[] { true, false }), "the default without the slice selection");
             Assert.That(VpGpuCullSetup.Vp3Argument, Is.EqualTo("-zantetsuVp3"), "the argument a launcher writes");
             Assert.That(VpGpuCullSetup.Requested, Is.True, "this process, started with no argument for it, makes its worlds with the GPU selection");

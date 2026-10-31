@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Unity.Profiling;
 using UnityEngine;
@@ -44,6 +45,13 @@ namespace Zantetsu.PhysicsCut
         private readonly GameObject _root;
         private readonly Renderer _renderer;
         private Behaviour[] _updates;
+
+        /// <summary>
+        /// Told when the character's own drawing stops -- the cut's display beginning, or the withdrawal -- so that a
+        /// drawing of it outside the renderer (the skin draw, DESIGN 4.5.12) stops in the same frame. Called at most
+        /// once at each; null for none.
+        /// </summary>
+        internal Action DrawingStopped;
 
         internal PreparedCharacterWithdrawal(GameObject root, Renderer renderer)
         {
@@ -142,6 +150,7 @@ namespace Zantetsu.PhysicsCut
         internal void BeginCutDisplay()
         {
             if (_renderer != null) _renderer.enabled = false;
+            DrawingStopped?.Invoke();
         }
 
         /// <summary>The withdrawal, once: the parts, or the whole root.</summary>
@@ -153,6 +162,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             IsWithdrawn = true;
+            DrawingStopped?.Invoke();
             if (_updates == null || CompareWholeRoot)
             {
                 if (_root != null) _root.SetActive(false);

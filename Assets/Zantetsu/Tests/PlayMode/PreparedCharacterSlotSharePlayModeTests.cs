@@ -60,6 +60,17 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         private static T ShareField<T>(SandboxNpcCharacter.SlotShare share, string name) =>
             (T)typeof(SandboxNpcCharacter.SlotShare).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(share);
 
+        // The share's count of prepared slots under each prepared mesh (SkinShareEntry.users), sorted: what each mesh's
+        // model is registered with (review 2, item 1). Each rig here has a mesh of its own, so each slot is one mesh's.
+        private static int[] SkinMeshUsers(SandboxNpcCharacter.SlotShare share)
+        {
+            var entries = (IDictionary)ShareField<object>(share, "skinModels");
+            var users = new List<int>();
+            foreach (object entry in entries.Values) users.Add((int)entry.GetType().GetField("users", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(entry));
+            users.Sort();
+            return users.ToArray();
+        }
+
         private static string ShareFamily(SandboxNpcCharacter.SlotShare share)
         {
             object entry = typeof(SandboxNpcCharacter.SlotShare).GetField("entry", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(share);
@@ -102,6 +113,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(shareB.SharedReads, Is.EqualTo(0));
             Assert.That(ShareField<int>(shareA, "users"), Is.EqualTo(2));
             Assert.That(ShareField<int>(shareB, "users"), Is.EqualTo(1));
+            Assert.That(SkinMeshUsers(shareA), Is.EqualTo(new[] { 1, 1 }), "two prepared meshes in one share, one slot each: each model's capacity is one, not the share's two");
+            Assert.That(SkinMeshUsers(shareB), Is.EqualTo(new[] { 1 }));
             var cacheA = ShareField<VpFixedScaleSkinCache>(shareA, "scaleCache");
             var cacheB = ShareField<VpFixedScaleSkinCache>(shareB, "scaleCache");
             Assert.That(cacheA, Is.Not.Null.And.Not.SameAs(cacheB), "each model its own cache");
@@ -136,6 +149,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(ShareFamily(shareA), Is.EqualTo("slot-a"), "the share still holds a");
             Assert.That(shareA.SharedReads, Is.EqualTo(reads), "nothing read from it");
             Assert.That(ShareField<int>(shareA, "users"), Is.EqualTo(1), "no user added");
+            Assert.That(SkinMeshUsers(shareA), Is.EqualTo(new[] { 1 }), "no mesh counted");
             Assert.That(ShareField<VpFixedScaleSkinCache>(shareA, "scaleCache"), Is.SameAs(cacheA));
             Assert.That(cacheA.ActiveInputCount, Is.EqualTo(1), "the a slot's input still in it");
             Assert.That(a1.Activate(), Is.True, "the a slot is still usable");
@@ -159,8 +173,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(a1.IsPrepared && a2.IsPrepared, Is.True, a1.Failure + " / " + a2.Failure);
             var cache = ShareField<VpFixedScaleSkinCache>(share, "scaleCache");
 
+            Assert.That(SkinMeshUsers(share), Is.EqualTo(new[] { 1, 1 }));
             yield return Destroy(s1);
             Assert.That(ShareField<int>(share, "users"), Is.EqualTo(1), "one user left");
+            Assert.That(SkinMeshUsers(share), Is.EqualTo(new[] { 0, 1 }), "the gone slot's mesh counts no one; the entry stays with the share");
             Assert.That(ShareField<VpFixedScaleSkinCache>(share, "scaleCache"), Is.SameAs(cache), "the cache stays for it");
             Assert.That(cache.ActiveInputCount, Is.EqualTo(1));
 
@@ -178,6 +194,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
             yield return Destroy(s2);
             Assert.That(ShareField<int>(share, "users"), Is.EqualTo(0));
+            Assert.That(SkinMeshUsers(share), Is.Empty, "the last slot cleared the share's models");
             Assert.That(ShareField<VpFixedScaleSkinCache>(share, "scaleCache"), Is.Null, "the last slot freed the cache");
             Assert.That(cache.ActiveInputCount, Is.EqualTo(0));
             SkinnedMeshRenderer probe = LentBonedRig(out Transform _, out GameObject probeRoot, out Rigidbody _);

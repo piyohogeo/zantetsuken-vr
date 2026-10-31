@@ -77,6 +77,19 @@ namespace Zantetsu.PhysicsCut
         [Tooltip("The GPU copy's first capacity in indices, by the same rule.")]
         [SerializeField] private int gpuIndexInitialCapacity = 67108864;   // 2026-10-01: 256 MiB at 4 bytes an index
 
+        [Header("Skin draw (DESIGN 4.5.12)")]
+        [Tooltip("The skin draw's room: how many uncut skinned individuals may be drawn at once, how many models, how many palette matrices (two palettes an individual, one matrix a bone each) and how many bone boxes (one a bone a model).")]
+        [SerializeField] private int skinInstanceCapacity = 512;
+        [SerializeField] private int skinModelCapacity = 8;
+        [SerializeField] private int skinPaletteCapacity = 131072;   // 8 MiB at 64 bytes a matrix: 512 individuals x 2 palettes x 128 bones
+        [SerializeField] private int skinBoneBoxCapacity = 2048;
+
+        [Tooltip("The skin draw's 24-byte geometry buffers: the first capacities and the limits, in vertices and indices.")]
+        [SerializeField] private int skinGpuVertexInitialCapacity = 262144;
+        [SerializeField] private int skinGpuIndexInitialCapacity = 1048576;
+        [SerializeField] private int skinGpuVertexCapacityLimit = 4194304;
+        [SerializeField] private int skinGpuIndexCapacityLimit = 16777216;
+
         [Tooltip(
             "The storage's fixed bookkeeping tables, allocated whole at the start (they do not grow): index-range descriptors "
             + "(one per published geometry, two per open cut; about 112 bytes each), submesh spans (about 40 bytes each) and "
@@ -415,6 +428,16 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>The GPU copy's first index capacity.</summary>
         public int GpuIndexInitialCapacity => gpuIndexInitialCapacity;
+
+        /// <summary>The skin draw's room (DESIGN 4.5.12).</summary>
+        public int SkinInstanceCapacity => skinInstanceCapacity;
+        public int SkinModelCapacity => skinModelCapacity;
+        public int SkinPaletteCapacity => skinPaletteCapacity;
+        public int SkinBoneBoxCapacity => skinBoneBoxCapacity;
+        public int SkinGpuVertexInitialCapacity => skinGpuVertexInitialCapacity;
+        public int SkinGpuIndexInitialCapacity => skinGpuIndexInitialCapacity;
+        public int SkinGpuVertexCapacityLimit => skinGpuVertexCapacityLimit;
+        public int SkinGpuIndexCapacityLimit => skinGpuIndexCapacityLimit;
 
         public int GeometryDescriptorCapacity => geometryDescriptorCapacity;
 

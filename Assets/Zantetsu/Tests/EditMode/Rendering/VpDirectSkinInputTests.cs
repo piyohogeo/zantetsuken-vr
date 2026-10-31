@@ -75,6 +75,11 @@ namespace Zantetsu.Rendering.Tests
                 }
             }
             renderer.BakeMesh(bake, true);
+            // The palette as the bake and the skin draw read it, and the model's quantized weights: the reference of
+            // the CPU bake is the skinning by those very weights (DESIGN 4.5.12); Unity's bake skins by the float ones,
+            // and differs from it by no more than the quantization bound.
+            var palette = new Matrix4x4[bones.Length];
+            Assert.That(VpSkinPalette.TryGather(renderer.transform.worldToLocalMatrix, renderer.bones, input.Model, palette), Is.True);
             Assert.That(input.TryAppendTo(storage, out var geometry), Is.True);
             Assert.That(geometry.cutInputAccepted && geometry.hasTopology, Is.True);
             Assert.That(VpRenderVertex.Stride, Is.EqualTo(16));
@@ -84,8 +89,23 @@ namespace Zantetsu.Rendering.Tests
             for (int i = 0; i < 4; i++)
             {
                 var v = storage.Vertices[i];
-                Assert.That(Vector3.Distance(v.position, bake.vertices[i]), Is.LessThan(3e-6f));
-                Assert.That(Vector3.Angle(v.normal, bake.normals[i]), Is.LessThan(1.4f));
+                VpSkinVertex skin = input.Model.Vertices[i];
+                BoneWeight w = mesh.boneWeights[i];
+                Vector3 quantized = Vector3.zero;
+                float bound = 0f;
+                for (int j = 0; j < 4; j++)
+                {
+                    int bone = skin.Bone(j);
+                    float q = VpSkinWeights.Of(skin.Weight(j));
+                    float f = j == 0 ? w.weight0 : j == 1 ? w.weight1 : j == 2 ? w.weight2 : w.weight3;
+                    Vector3 carried = palette[bone].MultiplyPoint3x4(skin.position);
+                    quantized += carried * q;
+                    bound += Mathf.Abs(q - f) * carried.magnitude;
+                }
+
+                Assert.That(Vector3.Distance(v.position, quantized), Is.LessThan(3e-6f), "vertex " + i + ": the bake by the quantized weights");
+                Assert.That(Vector3.Distance(v.position, bake.vertices[i]), Is.LessThan(bound + 3e-6f), "vertex " + i + ": within the quantization bound of Unity's bake");
+                Assert.That(Vector3.Angle(v.normal, bake.normals[i]), Is.LessThan(1.6f));
                 Assert.That(v.uv0, Is.EqualTo(mesh.uv[i]));
                 min = Vector3.Min(min, v.position); max = Vector3.Max(max, v.position);
             }
@@ -367,16 +387,15 @@ namespace Zantetsu.Rendering.Tests
         }
 
         // Every region starts on 16 bytes, lies inside the block, and overlaps no other; the sizes are the element
-        // counts'. Counts that would not fit one block, or are negative, are refused rather than wrapped.
-        [TestCase(4, 12, 4)] [TestCase(1, 3, 1)] [TestCase(7, 21, 3)] [TestCase(12345, 67890, 77)] [TestCase(0, 0, 0)]
-        public unsafe void LayoutRegionsAreAlignedApartAndInside(int vertices, int indexCount, int boneCount)
+        // counts'. Counts that would not fit one block, or are negative, are refused rather than wrapped. The block
+        // holds the pose and the kernel's results alone: the geometry is the model's (DESIGN 4.5.12).
+        [TestCase(4)] [TestCase(1)] [TestCase(3)] [TestCase(77)] [TestCase(256)] [TestCase(0)]
+        public unsafe void LayoutRegionsAreAlignedApartAndInside(int boneCount)
         {
-            Assert.That(VpDirectSkinInput.TryLayout(vertices, indexCount, boneCount, out var l), Is.True);
+            Assert.That(VpDirectSkinInput.TryLayout(boneCount, out var l), Is.True);
             var regions = new (long at, long size)[]
             {
-                (l.matrices, (long)boneCount * sizeof(float4x4)), (l.weights, (long)vertices * sizeof(BoneWeight)),
-                (l.positions, (long)vertices * 12), (l.normals, (long)vertices * 12), (l.topology, (long)vertices * 4),
-                (l.indices, (long)indexCount * 4), (l.bounds, 24), (l.valid, 4), (l.uv, (long)vertices * 2),
+                (l.matrices, (long)boneCount * sizeof(float4x4)), (l.bounds, 24), (l.valid, 4),
             };
             for (int a = 0; a < regions.Length; a++)
             {
@@ -389,11 +408,10 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(l.bytes, Is.LessThan(regions.Sum(r => r.size) + 16 * regions.Length), "only alignment padding added");
         }
 
-        [TestCase(int.MaxValue, 0, 0)] [TestCase(0, int.MaxValue, 0)] [TestCase(0, 0, int.MaxValue)]
-        [TestCase(-1, 0, 0)] [TestCase(0, -1, 0)] [TestCase(0, 0, -1)] [TestCase(67108864, 0, 0)]
-        public void LayoutRefusesCountsThatDoNotFitOneBlock(int vertices, int indexCount, int boneCount)
+        [TestCase(int.MaxValue)] [TestCase(-1)] [TestCase(67108864)]
+        public void LayoutRefusesCountsThatDoNotFitOneBlock(int boneCount)
         {
-            Assert.That(VpDirectSkinInput.TryLayout(vertices, indexCount, boneCount, out _), Is.False);
+            Assert.That(VpDirectSkinInput.TryLayout(boneCount, out _), Is.False);
         }
 
         // Nothing is read that was not written: the block filled with 0x00, with 0xFF (NaN in every float), or left as
@@ -424,7 +442,7 @@ namespace Zantetsu.Rendering.Tests
         [Test] public void OneBlockHeldUntilDispose_ThenNoneAndPublishedDataStays()
         {
             var input = Input(); using var storage = Storage();
-            Assert.That(VpDirectSkinInput.TryLayout(4, 12, bones.Length, out var layout), Is.True);
+            Assert.That(VpDirectSkinInput.TryLayout(bones.Length, out var layout), Is.True);
             Assert.That(input.NativeBytes, Is.EqualTo(layout.bytes));
             Assert.That(input.TryAppendTo(storage, out var g), Is.True);
             var before = Snapshot(storage, g);

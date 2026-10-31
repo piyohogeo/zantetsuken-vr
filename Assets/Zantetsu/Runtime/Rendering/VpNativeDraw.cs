@@ -220,6 +220,38 @@ namespace Zantetsu.Rendering
     }
 
     /// <summary>
+    /// The buffers of the skin draw one issue binds beside the batch's own (DESIGN 4.5.12): the 24-byte vertices and
+    /// their indices (<see cref="VpGpuSkinGeometryBuffers"/>), the instance records and the palettes, the instance
+    /// bounds the GPU wrote, and the previous instance transforms the motion pass reads. The generations are the
+    /// owners' CPU-write generations (DESIGN 4.5.8); a buffer the GPU alone writes keeps 0.
+    /// </summary>
+    public sealed class VpSkinDrawBuffers
+    {
+        public GraphicsBuffer VertexBuffer, IndexBuffer, Records, Palette, InstanceBounds, InstancePrevious;
+        public uint VertexGeneration, IndexGeneration, RecordsGeneration, PaletteGeneration, PreviousGeneration;
+    }
+
+    /// <summary>
+    /// A sink that draws the skin draw's batch (DESIGN 4.5.12): the same commands and selection as an ordinary batch,
+    /// by the skin variants (24-byte vertices skinned in the vertex stage, bounds of the instance's own), with the
+    /// skin buffers bound. The plugin route is one.
+    /// </summary>
+    public interface IVpNativeSkinDrawSink
+    {
+        void AddSkinBody(Camera camera, VpIndexedIndirectDrawBatch batch, VpSkinDrawBuffers buffers, Material material, int startCommand, int commandCount, int view, int layer);
+
+        void AddSkinCasters(Camera camera, VpIndexedIndirectDrawBatch batch, VpSkinDrawBuffers buffers, Material material, int startCommand, int commandCount, int view, int layer);
+
+        /// <summary>
+        /// Records, where the device needs one (Vulkan, DESIGN 4.5.10), the plugin's compute barrier between a dispatch
+        /// that wrote a buffer and the selection that reads it -- the skin bounds and the selection. True when none is
+        /// needed or it was recorded; false, with the reason kept, when it could not be (the caller then issues no
+        /// selection for that frame).
+        /// </summary>
+        bool IssueSelectionBarrier(CommandBuffer commands);
+    }
+
+    /// <summary>
     /// A sink that draws a batch's clip list (DESIGN 4.5.9): the argument entries of every instance of the commands
     /// of the clip route -- the commands with any clipped instance, whole; an instance of no plane among them is
     /// drawn uncut -- which the selection keeps nothing of and the display gives the batch

@@ -35,6 +35,10 @@ namespace Zantetsu.EditorTools.Rendering
         public const string DirectKeyword = "VP_NATIVE_DIRECT";
         public const string PixelClipKeyword = "VP_PIXEL_CLIP";
 
+        /// <summary>The skin draw's keyword (DESIGN 4.5.12); its variants take the "-skin24" suffix after "-noclip".</summary>
+        public const string SkinKeyword = "VP_SKIN24";
+        public const string SkinSuffix = "-skin24";
+
         public readonly struct Variant
         {
             public readonly string Name;
@@ -160,6 +164,17 @@ namespace Zantetsu.EditorTools.Rendering
                     variants[v] = new Variant(original.Name, original.Shader, keys);
                 }
             }
+
+            // The skin draw's variants (DESIGN 4.5.12): of every plugin variant with no clip (the body's, the caster's
+            // and -- Vulkan -- the motion's), the same with VP_SKIN24. The skin draw is drawn with no clip, so no clip
+            // or pixel-clip variant of it is made.
+            foreach (Variant original in variants.ToArray())
+            {
+                if (!original.Name.Contains("-plugin") || Array.IndexOf(original.Keywords, NoClipKeyword) < 0) continue;
+                var skinKeys = new List<string>(original.Keywords) { SkinKeyword };
+                variants.Add(new Variant(original.Name + SkinSuffix, original.Shader, skinKeys.ToArray()));
+            }
+
             return variants.ToArray();
         }
 

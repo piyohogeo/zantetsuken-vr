@@ -29,6 +29,9 @@
 // binds the list's bounds as _VpCullCommands). It changes no output, so it is the vertex stage's alone.
 // VP_NATIVE_DIRECT is the rare provisional Clip path: CPU direct commands select transform/Clip records from a small
 // uniform buffer. It reads neither the indirect arguments nor the GPU selection/instance storage buffers.
+// VP_SKIN24 is the skin draw's variant (DESIGN 4.5.12): 24-byte vertices skinned by the instance's palette, as the
+// forward pass skins them, and the slice judgement reads the instance's own bounds (_VpInstanceBounds, written on the
+// GPU from its pose) instead of its command's.
 Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 {
     Properties
@@ -67,6 +70,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             #pragma multi_compile _ VP_PIXEL_CLIP
             #pragma multi_compile_local_vertex _ VP_CLIP_LIST_SLICES
             #pragma shader_feature_local VP_NATIVE_DIRECT
+            #pragma shader_feature_local VP_SKIN24
             #pragma vertex ShadowVertex
             #pragma fragment ShadowFragment
             #pragma multi_compile_instancing
@@ -85,7 +89,14 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             // Matches Zantetsu.Rendering.VpRenderVertex: 16 bytes.
             #include "VpCompactVertex.hlsl"
 
+        #if defined(VP_SKIN24)
+            #include "VpSkinVertex.hlsl"
+            StructuredBuffer<VpSkinVertex> _VpVertices;
+            StructuredBuffer<VpSkinRecord> _VpSkinRecords;
+            StructuredBuffer<float4x4> _VpSkinPalette;
+        #else
             StructuredBuffer<VpRenderVertex> _VpVertices;
+        #endif
         #if !defined(VP_NATIVE_DIRECT)
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
         #endif
@@ -130,7 +141,21 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 float pad1;
             };
 
+        #if defined(VP_SKIN24)
+            // The skin draw's instances carry bounds of their own (Zantetsu.Rendering.VpInstanceBounds, 32 bytes),
+            // read by the logical instance; the command's bounds are not read.
+            struct VpInstanceBounds
+            {
+                float3 centre;
+                float pad0;
+                float3 extents;
+                float pad1;
+            };
+
+            StructuredBuffer<VpInstanceBounds> _VpInstanceBounds;
+        #else
             StructuredBuffer<VpCullCommand> _VpCullCommands;
+        #endif
 
             // 1 when an instance outside the slice being rendered is passed over, 0 when every kept caster is drawn
             // into every slice.
@@ -215,7 +240,6 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 ShadowVaryings output = (ShadowVaryings)0;
                 UNITY_SETUP_INSTANCE_ID(input);
 
-                VpRenderVertex vertex = _VpVertices[input.vertexID];
                 uint logicalInstance = VpPhysicalInstanceID(input.instanceID);
             #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
                 logicalInstance = _VpVisible[logicalInstance];
@@ -228,8 +252,16 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             #if defined(VP_SLICE_JUDGEMENT) && !_CASTING_PUNCTUAL_LIGHT_SHADOW
                 // A directional slice projects a box (w is 1 everywhere), which is the only projection the test is
                 // written for; anything else draws every kept caster.
+            #if defined(VP_SKIN24)
+                VpInstanceBounds own = _VpInstanceBounds[logicalInstance];
+                VpCullCommand judged = (VpCullCommand)0;
+                judged.centre = own.centre;
+                judged.extents = max(own.extents, float3(0.0, 0.0, 0.0));
+            #else
+                VpCullCommand judged = _VpCullCommands[VpCommandId()];
+            #endif
                 if (_VpShadowSliceSelection > 0.5 && UNITY_MATRIX_P[3][3] == 1.0
-                    && VpOutsideSlice(_VpCullCommands[VpCommandId()], objectToWorld))
+                    && VpOutsideSlice(judged, objectToWorld))
                 {
                     // The position alone rejects the instance; the clip distances stay positive (DESIGN 5.2).
                     output.positionCS = float4(2.0, 2.0, 2.0, 1.0);
@@ -240,7 +272,18 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                     return output;
                 }
             #endif
-                float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
+            #if defined(VP_SKIN24)
+                VpSkinVertex skin = _VpVertices[input.vertexID];
+                VpSkinRecord record = _VpSkinRecords[logicalInstance];
+                float3 positionOS;
+                float3 normalOS;
+                VpSkinPositionNormal(skin, _VpSkinPalette, record.paletteStart, positionOS, normalOS);
+            #else
+                VpRenderVertex vertex = _VpVertices[input.vertexID];
+                float3 positionOS = vertex.position;
+                float3 normalOS = VpDecodeNormal(vertex);
+            #endif
+                float3 positionWS = mul(objectToWorld, float4(positionOS, 1.0)).xyz;
 
                 // As in the forward pass: every plane is tested on the world position the transform leaves, so
                 // the caster's silhouette matches what the forward pass keeps and draws.
@@ -257,7 +300,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 output.clipDistance1 = clipDistance1;
             #endif
 
-                float3 normalWS = normalize(mul((float3x3)objectToWorld, VpDecodeNormal(vertex)));
+                float3 normalWS = normalize(mul((float3x3)objectToWorld, normalOS));
             #if _CASTING_PUNCTUAL_LIGHT_SHADOW
                 float3 lightDirectionWS = normalize(_LightPosition - positionWS);
             #else

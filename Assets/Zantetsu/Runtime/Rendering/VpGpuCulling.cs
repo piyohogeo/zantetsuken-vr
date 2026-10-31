@@ -172,6 +172,14 @@ namespace Zantetsu.Rendering
         /// </summary>
         public const string NoSliceSelectionArgument = "-zantetsuVp3cNoSliceSelection";
 
+        /// <summary>
+        /// The Player argument that turns the per-slice selection on for the skin draw's casters on Vulkan (SKIN-BENCH-3),
+        /// where the ordinary (16-byte) casters keep it off: their judgement reads the command's bounds by a number the
+        /// Vulkan multi-draw cannot give, the skin draw's reads the instance's own bounds. Off unless given; nothing
+        /// without <see cref="ShadowSliceSelection"/>.
+        /// </summary>
+        public const string Skin24SliceSelectionArgument = "-zantetsuSkin24SliceSelection";
+
         /// <summary>The compute shader's name under a Resources folder.</summary>
         public const string ShaderResource = "VpInstanceCull";
 
@@ -197,6 +205,7 @@ namespace Zantetsu.Rendering
         private static bool s_argumentsRead;
         private static bool s_requested = true;
         private static bool s_sliceSelection = true;
+        private static bool s_skin24SliceSelectionOnVulkan;
         private static bool s_separateClip = true;
 
         /// <summary>The argument entry Unity's own indirect draw reads: GraphicsBuffer.IndirectDrawIndexedArgs.</summary>
@@ -208,14 +217,26 @@ namespace Zantetsu.Rendering
         /// </summary>
         public const int NativeArgumentStride = 24;
 
-        private VpGpuCullSetup(ComputeShader shader, int kernel, int viewCapacity, bool nativeArguments)
+        private VpGpuCullSetup(ComputeShader shader, int kernel, int viewCapacity, bool nativeArguments, bool instanceBounds)
         {
             Shader = shader;
             Kernel = kernel;
             ViewCapacity = viewCapacity;
             NativeArguments = nativeArguments;
+            InstanceBounds = instanceBounds;
             _separateClipRequested = SeparateClipRequested;
         }
+
+        /// <summary>The kernel of a selection by each instance's own bounds (<see cref="InstanceBounds"/>).</summary>
+        public const string InstanceBoundsKernel = "CullInstanceBounds";
+
+        /// <summary>
+        /// Whether the selection judges each instance by bounds of its own, read from the batch's instance bounds
+        /// buffer (<see cref="VpIndexedIndirectDrawBatch.InstanceBounds"/>; the skin draw's, written on the GPU from
+        /// the instance's pose, DESIGN 4.5.12), rather than by its command's bounds carried by its transform. Settled
+        /// when the setup is made.
+        /// </summary>
+        public bool InstanceBounds { get; }
 
         public ComputeShader Shader { get; }
 
@@ -311,6 +332,51 @@ namespace Zantetsu.Rendering
             return arguments == null || Array.IndexOf(arguments, ClipTogetherArgument) < 0;
         }
 
+        /// <summary>
+        /// Whether the skin draw's casters on Vulkan pass over the instances outside the slice being rendered
+        /// (<see cref="Skin24SliceSelectionArgument"/>; SKIN-BENCH-3). The ordinary casters on Vulkan never do; on
+        /// Direct3D 12 both follow <see cref="ShadowSliceSelection"/>. A test sets it and puts it back.
+        /// </summary>
+        public static bool Skin24SliceSelectionOnVulkan
+        {
+            get
+            {
+                ReadArguments();
+                return s_skin24SliceSelectionOnVulkan;
+            }
+            set
+            {
+                ReadArguments();
+                s_skin24SliceSelectionOnVulkan = value;
+            }
+        }
+
+        /// <summary>Whether <paramref name="arguments"/> ask for the skin casters' slice selection on Vulkan.</summary>
+        public static bool ReadSkin24SliceSelection(string[] arguments)
+        {
+            return arguments != null && Array.IndexOf(arguments, Skin24SliceSelectionArgument) >= 0;
+        }
+
+        /// <summary>
+        /// The slice selection a caster issue's constants carry (SKIN-BENCH-3): 1 when the vertex stage passes over
+        /// instances outside the slice. An ordinary (16-byte) caster follows the global switch, except on Vulkan where
+        /// it is always 0 (its judgement would read command-zero bounds); the skin draw's caster follows the switch,
+        /// and on Vulkan only with <paramref name="skin24OnVulkan"/> too.
+        /// </summary>
+        public static float CasterSliceSelectionFor(bool skinIssue, bool vulkan, bool sliceSelection, bool skin24OnVulkan)
+        {
+            if (!sliceSelection) return 0f;
+            if (!vulkan) return 1f;
+            return skinIssue && skin24OnVulkan ? 1f : 0f;
+        }
+
+        /// <summary>
+        /// The context of a caster issue's shared GPU constant blocks (the plugin's route, SKIN-BENCH-3): the split and the
+        /// slice selection its constants carry, so that two issues of one split with different selections (an ordinary run
+        /// at 0, a skin run at 1 on Vulkan) never share a block.
+        /// </summary>
+        public static int CasterConstantContext(int split, float sliceSelection) => split * 2 + (sliceSelection > 0.5f ? 1 : 0);
+
         /// <summary>What the two properties answer for a set of arguments. For tests of the reading itself.</summary>
         public static void Read(string[] arguments, out bool requested, out bool sliceSelection)
         {
@@ -344,6 +410,7 @@ namespace Zantetsu.Rendering
             s_argumentsRead = true;
             Read(Environment.GetCommandLineArgs(), out s_requested, out s_sliceSelection);
             s_separateClip = ReadSeparateClip(Environment.GetCommandLineArgs());
+            s_skin24SliceSelectionOnVulkan = ReadSkin24SliceSelection(Environment.GetCommandLineArgs());
         }
 
         /// <summary>
@@ -360,6 +427,12 @@ namespace Zantetsu.Rendering
         /// <see cref="NativeArguments"/>).
         /// </summary>
         public static bool TryCreate(int viewCapacity, bool nativeArguments, out VpGpuCullSetup setup, out string failure)
+        {
+            return TryCreate(viewCapacity, nativeArguments, false, out setup, out failure);
+        }
+
+        /// <summary>The same setup selecting by each instance's own bounds when <paramref name="instanceBounds"/> is true (see <see cref="InstanceBounds"/>).</summary>
+        public static bool TryCreate(int viewCapacity, bool nativeArguments, bool instanceBounds, out VpGpuCullSetup setup, out string failure)
         {
             setup = null;
             failure = null;
@@ -382,13 +455,14 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            if (!shader.HasKernel("CullCommands"))
+            string kernelName = instanceBounds ? InstanceBoundsKernel : "CullCommands";
+            if (!shader.HasKernel(kernelName))
             {
-                failure = "the compute shader '" + ShaderResource + "' has no kernel CullCommands";
+                failure = "the compute shader '" + ShaderResource + "' has no kernel " + kernelName;
                 return false;
             }
 
-            setup = new VpGpuCullSetup(shader, shader.FindKernel("CullCommands"), viewCapacity, nativeArguments);
+            setup = new VpGpuCullSetup(shader, shader.FindKernel(kernelName), viewCapacity, nativeArguments, instanceBounds);
             return true;
         }
     }

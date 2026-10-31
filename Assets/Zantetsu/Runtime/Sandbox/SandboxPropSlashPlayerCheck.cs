@@ -812,6 +812,17 @@ namespace Zantetsu.Sandbox
                 public double lastSimulateMs = double.NaN, expectedMs = double.NaN, remainingMs = double.NaN;
                 // The step this frame's decision simulated (0 none, the normal step or the double one), the physics time after it, and the time dropped at the cap so far (DESIGN 4.4, 2026-10-20).
                 public double stepTakenMs = double.NaN, physicsSeconds = double.NaN, droppedMs = double.NaN;
+                // The skin draw of this frame (SKIN-BENCH-3, TL review 2): the individuals registered, the last schedule's (or
+                // update's) dirty individuals and bones, the worker arrays' bone entries and free ones, whether the last update
+                // used jobs, the frames below the threshold so far, and the last update's Complete wait and whole update (ms;
+                // NaN without the skin draw or observation). -1: no skin draw.
+                public int skinLive = -1, skinDirty = -1, skinDirtyBones = -1, skinBoneEntries = -1, skinFreeEntries = -1, skinJobs = -1;
+                // SKIN-BENCH-3, TL review 3: the live target characters drawn by their renderer / by the skin draw this frame, the
+                // models registered, and the model refusals so far (-1: no skin draw or no crowd).
+                public int skinSmrLive = -1, skinDrawnLive = -1, skinModels = -1;
+                public long skinModelRefusals = -1;
+                public long skinBelowThreshold = -1, skinLateRegathers = -1;
+                public double skinCompleteWaitMs = double.NaN, skinFrameMs = double.NaN;
                 public int stepped = -1;
                 public int lodL0 = -1, lodL1 = -1, lodL2 = -1, lodL3 = -1, lodUpdated = -1, lodForced = -1, lodTarget = -1;
                 public string lodPhases;
@@ -1996,6 +2007,28 @@ namespace Zantetsu.Sandbox
                         if (c.Level == 0) row.lodL0++; else if (c.Level == 1) row.lodL1++; else if (c.Level == 2) row.lodL2++; else row.lodL3++;
                     }
                 }
+                // The skin draw's frame (SKIN-BENCH-3, TL review 2): what the walk's A/B of the gathers needs beside Main.
+                if (_world != null && _world.DrawsSkins)
+                {
+                    Zantetsu.Rendering.VpSkinDisplay skins = _world.SkinDisplay;
+                    row.skinLive = skins.IndividualCount; row.skinDirty = skins.LastDirtyIndividuals; row.skinDirtyBones = skins.LastDirtyBones;
+                    row.skinBoneEntries = skins.BoneEntryCount; row.skinFreeEntries = skins.FreeBoneEntryCount; row.skinJobs = skins.LastFrameUsedJobs ? 1 : 0;
+                    row.skinBelowThreshold = skins.BelowThresholdFrames; row.skinLateRegathers = skins.LateRegathers;
+                    row.skinCompleteWaitMs = skins.LastCompleteWaitSeconds * 1000.0; row.skinFrameMs = skins.LastFrameSeconds * 1000.0;
+                    row.skinModels = skins.ModelCount; row.skinModelRefusals = skins.ModelRefusals;
+                    if (_crowd != null)
+                    {
+                        IReadOnlyList<SandboxNpcCharacter> skinSlots = _crowd.Slots;
+                        row.skinSmrLive = 0; row.skinDrawnLive = 0;
+                        for (int i = 0; i < skinSlots.Count; i++)
+                        {
+                            SandboxNpcCharacter c = skinSlots[i];
+                            if (c == null || !c.IsTarget) continue;
+                            if (c.IsDrawnBySkinDraw) row.skinDrawnLive++;
+                            else if (c.Renderer != null && c.Renderer.enabled && c.Renderer.gameObject.activeInHierarchy) row.skinSmrLive++;
+                        }
+                    }
+                }
                 Camera main = Camera.main;
                 if (main != null)
                 {
@@ -2032,7 +2065,9 @@ namespace Zantetsu.Sandbox
                 text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,displayFragments,displayGpuReplacements,dCmdWritten,dCmdCaughtUp,dInstWritten,dInstCaughtUp,dRegWritten,dRegionsTaken,dArgElems,dArgCalls,dInstElems,dInstCalls,dWholeArgElems,dWholeInstElems,dWholeCalls,drawCmdEnd,drawCmdLive,drawCmdCapacity,drawInstEnd,drawInstLive,drawInstCapacity,dRegionsMoved,dInstMoved,dCompactions,dCompactRecords,dCompactMs,dCompactSkipped,dCompactCandidates,dCompactOrderMs,dCompactWriteMs,dCompactUploadMs,dHistWrites,dXformCalls,dClipCalls,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs,psKept,ppKept,psSelected,psClipsKept,psCapInVerts,psCapOutVerts,psFollowing,psStatic,psPlacedAnew,psAnewNotTakenOver,psAnewCarried,psAnewStartsShifted,psAnewSelected,psAnewMoved,psAnewClipped,psAnewCapped,psAnewClippedAndCapped,psAnewShiftedPlain,ppSelected,ppClipsKept,ppCapInVerts,ppCapOutVerts,ppFollowing,ppStatic,ppPlacedAnew,ppAnewNotTakenOver,ppAnewCarried,ppAnewStartsShifted,ppAnewSelected,ppAnewMoved,ppAnewClipped,ppAnewCapped,ppAnewClippedAndCapped,ppAnewShiftedPlain,tCollections,tCollectMs,tStage0Ms,tStage1Ms,tStage2Ms,tStage3Ms,tStage4Ms,tStage5Ms,tStage6Ms,tStage7Ms,tStage8Ms,tStage9Ms,tBuildCalls,tBuildMs,tBuildHeapDeltaBytes,sValidateCalls,sValidateMs,sCollectCalls,sCollectMs,sGroupCalls,sGroupMs,sStructureMs,sPlaceCalls,sPlaceMs,sKeptWhole,sWalks,sFamiliesRebuilt,sRegistrationsRebuilt,sRenderFragmentsRebuilt,sBranchesRebuilt,sCandidatesRebuilt,sRegistrationsReused,sArrayGrowths,sArrayGrowthElements,sPlaceReused,sQueriesOmitted,sCapShapes,sCapShapeVertices,sCapShapeMs,sCapLayouts,sCapLayoutVertices,sCameraCapUploads,sCameraCapVertices,sCapRecordFloat4,sCameraCapFirstUploads,sCameraCapFirstVertices,hSelective,hStructure,hUnvouched,hOther,hOmitted,hQOrdinary,hQNear,hQSelected,hQNotified,hQUnvouched,hQOther,hPromoted,hDemoted,hInvalidations,hResets,hShiftedPasses,hShiftedRebuilt,hSearches,hSearchMs,hUpdateMs,hHeldAtEnd,hOrdinaryAtEnd,hPointsAtEnd,hRemaps,hCarried,hFresh,hDroppedHeld,hRemapMs,hToldFamilies,hNearCandidates,hOutOfView,hViewTests,hViewMs,hPointsWithView,hPointsWithoutView,hTreeInserts,hTreeRemovals,hPickedNoView,stepCollectMs,notesMask,gcCountAtRow,roomCommittedBytes"
                     + ",nPointersAsked,nPointersKept,nBodyIssues,nCasterIssues,nNotDrawn,nBuffersRetired,nBlocksInFlight"
                     + ",nMotionIssues,nClipMotionTaken,nClipMotionKept,appSwCullCalls,appSwRecordCalls,appSwNativeCullCalls,appSwMotionClipKeepCalls"
-                    + ",stepTakenMs,physicsSeconds,droppedMs");
+                    + ",stepTakenMs,physicsSeconds,droppedMs"
+                    + ",skinLive,skinDirty,skinDirtyBones,skinBoneEntries,skinFreeEntries,skinJobs,skinBelowThreshold,skinLateRegathers,skinCompleteWaitMs,skinFrameMs"
+                    + ",skinSmrLive,skinDrawnLive,skinModels,skinModelRefusals");
                 foreach (string name in markerNames)
                 {
                     text.Append(',').Append(name);
@@ -2216,6 +2251,10 @@ namespace Zantetsu.Sandbox
                         .Append(',').Append(r.appSwNativeCullCalls).Append(',').Append(r.appSwMotionClipKeepCalls);
                     text.Append(',').Append(r.stepTakenMs.ToString("R", Inv)).Append(',').Append(r.physicsSeconds.ToString("R", Inv))
                         .Append(',').Append(r.droppedMs.ToString("R", Inv));
+                    text.Append(',').Append(r.skinLive).Append(',').Append(r.skinDirty).Append(',').Append(r.skinDirtyBones).Append(',').Append(r.skinBoneEntries)
+                        .Append(',').Append(r.skinFreeEntries).Append(',').Append(r.skinJobs).Append(',').Append(r.skinBelowThreshold).Append(',').Append(r.skinLateRegathers)
+                        .Append(',').Append(r.skinCompleteWaitMs.ToString("R", Inv)).Append(',').Append(r.skinFrameMs.ToString("R", Inv))
+                        .Append(',').Append(r.skinSmrLive).Append(',').Append(r.skinDrawnLive).Append(',').Append(r.skinModels).Append(',').Append(r.skinModelRefusals);
 
                     if (r.nativeKnown) nativeBefore = r;
                     for (int i = 0; i < markerNames.Length; i++)

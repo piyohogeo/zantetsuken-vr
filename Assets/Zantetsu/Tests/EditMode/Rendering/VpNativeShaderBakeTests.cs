@@ -16,6 +16,20 @@ namespace Zantetsu.Rendering.Tests
         public void VulkanVariants_KeepExistingAssets_AndAddPixelClipOnlyForClipDraws()
         {
             VpNativeShaderBake.Variant[] variants = VpNativeShaderBake.GetVariants(true);
+            // The skin draw's variants (DESIGN 4.5.12): one of every plugin variant with no clip, the skin keyword added.
+            var skin = variants.Where(v => v.Name.EndsWith(VpNativeShaderBake.SkinSuffix, StringComparison.Ordinal)).ToArray();
+            Assert.That(skin.Length, Is.EqualTo(12), "10 bodies, the caster and the motion");
+            foreach (VpNativeShaderBake.Variant variant in skin)
+            {
+                Assert.That(variant.Keywords, Does.Contain(VpNativeShaderBake.SkinKeyword).And.Contain(VpNativeShaderBake.NoClipKeyword), variant.Name);
+                Assert.That(variant.Keywords, Does.Not.Contain(VpNativeShaderBake.PixelClipKeyword), variant.Name);
+                Assert.That(variant.Name, Does.Contain("-plugin").And.Contain("-noclip"), variant.Name);
+                string origin = variant.Name.Substring(0, variant.Name.Length - VpNativeShaderBake.SkinSuffix.Length);
+                VpNativeShaderBake.Variant source = variants.Single(v => v.Name == origin);
+                Assert.That(variant.Keywords, Is.EqualTo(source.Keywords.Concat(new[] { VpNativeShaderBake.SkinKeyword }).ToArray()), variant.Name);
+            }
+
+            variants = variants.Where(v => !v.Name.EndsWith(VpNativeShaderBake.SkinSuffix, StringComparison.Ordinal)).ToArray();
             var originals = variants.Where(v => !v.Name.EndsWith("-pixelclip", StringComparison.Ordinal)).ToArray();
             var pixel = variants.Where(v => v.Name.EndsWith("-pixelclip", StringComparison.Ordinal)).ToArray();
             Assert.That(originals.Length, Is.EqualTo(40));
@@ -37,7 +51,8 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(variants.SelectMany(v => v.Keywords), Does.Not.Contain(VpNativeShaderBake.StereoKeyword));
             Assert.That(VpNativeShaderBake.Variants.SelectMany(v => v.Keywords), Does.Contain(VpNativeShaderBake.StereoKeyword), "Vulkan expansion must not mutate the D3D templates");
             VpNativeShaderBake.Variant[] d3d = VpNativeShaderBake.GetVariants(false);
-            Assert.That(d3d.Length, Is.EqualTo(37));
+            Assert.That(d3d.Count(v => v.Name.EndsWith(VpNativeShaderBake.SkinSuffix, StringComparison.Ordinal)), Is.EqualTo(11), "10 bodies and the caster");
+            Assert.That(d3d.Length, Is.EqualTo(37 + 11));
             Assert.That(d3d.SelectMany(v => v.Keywords), Does.Not.Contain(VpNativeShaderBake.PixelClipKeyword));
         }
 
@@ -77,7 +92,7 @@ namespace Zantetsu.Rendering.Tests
                 }
                 checkedCount++;
             }
-            Assert.That(checkedCount, Is.EqualTo(14));
+            Assert.That(checkedCount, Is.EqualTo(14 + 12), "the 14 no-clip variants and the 12 skin draw variants, which draw with no clip too (DESIGN 4.5.12)");
         }
 
         [TestCase(false)]

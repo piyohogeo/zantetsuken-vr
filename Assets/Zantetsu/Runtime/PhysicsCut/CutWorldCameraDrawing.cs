@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using Zantetsu.Core;
 using Zantetsu.MeshCut;
+using Zantetsu.Rendering;
 using Zantetsu.Rendering.Urp;
 
 namespace Zantetsu.PhysicsCut
@@ -74,6 +75,19 @@ namespace Zantetsu.PhysicsCut
         private VpNativeDrawRoute _nativeRoute;
         private bool _nativeRefusalLogged;
 
+        // The skin draw (DESIGN 4.5.12): its own selection route (a pass of its own a camera), the frame it was last
+        // updated in, and -- drawn by Unity's calls -- the skin variants of the world's materials.
+        private VpGpuCullCameraRoute _skinCullRoute;
+        private int _skinUpdatedFrame;
+        private Material _skinForwardUnity, _skinShadowUnity;
+        private bool _skinRefusalLogged;
+
+        /// <summary>How many times a camera was not drawn the skins for because their selection could not be enqueued, or the plugin's pass was not.</summary>
+        public int SkinRefusals { get; private set; }
+
+        /// <summary>How many frames the skin draw was updated in by this drawing.</summary>
+        public int SkinFramesUpdated { get; private set; }
+
         /// <summary>The route the GPU selection is put into the pipeline by, once a display that selects has been drawn; else null.</summary>
         public VpGpuCullCameraRoute CullRoute => _cullRoute;
 
@@ -104,9 +118,11 @@ namespace Zantetsu.PhysicsCut
                 return null;
             }
 
+            // Like with like: the skin's issues are taken and issued under their own counters (review 3).
             drewEverything = _nativeRoute.Refused == 0 && _nativeRoute.RingFull == 0 && _nativeRoute.PipelineFailures == 0
                 && _nativeRoute.XrFramesNotDrawn == 0 && NativeRefusals == 0 && _nativeRoute.BodiesIssued == _nativeRoute.BodiesTaken
-                && _nativeRoute.MotionIssued == _nativeRoute.MotionTaken;
+                && _nativeRoute.MotionIssued == _nativeRoute.MotionTaken
+                && _nativeRoute.SkinBodiesIssued == _nativeRoute.SkinBodiesTaken && _nativeRoute.SkinMotionIssued == _nativeRoute.SkinMotionTaken;
             return _nativeRoute.Describe() + "; cameras not drawn for want of the plugin's pass " + NativeRefusals;
         }
 
@@ -137,12 +153,21 @@ namespace Zantetsu.PhysicsCut
             RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
             RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
             ReportCullRoute();
+            ReleaseSkinUnityMaterials();
             Unregister();
         }
 
         // What the GPU selection did while this drew, once, for the log: a run reads it to know that it selected.
         private void ReportCullRoute()
         {
+            if (_skinCullRoute != null && world != null && world.SkinDisplay != null && !world.SkinDisplay.IsDisposed)
+            {
+                Debug.Log("VP SKIN ROUTE (drawing): " + name + " " + world.SkinDisplay.Describe() + "; skin selection enqueued " + _skinCullRoute.Enqueued
+                    + ", recorded " + _skinCullRoute.Recorded + ", refused by the display " + _skinCullRoute.Refused + ", cameras not drawn the skins for " + SkinRefusals
+                    + ", frames updated " + SkinFramesUpdated, this);
+                _skinCullRoute = null;
+            }
+
             if (_nativeRoute != null)
             {
                 Debug.Log("VP BODY ROUTE (end): " + name + " " + _nativeRoute.Describe() + "; cameras not drawn for want of the plugin's pass " + NativeRefusals, this);
@@ -314,11 +339,111 @@ namespace Zantetsu.PhysicsCut
             }
 
             display.Render(layer, camera);
+            DrawSkins(camera, display);
             if (_drawnFrame != Time.frameCount)
             {
                 _drawnFrame = Time.frameCount;
                 DrawnFrames++;
             }
+        }
+
+        // The skin draw for this camera (DESIGN 4.5.12): the display is brought current once a frame (the first camera's
+        // beginning: after every late update, before any camera renders), its selection is put in the camera's frame
+        // by a route of its own, and its draws are registered -- with the plugin's route the display's bodies go
+        // through, or by Unity's calls with the skin variants.
+        private void DrawSkins(Camera camera, VpLogicalCutDisplay display)
+        {
+            VpSkinDisplay skins = world.SkinDisplay;
+            if (skins == null || skins.IsDisposed)
+            {
+                return;
+            }
+
+            if (_skinUpdatedFrame != Time.frameCount)
+            {
+                _skinUpdatedFrame = Time.frameCount;
+                SkinFramesUpdated++;
+                skins.UpdateFrame(display.SinglePassInstanced);
+            }
+
+            if (skins.IndividualCount == 0)
+            {
+                return;
+            }
+
+            _skinCullRoute ??= new VpGpuCullCameraRoute();
+            if (skins.NativeArguments)
+            {
+                if (_nativeRoute == null)
+                {
+                    RefuseSkins("the plugin's route is not drawing for this camera");
+                    return;
+                }
+
+                skins.BarrierSink = _nativeRoute;
+                if (!_skinCullRoute.TryEnqueue(camera, skins, out string failure))
+                {
+                    RefuseSkins(failure);
+                    return;
+                }
+
+                skins.Render(layer, camera, _nativeRoute);
+            }
+            else
+            {
+                skins.BarrierSink = null;
+                if (!_skinCullRoute.TryEnqueue(camera, skins, out string failure))
+                {
+                    RefuseSkins(failure);
+                    return;
+                }
+
+                EnsureSkinUnityMaterials();
+                skins.RenderUnity(layer, camera, _skinForwardUnity, _skinShadowUnity);
+            }
+        }
+
+        private void RefuseSkins(string failure)
+        {
+            SkinRefusals++;
+            if (!_skinRefusalLogged)
+            {
+                _skinRefusalLogged = true;
+                Debug.LogError(name + ": the skin draw could not be put in a camera's frame (" + failure + "); the skins are not drawn for it. Told once.", this);
+            }
+        }
+
+        // Unity's calls draw the skin draw by the skin variants of the world's materials: copies with VP_SKIN24, the
+        // selection's and the no-clip keywords on (the Editor's checks; the plugin's route needs none).
+        private void EnsureSkinUnityMaterials()
+        {
+            if (_skinForwardUnity == null && world.SkinDrawMaterial != null)
+            {
+                _skinForwardUnity = new Material(world.SkinDrawMaterial) { name = world.SkinDrawMaterial.name + " (skin draw)" };
+                EnableSkinKeywords(_skinForwardUnity);
+            }
+
+            if (_skinShadowUnity == null && world.ShadowMaterial != null)
+            {
+                _skinShadowUnity = new Material(world.ShadowMaterial) { name = world.ShadowMaterial.name + " (skin draw)" };
+                EnableSkinKeywords(_skinShadowUnity);
+            }
+        }
+
+        /// <summary>The keywords of a material that draws the skin draw by Unity's calls (DESIGN 4.5.12).</summary>
+        public static void EnableSkinKeywords(Material material)
+        {
+            material.EnableKeyword(VpGpuCullSetup.Keyword);
+            material.EnableKeyword(VpGpuCullSetup.NoClipKeyword);
+            material.EnableKeyword("VP_SKIN24");
+        }
+
+        private void ReleaseSkinUnityMaterials()
+        {
+            if (_skinForwardUnity != null) { if (Application.isPlaying) Destroy(_skinForwardUnity); else DestroyImmediate(_skinForwardUnity); }
+            if (_skinShadowUnity != null) { if (Application.isPlaying) Destroy(_skinShadowUnity); else DestroyImmediate(_skinShadowUnity); }
+            _skinForwardUnity = null;
+            _skinShadowUnity = null;
         }
 
         private bool IsOneOfOurs(Camera camera)
@@ -408,6 +533,7 @@ namespace Zantetsu.PhysicsCut
                 if (cameras[i] != null)
                 {
                     world.Display.TryUnregisterCamera(cameras[i]);
+                    world.SkinDisplay?.ForgetCamera(cameras[i]);
                 }
             }
 

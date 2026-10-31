@@ -76,7 +76,8 @@ namespace Zantetsu.Rendering
         /// </summary>
         public static string NativeVariant(string variant, bool vulkan)
         {
-            if (!vulkan || !PixelClip || variant.EndsWith("-noclip", StringComparison.Ordinal)
+            // A variant with no clip (the ordinary draws', and the skin draw's, whose suffix follows it) needs no pixel clip.
+            if (!vulkan || !PixelClip || variant.Contains("-noclip")
                 || variant.EndsWith(PixelClipSuffix, StringComparison.Ordinal)) return variant;
             if (!PixelVariants.TryGetValue(variant, out string pixel))
             {

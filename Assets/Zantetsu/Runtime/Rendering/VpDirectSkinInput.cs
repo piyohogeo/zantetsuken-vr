@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -10,29 +8,34 @@ using UnityEngine;
 namespace Zantetsu.Rendering
 {
     /// <summary>
-    /// Opt-in synchronous current-pose producer for a cold-validated, immutable, single-submesh 4-weight mesh.
-    /// The renderer frame must be rigid/unit-scale (use VpFixedScaleSkinInput for fixed import scale).
+    /// Opt-in synchronous current-pose producer for a cold-validated, immutable, single-submesh 4-weight mesh: the CPU
+    /// bake of the cut's display input (DESIGN 4.5.12). It reads the model's shared 24-byte input
+    /// (<see cref="VpSkinModel"/>: bind positions, oct normals, quantized weights -- the very bytes the skin draw's
+    /// vertex stage reads), skins it on the CPU by a captured pose, and writes 16-byte geometry into the storage. The
+    /// renderer frame must be rigid/unit-scale (use VpFixedScaleSkinInput for fixed import scale).
     /// The caller must Dispose/recreate before changing mesh contents, bone bindings, or topology. No hot hash scan.
-    /// Source rig/mesh are borrowed; native bind input belongs to this instance. Dispose before unloading the rig.
+    /// Source rig/mesh are borrowed; a model made here is owned, a model given is borrowed. Dispose before unloading the rig.
     /// Does not switch renderers, register bodies, upload, or publish Provisional Physics. Main thread only.
+    /// <para>
+    /// **What a worker will be given later (DESIGN 4.5.12, the GPU bake's stage).** The three things are apart already:
+    /// the immutable model input, the pose captured once by <see cref="TryCapturePose"/> into this input's own
+    /// matrices, and the renderer and bone Transforms, which only the capture reads. The kernel reads the model and the
+    /// matrices alone -- no live Transform, no palette being written.
+    /// </para>
     /// </summary>
     public sealed unsafe class VpDirectSkinInput : IDisposable
     {
         readonly SkinnedMeshRenderer renderer;
         readonly Mesh mesh;
         readonly Transform[] bones;
-        readonly Matrix4x4[] bindposes;
+        readonly VpSkinModel model;
+        readonly bool ownsModel;
 
-        // One Persistent block owns all the native data of this input; the regions below are borrowed views into it,
+        // One Persistent block owns the pose and the kernel's results; the regions below are borrowed views into it,
         // valid exactly as long as the block, and nothing else frees them. Every byte a read reaches is written first:
-        // the bind data when the block is made, the matrices by TryAppendTo for every bone before Write reads any,
-        // bounds and valid by the kernel before they are read. So the block is taken uninitialized.
+        // the matrices by TryCapturePose for every bone before Write reads any, bounds and valid by the kernel before
+        // they are read. So the block is taken uninitialized.
         NativeArray<byte> block;
-        float3* positions, normals;
-        BoneWeight* weights;
-        DirectUv* uv;
-        int* topology;
-        uint* indices;
         float4x4* matrices;
         float3* bounds;
         int* valid;
@@ -44,49 +47,42 @@ namespace Zantetsu.Rendering
         /// <summary>Where each region starts in the block, and the block's size, all in bytes.</summary>
         internal readonly struct Layout
         {
-            public readonly long matrices, weights, positions, normals, topology, indices, bounds, valid, uv, bytes;
+            public readonly long matrices, bounds, valid, bytes;
 
-            internal Layout(long matrices, long weights, long positions, long normals, long topology, long indices,
-                long bounds, long valid, long uv, long bytes)
+            internal Layout(long matrices, long bounds, long valid, long bytes)
             {
-                this.matrices = matrices; this.weights = weights; this.positions = positions; this.normals = normals;
-                this.topology = topology; this.indices = indices; this.bounds = bounds; this.valid = valid; this.uv = uv;
-                this.bytes = bytes;
+                this.matrices = matrices; this.bounds = bounds; this.valid = valid; this.bytes = bytes;
             }
         }
 
         static long Align16(long bytes) => (bytes + 15) & ~15L;
 
         /// <summary>
-        /// The regions for these counts, each starting on 16 bytes, widest element first. False when a count is
-        /// negative or the block would not fit one NativeArray. The arithmetic is in long: no count up to
-        /// int.MaxValue can overflow it.
+        /// The regions for this many palette bones, each starting on 16 bytes, widest element first. False when the
+        /// count is negative or the block would not fit one NativeArray.
         /// </summary>
-        internal static bool TryLayout(int vertexCount, int indexCount, int boneCount, out Layout layout)
+        internal static bool TryLayout(int boneCount, out Layout layout)
         {
             layout = default;
-            if (vertexCount < 0 || indexCount < 0 || boneCount < 0) return false;
+            if (boneCount < 0) return false;
             long at = 0;
             long m = at; at += Align16((long)boneCount * sizeof(float4x4));
-            long w = at; at += Align16((long)vertexCount * sizeof(BoneWeight));
-            long p = at; at += Align16((long)vertexCount * sizeof(float3));
-            long n = at; at += Align16((long)vertexCount * sizeof(float3));
-            long t = at; at += Align16((long)vertexCount * sizeof(int));
-            long i = at; at += Align16((long)indexCount * sizeof(uint));
             long b = at; at += Align16(2L * sizeof(float3));
             long v = at; at += Align16(sizeof(int));
-            long u = at; at += Align16((long)vertexCount * sizeof(DirectUv));
             if (at > int.MaxValue) return false;
-            layout = new Layout(m, w, p, n, t, i, b, v, u, at);
+            layout = new Layout(m, b, v, at);
             return true;
         }
 
         /// <summary>The block's size in bytes while it is held, else 0. Diagnostic and tests.</summary>
         internal int NativeBytes => block.IsCreated ? block.Length : 0;
-        public int VertexCount { get; }
-        public int IndexCount { get; }
-        public int TopologyCount { get; }
-        internal bool IsAlive => !disposed;
+        public int VertexCount => model.VertexCount;
+        public int IndexCount => model.IndexCount;
+        public int TopologyCount => model.TopologyCount;
+        internal bool IsAlive => !disposed && !model.IsDisposed;
+
+        /// <summary>The shared input this producer skins (the model it was made with, or made from the renderer).</summary>
+        public VpSkinModel Model => model;
 
         // ----- lent by an owner to one prepared cut at a time -----------------------------------------------------------
         // An owner that keeps this input for the life of one character (a crowd's prepared slot) lends it to each prepared
@@ -164,20 +160,8 @@ namespace Zantetsu.Rendering
         }
 
         // The cold creation's stages, for measurement: each Enter ends the stage before; the end of TryCreate ends the last.
-        static readonly Unity.Profiling.ProfilerMarker s_createRead = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Read");
-        static readonly Unity.Profiling.ProfilerMarker s_createWeights = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Weights");
-        static readonly Unity.Profiling.ProfilerMarker s_createRemap = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Remap");
-        static readonly Unity.Profiling.ProfilerMarker s_createVertices = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Vertices");
-        static readonly Unity.Profiling.ProfilerMarker s_createGate = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Gate");
+        static readonly Unity.Profiling.ProfilerMarker s_createModel = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Model");
         static readonly Unity.Profiling.ProfilerMarker s_createBuild = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Build");
-
-        sealed class CreateStages : IDisposable
-        {
-            Unity.Profiling.ProfilerMarker current;
-            bool open;
-            public void Enter(Unity.Profiling.ProfilerMarker next) { if (open) current.End(); next.Begin(); current = next; open = true; }
-            public void Dispose() { if (open) current.End(); open = false; }
-        }
 
         /// <summary>Cold only. Unsupported/invalid input returns false without changing the renderer or storage.</summary>
         public static bool TryCreate(SkinnedMeshRenderer renderer, int[] topology, int topologyCount,
@@ -187,112 +171,64 @@ namespace Zantetsu.Rendering
         /// <summary>
         /// The same, with the connectivity its owner has verified before (see <see cref="VpCutInputConnectivity"/>): the
         /// input gate still checks this renderer's own values, and skips only the edge and fan checks of indices and a
-        /// topology identical to a verified one.
+        /// topology identical to a verified one. The model made here is this input's own.
         /// </summary>
         public static bool TryCreate(SkinnedMeshRenderer renderer, int[] topology, int topologyCount,
             VpCutInputConnectivity verified, out VpDirectSkinInput input)
         {
-            using var stages = new CreateStages();
-            stages.Enter(s_createRead);
             input = null;
-            if (VpRenderVertex.Stride != 16 || renderer == null || renderer.sharedMesh == null
-                || topology == null || topologyCount <= 0 || !FourWeights(renderer) || !Rigid(renderer.transform)) return false;
-            Mesh mesh = renderer.sharedMesh;
-            if (!mesh.isReadable || mesh.blendShapeCount != 0 || mesh.subMeshCount != 1
-                || mesh.GetTopology(0) != MeshTopology.Triangles || mesh.vertexCount == 0) return false;
-            using (var counts = mesh.GetBonesPerVertex())
+            VpSkinModel model;
+            using (s_createModel.Auto())
             {
-                if (counts.Length != mesh.vertexCount) return false;
-                foreach (byte count in counts) if (count == 0 || count > 4) return false;
+                if (!VpSkinModel.TryCreate(renderer, topology, topologyCount, verified, out model, out _)) return false;
             }
-            var p = mesh.vertices; var n = mesh.normals; var tex = mesh.uv; var w = mesh.boneWeights;
-            var sourceBones = renderer.bones; var binds = mesh.bindposes; var signedIndices = mesh.triangles;
-            if (p.Length != n.Length || p.Length != tex.Length || p.Length != w.Length
-                || p.Length != topology.Length || sourceBones.Length != binds.Length || signedIndices.Length == 0) return false;
-            stages.Enter(s_createWeights);
-            var used = new SortedSet<int>();
-            for (int i = 0; i < w.Length; i++)
+
+            if (TryCreate(renderer, model, true, out input)) return true;
+            model.Dispose();
+            return false;
+        }
+
+        /// <summary>
+        /// The same producer over a model shared with others (a crowd's slots of one model, the skin draw): the model is
+        /// borrowed, and must be the renderer's mesh's. False, changing nothing, when it is not, or the renderer's frame
+        /// or bones are not supported.
+        /// </summary>
+        public static bool TryCreate(SkinnedMeshRenderer renderer, VpSkinModel shared, out VpDirectSkinInput input)
+            => TryCreate(renderer, shared, false, out input);
+
+        static bool TryCreate(SkinnedMeshRenderer renderer, VpSkinModel model, bool owned, out VpDirectSkinInput input)
+        {
+            using var stage = s_createBuild.Auto();
+            input = null;
+            if (model == null || model.IsDisposed || renderer == null || !model.Describes(renderer)
+                || !FourWeights(renderer) || !Rigid(renderer.transform)) return false;
+            Transform[] sourceBones = renderer.bones;
+            for (int b = 0; b < sourceBones.Length; b++)
             {
-                var value = w[i];
-                int[] ids = { value.boneIndex0, value.boneIndex1, value.boneIndex2, value.boneIndex3 };
-                float[] ws = { value.weight0, value.weight1, value.weight2, value.weight3 };
-                if (ws.Any(x => !float.IsFinite(x) || x < 0) || Mathf.Abs(ws.Sum() - 1f) > 1e-5f) return false;
-                for (int j = 0; j < 4; j++) if (ws[j] > 0)
-                {
-                    int bone = ids[j];
-                    if (bone < 0 || bone >= sourceBones.Length || sourceBones[bone] == null) return false;
-                    for (int k = 0; k < 16; k++) if (!float.IsFinite(binds[bone][k])) return false;
-                    used.Add(bone);
-                }
+                if (model.IsBoneUsed(b) && sourceBones[b] == null) return false;
             }
-            stages.Enter(s_createRemap);
-            int[] usedBones = used.ToArray();
-            if (usedBones.Length == 0) return false;
-            int Remap(int bone, float weight) => weight == 0 ? 0 : Array.IndexOf(usedBones, bone);
-            for (int i = 0; i < w.Length; i++)
-            {
-                var x = w[i]; x.boneIndex0 = Remap(x.boneIndex0, x.weight0); x.boneIndex1 = Remap(x.boneIndex1, x.weight1);
-                x.boneIndex2 = Remap(x.boneIndex2, x.weight2); x.boneIndex3 = Remap(x.boneIndex3, x.weight3); w[i] = x;
-            }
-            stages.Enter(s_createVertices);
-            var vertices = new VpRenderVertex[p.Length]; var bytes = new DirectUv[p.Length];
-            var representatives = Enumerable.Repeat(-1, topologyCount).ToArray();
-            for (int i = 0; i < p.Length; i++)
-            {
-                int id = topology[i];
-                if (id < 0 || id >= topologyCount) return false;
-                int previous = representatives[id];
-                if (previous < 0) representatives[id] = i;
-                else if (!p[previous].Equals(p[i]) || !w[previous].Equals(w[i])) return false;
-                vertices[i] = new VpRenderVertex { position = p[i], normal = n[i], uv0 = tex[i] };
-                if (!vertices[i].HasValidAttributes) return false;
-                bytes[i] = new DirectUv { x = vertices[i].u, y = vertices[i].v };
-            }
-            uint[] ix = new uint[signedIndices.Length]; var referenced = new bool[p.Length];
-            for (int i = 0; i < ix.Length; i++)
-            {
-                int v = signedIndices[i]; if (v < 0 || v >= p.Length) return false;
-                ix[i] = (uint)v; referenced[v] = true;
-            }
-            stages.Enter(s_createGate);
-            if (referenced.Any(x => !x) || !VpCutInputGate.Check(vertices, ix, topology, topologyCount,
-                    new[] { new VpGeometrySubmesh(0, ix.Length, 0) }, verified).Accepted) return false;
-            stages.Enter(s_createBuild);
-            if (!TryLayout(p.Length, ix.Length, usedBones.Length, out Layout layout)) return false;
-            input = new VpDirectSkinInput(renderer, mesh, usedBones.Select(i => sourceBones[i]).ToArray(),
-                usedBones.Select(i => binds[i]).ToArray(), p, n, w, bytes, topology, topologyCount, ix, layout);
+
+            if (!TryLayout(model.BoneCount, out Layout layout)) return false;
+            input = new VpDirectSkinInput(renderer, model, owned, sourceBones, layout);
             CreatedCount++;
             return true;
         }
 
-        VpDirectSkinInput(SkinnedMeshRenderer renderer, Mesh mesh, Transform[] bones, Matrix4x4[] bindposes,
-            Vector3[] p, Vector3[] n, BoneWeight[] w, DirectUv[] tex, int[] topo, int topologyCount, uint[] ix,
-            Layout layout)
+        VpDirectSkinInput(SkinnedMeshRenderer renderer, VpSkinModel model, bool owned, Transform[] bones, Layout layout)
         {
-            this.renderer = renderer; this.mesh = mesh; this.bones = bones; this.bindposes = bindposes;
-            VertexCount = p.Length; IndexCount = ix.Length; TopologyCount = topologyCount;
+            this.renderer = renderer; mesh = renderer.sharedMesh; this.model = model; ownsModel = owned; this.bones = bones;
             try
             {
+                // A borrowed model is held until this input ends: its owner's end then frees nothing under a bake (review
+                // 1, item 2). Taken first, inside the try: a failure below ends in Dispose, whose release then gives back
+                // this hold and not another reader's (review 2, item 2).
+                if (!owned) model.Hold();
                 block = new NativeArray<byte>((int)layout.bytes, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
                 byte* at = (byte*)block.GetUnsafePtr();
                 if (Fill >= 0) UnsafeUtility.MemSet(at, (byte)Fill, layout.bytes);
                 matrices = (float4x4*)(at + layout.matrices);
-                weights = (BoneWeight*)(at + layout.weights);
-                positions = (float3*)(at + layout.positions);
-                normals = (float3*)(at + layout.normals);
-                topology = (int*)(at + layout.topology);
-                indices = (uint*)(at + layout.indices);
                 bounds = (float3*)(at + layout.bounds);
                 valid = (int*)(at + layout.valid);
-                uv = (DirectUv*)(at + layout.uv);
-                // The bind data straight from the arrays the cold checks read: Vector3 and float3 are the same three
-                // floats, so no converted copy is made on the way.
-                fixed (Vector3* source = p) UnsafeUtility.MemCpy(positions, source, (long)VertexCount * sizeof(float3));
-                fixed (Vector3* source = n) UnsafeUtility.MemCpy(normals, source, (long)VertexCount * sizeof(float3));
-                fixed (BoneWeight* source = w) UnsafeUtility.MemCpy(weights, source, (long)VertexCount * sizeof(BoneWeight));
-                fixed (DirectUv* source = tex) UnsafeUtility.MemCpy(uv, source, (long)VertexCount * sizeof(DirectUv));
-                fixed (int* source = topo) UnsafeUtility.MemCpy(topology, source, (long)VertexCount * sizeof(int));
-                fixed (uint* source = ix) UnsafeUtility.MemCpy(indices, source, (long)IndexCount * sizeof(uint));
                 Warm();
             }
             catch { Dispose(); throw; }
@@ -300,7 +236,7 @@ namespace Zantetsu.Rendering
 
         void Warm()
         {
-            VpDirectSkinKernel.Skin(null, null, null, null, null, null, 0, null, null, bounds, valid);
+            VpDirectSkinKernel.Skin(null, null, null, 0, null, null, bounds, valid);
             VpDirectSkinKernel.CopyIndices(null, null, 0, 0);
         }
 
@@ -327,19 +263,10 @@ namespace Zantetsu.Rendering
         {
             if (disposed) throw new ObjectDisposedException(nameof(VpDirectSkinInput));
             captured = false;
-            if (renderer == null || mesh == null || renderer.sharedMesh != mesh
+            if (model.IsDisposed || renderer == null || mesh == null || renderer.sharedMesh != mesh
                 || !FourWeights(renderer) || !Rigid(renderer.transform)) return false;
             Matrix4x4 inverse = renderer.transform.worldToLocalMatrix;
-            for (int i = 0; i < bones.Length; i++)
-            {
-                if (bones[i] == null) return false;
-                Matrix4x4 m = inverse * bones[i].localToWorldMatrix * bindposes[i];
-                var value = new float4x4(m.GetColumn(0), m.GetColumn(1), m.GetColumn(2), m.GetColumn(3));
-                if (!math.all(math.isfinite(value.c0)) || !math.all(math.isfinite(value.c1))
-                    || !math.all(math.isfinite(value.c2)) || !math.all(math.isfinite(value.c3))) return false;
-                matrices[i] = value;
-            }
-
+            if (!VpSkinPalette.TryGather(inverse, bones, model, matrices)) return false;
             captured = true;
             return true;
         }
@@ -381,11 +308,11 @@ namespace Zantetsu.Rendering
         internal bool Write(NativeArray<VpRenderVertex> output, NativeArray<int> outputTopology,
             NativeArray<uint> outputIndices, int baseVertex, out float3 min, out float3 max)
         {
-            VpDirectSkinKernel.Skin(positions, normals, weights, uv, matrices, topology, VertexCount,
+            VpDirectSkinKernel.Skin(model.VertexPointer, matrices, model.TopologyPointer, VertexCount,
                 (VpRenderVertex*)output.GetUnsafePtr(), (int*)outputTopology.GetUnsafePtr(), bounds, valid);
             min = bounds[0]; max = bounds[1];
             if (valid[0] == 0 || !math.all(math.isfinite(min)) || !math.all(math.isfinite(max)) || !math.all(min <= max)) return false;
-            VpDirectSkinKernel.CopyIndices(indices, (uint*)outputIndices.GetUnsafePtr(), IndexCount, (uint)baseVertex);
+            VpDirectSkinKernel.CopyIndices(model.IndexPointer, (uint*)outputIndices.GetUnsafePtr(), IndexCount, (uint)baseVertex);
             return true;
         }
 
@@ -396,31 +323,97 @@ namespace Zantetsu.Rendering
             if (Borrower != null) throw new InvalidOperationException("The direct skin input is still lent to a prepared cut.");
             disposed = true;
             // The views go first, so nothing can reach the block once it is given back.
-            positions = normals = null; weights = null; uv = null; topology = null; indices = null;
             matrices = null; bounds = null; valid = null;
             if (block.IsCreated) block.Dispose();
+            if (ownsModel) model.Dispose(); else model.Release();
         }
     }
 
-    internal struct DirectUv { public byte x, y; }
+    /// <summary>
+    /// The palette of a model's bones for one individual: renderer-local matrices, one a palette bone, in palette order
+    /// -- <c>inverse(renderer) * bone * bindPose</c>, the frame of <see cref="VpDirectSkinInput"/>'s matrices, which the
+    /// skin draw's vertex stage and the CPU bake read alike. The root matrix, the bind pose and the fixed import scale
+    /// (already in the prepared mesh and its bind poses) are each applied once, here, and nowhere else.
+    /// </summary>
+    public static unsafe class VpSkinPalette
+    {
+        /// <summary>
+        /// Writes the palette of <paramref name="bones"/> (the renderer's own list, in palette order) into
+        /// <paramref name="into"/> (at least the model's bone count): a bone no vertex uses takes the identity and is not
+        /// read. False, with nothing to be trusted in <paramref name="into"/>, for a used bone that is missing or a
+        /// matrix that is not finite.
+        /// </summary>
+        public static bool TryGather(Matrix4x4 worldToRenderer, Transform[] bones, VpSkinModel model, float4x4* into)
+        {
+            if (bones == null || model == null || model.IsDisposed || bones.Length < model.BoneCount) return false;
+            for (int i = 0; i < model.BoneCount; i++)
+            {
+                if (!model.IsBoneUsed(i))
+                {
+                    into[i] = float4x4.identity;
+                    continue;
+                }
+
+                Transform bone = bones[i];
+                if (bone == null) return false;
+                Matrix4x4 m = worldToRenderer * bone.localToWorldMatrix * model.BindPose(i);
+                var value = new float4x4(m.GetColumn(0), m.GetColumn(1), m.GetColumn(2), m.GetColumn(3));
+                if (!math.all(math.isfinite(value.c0)) || !math.all(math.isfinite(value.c1))
+                    || !math.all(math.isfinite(value.c2)) || !math.all(math.isfinite(value.c3))) return false;
+                into[i] = value;
+            }
+
+            return true;
+        }
+
+        /// <summary>The same, into a managed array (tests, checks).</summary>
+        public static bool TryGather(Matrix4x4 worldToRenderer, Transform[] bones, VpSkinModel model, Matrix4x4[] into)
+        {
+            if (into == null || into.Length < model.BoneCount) return false;
+            var temporary = new NativeArray<float4x4>(model.BoneCount, Allocator.Temp);
+            try
+            {
+                if (!TryGather(worldToRenderer, bones, model, (float4x4*)temporary.GetUnsafePtr())) return false;
+                for (int i = 0; i < model.BoneCount; i++)
+                {
+                    float4x4 v = temporary[i];
+                    into[i] = new Matrix4x4(v.c0, v.c1, v.c2, v.c3);
+                }
+
+                return true;
+            }
+            finally
+            {
+                temporary.Dispose();
+            }
+        }
+    }
 
     [BurstCompile]
     internal static class VpDirectSkinKernel
     {
+        /// <summary>
+        /// The CPU bake: the model's 24-byte vertices (bind position, oct normal, quantized weights) skinned by the
+        /// palette <paramref name="matrices"/> -- four terms, in influence order, every term added whatever its weight,
+        /// as the skin draw's vertex stage adds them -- into 16-byte vertices. The normal is decoded from its octahedral
+        /// bytes, skinned, and encoded again; the UV bytes are copied.
+        /// </summary>
         [BurstCompile(CompileSynchronously = true, FloatMode = FloatMode.Strict)]
-        public static unsafe void Skin(float3* bind, float3* normals, BoneWeight* weights, DirectUv* uv,
-            float4x4* matrices, int* topology, int count, VpRenderVertex* output, int* outputTopology,
-            float3* bounds, int* valid)
+        public static unsafe void Skin(VpSkinVertex* input, float4x4* matrices, int* topology, int count,
+            VpRenderVertex* output, int* outputTopology, float3* bounds, int* valid)
         {
             float3 min = new float3(float.PositiveInfinity), max = new float3(float.NegativeInfinity);
             bool ok = true;
             for (int i = 0; i < count; i++)
             {
-                BoneWeight w = weights[i]; float4 p = new float4(bind[i], 1); float3 n = normals[i];
-                float3 position = (math.mul(matrices[w.boneIndex0], p) * w.weight0 + math.mul(matrices[w.boneIndex1], p) * w.weight1
-                    + math.mul(matrices[w.boneIndex2], p) * w.weight2 + math.mul(matrices[w.boneIndex3], p) * w.weight3).xyz;
-                float3 normal = math.mul((float3x3)matrices[w.boneIndex0], n) * w.weight0 + math.mul((float3x3)matrices[w.boneIndex1], n) * w.weight1
-                    + math.mul((float3x3)matrices[w.boneIndex2], n) * w.weight2 + math.mul((float3x3)matrices[w.boneIndex3], n) * w.weight3;
+                VpSkinVertex v = input[i];
+                float4 p = new float4(v.position, 1);
+                float3 n = DecodeNormal(v.normalX, v.normalY);
+                float4 w = new float4(v.weight0, v.weight1, v.weight2, v.weight3) / 255f;
+                float4x4 m0 = matrices[v.bone0], m1 = matrices[v.bone1], m2 = matrices[v.bone2], m3 = matrices[v.bone3];
+                float3 position = (math.mul(m0, p) * w.x + math.mul(m1, p) * w.y + math.mul(m2, p) * w.z + math.mul(m3, p) * w.w).xyz;
+                float3 normal = math.mul((float3x3)m0, n) * w.x + math.mul((float3x3)m1, n) * w.y
+                    + math.mul((float3x3)m2, n) * w.z + math.mul((float3x3)m3, n) * w.w;
                 float sum = math.csum(math.abs(normal));
                 bool finite = math.all(math.isfinite(position)) && math.all(math.isfinite(normal)) && math.isfinite(sum) && sum > 0;
                 ok &= finite;
@@ -430,13 +423,22 @@ namespace Zantetsu.Rendering
                 int2 oct = (int2)math.round(math.clamp(e, -1, 1) * 127);
 #if VP_DIAGNOSTIC_LEGACY32
                 // Keeps the old comparison build compilable; TryCreate refuses its 32B stride.
-                output[i] = new VpRenderVertex { position = position, normal = normal, uv0 = new Vector2((uv[i].x + .5f) / 256f, (uv[i].y + .5f) / 256f) };
+                output[i] = new VpRenderVertex { position = position, normal = normal, uv0 = new Vector2((v.u + .5f) / 256f, (v.v + .5f) / 256f) };
 #else
-                output[i] = new VpRenderVertex { position = position, normalX = (sbyte)oct.x, normalY = (sbyte)oct.y, u = uv[i].x, v = uv[i].y };
+                output[i] = new VpRenderVertex { position = position, normalX = (sbyte)oct.x, normalY = (sbyte)oct.y, u = v.u, v = v.v };
 #endif
                 outputTopology[i] = topology[i]; min = math.min(min, position); max = math.max(max, position);
             }
             bounds[0] = min; bounds[1] = max; valid[0] = ok ? 1 : 0;
+        }
+
+        // The octahedral decoding of VpCompactVertex.hlsl / VpRenderVertex.normal, in Burst.
+        static float3 DecodeNormal(sbyte x, sbyte y)
+        {
+            float2 e = new float2(x, y) / 127f;
+            float3 n = new float3(e, 1f - math.abs(e.x) - math.abs(e.y));
+            if (n.z < 0f) n.xy = (1f - math.abs(n.yx)) * math.select(new float2(-1f), new float2(1f), e >= 0f);
+            return math.normalize(n);
         }
 
         [BurstCompile(CompileSynchronously = true)]

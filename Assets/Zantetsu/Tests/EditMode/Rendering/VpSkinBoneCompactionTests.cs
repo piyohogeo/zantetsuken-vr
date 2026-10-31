@@ -257,6 +257,10 @@ namespace Zantetsu.Rendering.Tests
             using (var storageFull = new VpCpuGeometryStorage(32, 96, 8, 8, 8, Allocator.Persistent))
             using (var storageShort = new VpCpuGeometryStorage(32, 96, 8, 8, 8, Allocator.Persistent))
             {
+                // The bake skins by the quantized weights of the 24-byte input (DESIGN 4.5.12): its reference is the
+                // skinning by those weights, and Unity's bake by the float ones is within the quantization bound of it.
+                var palette = new Matrix4x4[inputFull.Model.BoneCount];
+                Assert.That(VpSkinPalette.TryGather(full.transform.worldToLocalMatrix, full.bones, inputFull.Model, palette), Is.True);
                 Assert.That(inputFull.TryAppendTo(storageFull, out VpStoredGeometry a), Is.True);
                 Assert.That(inputShort.TryAppendTo(storageShort, out VpStoredGeometry b), Is.True);
                 Assert.That(a.cutInputAccepted && b.cutInputAccepted, Is.True, "both are cut inputs");
@@ -266,7 +270,21 @@ namespace Zantetsu.Rendering.Tests
                     Assert.That(y.position, Is.EqualTo(x.position), "the cut's input vertex " + i + " is the same, bit for bit");
                     Assert.That(y.normal, Is.EqualTo(x.normal), "its normal");
                     Assert.That(y.uv0, Is.EqualTo(x.uv0), "its UV");
-                    Assert.That(Vector3.Distance(x.position, bakeFull.vertices[i]), Is.LessThan(3e-6f), "and it is the pose Unity bakes");
+                    VpSkinVertex skin = inputFull.Model.Vertices[i];
+                    BoneWeight w = mesh.boneWeights[i];
+                    Vector3 quantized = Vector3.zero;
+                    float bound = 0f;
+                    for (int j = 0; j < 4; j++)
+                    {
+                        float q = VpSkinWeights.Of(skin.Weight(j));
+                        float f = j == 0 ? w.weight0 : j == 1 ? w.weight1 : j == 2 ? w.weight2 : w.weight3;
+                        Vector3 carried = palette[skin.Bone(j)].MultiplyPoint3x4(skin.position);
+                        quantized += carried * q;
+                        bound += Mathf.Abs(q - f) * carried.magnitude;
+                    }
+
+                    Assert.That(Vector3.Distance(x.position, quantized), Is.LessThan(3e-6f), "and it is the skinning by the quantized weights");
+                    Assert.That(Vector3.Distance(x.position, bakeFull.vertices[i]), Is.LessThan(bound + 3e-6f), "within the quantization bound of the pose Unity bakes");
                 }
             }
         }

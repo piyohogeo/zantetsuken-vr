@@ -21,6 +21,7 @@
 // Which commands those are is said by the command record alone: the selection reads no clip record and binds no clip
 // buffer.
 #pragma kernel CullCommands
+#pragma kernel CullInstanceBounds
 
 // Matches Zantetsu.Rendering.VpCullCommand: 48 bytes; float3 bounds have an explicit fourth component, the centre's
 // being the command's flags.
@@ -52,6 +53,20 @@ uint _VpArgumentOffset;
 
 StructuredBuffer<VpCullCommand> _VpCullCommands;
 StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
+
+// CullInstanceBounds (DESIGN 4.5.12): the bounds of each instance in its own frame, written by VpSkinBounds.compute from
+// the instance's skinning palette -- read instead of the command's bounds, which cannot stand for instances of
+// different poses. Matches Zantetsu.Rendering.VpInstanceBounds, 32 bytes; extents below zero is no instance: kept by
+// neither list. The command's own centre and extents are not read by that kernel.
+struct VpInstanceBounds
+{
+    float3 centre;
+    float pad0;
+    float3 extents;
+    float pad1;
+};
+
+StructuredBuffer<VpInstanceBounds> _VpInstanceBounds;
 
 RWStructuredBuffer<uint> _VpForwardVisible;
 RWByteAddressBuffer _VpForwardArguments;
@@ -112,10 +127,10 @@ bool VpKeptAsCaster(float3 centre, float3 axisX, float3 axisY, float3 axisZ)
     return kept;
 }
 
-[numthreads(64, 1, 1)]
-void CullCommands(uint3 id : SV_DispatchThreadID)
+// The selection of one command's instances: by the command's bounds (CullCommands), or by each instance's own
+// (CullInstanceBounds). Everything else -- the lists, the arguments, the clip route -- is one code.
+void VpCull(uint c, bool instanceBounds)
 {
-    uint c = id.x;
     if (c >= _VpCommandCount)
     {
         return;
@@ -131,11 +146,25 @@ void CullCommands(uint3 id : SV_DispatchThreadID)
     for (uint i = 0u; i < candidates; i++)
     {
         uint instance = command.startInstance + i;
+        float3 localCentre = command.centre;
+        float3 localExtents = command.extents;
+        if (instanceBounds)
+        {
+            VpInstanceBounds own = _VpInstanceBounds[instance];
+            if (own.extents.x < 0.0)
+            {
+                continue;   // no instance in this slot: kept by neither list
+            }
+
+            localCentre = own.centre;
+            localExtents = own.extents;
+        }
+
         float4x4 objectToWorld = _VpInstanceObjectToWorld[instance];
-        float3 centre = mul(objectToWorld, float4(command.centre, 1.0)).xyz;
-        float3 axisX = float3(objectToWorld._m00, objectToWorld._m10, objectToWorld._m20) * command.extents.x;
-        float3 axisY = float3(objectToWorld._m01, objectToWorld._m11, objectToWorld._m21) * command.extents.y;
-        float3 axisZ = float3(objectToWorld._m02, objectToWorld._m12, objectToWorld._m22) * command.extents.z;
+        float3 centre = mul(objectToWorld, float4(localCentre, 1.0)).xyz;
+        float3 axisX = float3(objectToWorld._m00, objectToWorld._m10, objectToWorld._m20) * localExtents.x;
+        float3 axisY = float3(objectToWorld._m01, objectToWorld._m11, objectToWorld._m21) * localExtents.y;
+        float3 axisZ = float3(objectToWorld._m02, objectToWorld._m12, objectToWorld._m22) * localExtents.z;
 
         if (VpKeptForBody(centre, axisX, axisY, axisZ))
         {
@@ -162,4 +191,16 @@ void CullCommands(uint3 id : SV_DispatchThreadID)
     _VpForwardArguments.Store(offset + 16u, command.startInstance * _VpForwardMultiplier);
     _VpShadowArguments.Store4(offset, uint4(command.indexCount, shadowKept, command.startIndex, 0u));
     _VpShadowArguments.Store(offset + 16u, command.startInstance);
+}
+
+[numthreads(64, 1, 1)]
+void CullCommands(uint3 id : SV_DispatchThreadID)
+{
+    VpCull(id.x, false);
+}
+
+[numthreads(64, 1, 1)]
+void CullInstanceBounds(uint3 id : SV_DispatchThreadID)
+{
+    VpCull(id.x, true);
 }

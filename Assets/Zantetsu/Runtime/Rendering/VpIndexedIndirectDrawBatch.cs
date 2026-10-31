@@ -60,6 +60,7 @@ namespace Zantetsu.Rendering
         private static readonly int InstanceMultiplierId = Shader.PropertyToID("_VpInstanceMultiplier");
         private static readonly int VisibleId = Shader.PropertyToID("_VpVisible");
         private static readonly int CullCommandsId = Shader.PropertyToID("_VpCullCommands");
+        private static readonly int InstanceBoundsId = Shader.PropertyToID("_VpInstanceBounds");
         private static readonly int ShadowSliceSelectionId = Shader.PropertyToID("_VpShadowSliceSelection");
         private static readonly int CommandCountId = Shader.PropertyToID("_VpCommandCount");
         private static readonly int ArgumentStrideId = Shader.PropertyToID("_VpArgumentStride");
@@ -263,6 +264,17 @@ namespace Zantetsu.Rendering
 
         /// <summary>Whether this batch draws only the instances a compute pass keeps (see the class notes).</summary>
         public bool CullsOnGpu => _cull != null;
+
+        /// <summary>Whether its selection judges each instance by bounds of its own (<see cref="VpGpuCullSetup.InstanceBounds"/>).</summary>
+        public bool CullsByInstanceBounds => _cull != null && _cull.InstanceBounds;
+
+        /// <summary>
+        /// The bounds of each logical instance slot, in the instance's own frame (<see cref="VpInstanceBounds"/>, one a
+        /// slot of this batch's instance capacity), for a batch whose selection judges by them: the owner's buffer,
+        /// written on the GPU before the selection is issued (DESIGN 4.5.12), set here before any selection. The batch
+        /// binds it and never writes or disposes it.
+        /// </summary>
+        public GraphicsBuffer InstanceBounds { get; set; }
 
         /// <summary>How many views this batch keeps a selection for; zero for a batch that does not select.</summary>
         public int CullViewCapacity => _cull != null ? _cull.ViewCapacity : 0;
@@ -2237,6 +2249,16 @@ namespace Zantetsu.Rendering
             commands.SetComputeVectorArrayParam(shader, ShadowPlanesId, conditions.shadowPlanes);
             commands.SetComputeBufferParam(shader, kernel, CullCommandsId, _cullCommandBuffer);
             commands.SetComputeBufferParam(shader, kernel, InstanceObjectToWorldId, _instanceBuffer);
+            if (_cull.InstanceBounds)
+            {
+                if (InstanceBounds == null)
+                {
+                    throw new InvalidOperationException("this batch's selection judges by instance bounds, and none were set (InstanceBounds)");
+                }
+
+                commands.SetComputeBufferParam(shader, kernel, InstanceBoundsId, InstanceBounds);
+            }
+
             // No clip buffer: the kernel declares none (which commands are the clip route's is in the commands).
             commands.SetComputeBufferParam(shader, kernel, ForwardVisibleId, target.forwardVisible);
             commands.SetComputeBufferParam(shader, kernel, ForwardArgumentsId, target.forwardArguments);
@@ -2317,19 +2339,40 @@ namespace Zantetsu.Rendering
             int commandCount,
             Camera camera,
             int cullView)
+            => RenderForward(forwardMaterial, properties, buffers.VertexBuffer, buffers.IndexBuffer, layer, startCommand, commandCount, camera, cullView);
+
+        /// <summary>
+        /// The same forward call over any vertex and index buffer the material's variant reads (the skin draw's 24-byte
+        /// vertices, DESIGN 4.5.12): the caller sets what else that variant reads on <paramref name="properties"/>.
+        /// </summary>
+        public void RenderForward(
+            Material forwardMaterial,
+            MaterialPropertyBlock properties,
+            GraphicsBuffer vertexBuffer,
+            GraphicsBuffer indexBuffer,
+            int layer,
+            int startCommand,
+            int commandCount,
+            Camera camera,
+            int cullView)
         {
             ThrowIfDisposed();
             ThrowIfNotCulled();
             CullView view = View(cullView);
             properties.SetBuffer(VisibleId, view.forwardVisible);
-            IssueForward(forwardMaterial, properties, buffers, layer, startCommand, commandCount, camera, view.forwardArguments);
+            IssueForward(forwardMaterial, properties, vertexBuffer, indexBuffer, layer, startCommand, commandCount, camera, view.forwardArguments);
         }
 
         private void IssueForward(
             Material forwardMaterial, MaterialPropertyBlock properties, VpGpuIndexedGeometryBuffers buffers, int layer,
             int startCommand, int commandCount, Camera camera, GraphicsBuffer arguments)
+            => IssueForward(forwardMaterial, properties, buffers.VertexBuffer, buffers.IndexBuffer, layer, startCommand, commandCount, camera, arguments);
+
+        private void IssueForward(
+            Material forwardMaterial, MaterialPropertyBlock properties, GraphicsBuffer vertexBuffer, GraphicsBuffer indexBuffer, int layer,
+            int startCommand, int commandCount, Camera camera, GraphicsBuffer arguments)
         {
-            if (!BindCommands(properties, buffers, startCommand, commandCount))
+            if (!BindCommands(properties, vertexBuffer, startCommand, commandCount))
             {
                 return;
             }
@@ -2352,7 +2395,7 @@ namespace Zantetsu.Rendering
                 lightProbeUsage = LightProbeUsage.Off,
                 reflectionProbeUsage = ReflectionProbeUsage.Off,
             };
-            IssueUnityIndirect(renderParams, buffers.IndexBuffer, arguments, commandCount, startCommand);
+            IssueUnityIndirect(renderParams, indexBuffer, arguments, commandCount, startCommand);
         }
 
         /// <summary>
@@ -2395,6 +2438,19 @@ namespace Zantetsu.Rendering
             int commandCount,
             Camera camera,
             int cullView)
+            => RenderShadows(shadowMaterial, properties, buffers.VertexBuffer, buffers.IndexBuffer, layer, startCommand, commandCount, camera, cullView);
+
+        /// <summary>The same shadow call over any vertex and index buffer the material's variant reads (see the forward overload).</summary>
+        public void RenderShadows(
+            Material shadowMaterial,
+            MaterialPropertyBlock properties,
+            GraphicsBuffer vertexBuffer,
+            GraphicsBuffer indexBuffer,
+            int layer,
+            int startCommand,
+            int commandCount,
+            Camera camera,
+            int cullView)
         {
             ThrowIfDisposed();
             ThrowIfNotCulled();
@@ -2402,14 +2458,19 @@ namespace Zantetsu.Rendering
             properties.SetBuffer(VisibleId, view.shadowVisible);
             properties.SetBuffer(CullCommandsId, _cullCommandBuffer);
             properties.SetFloat(ShadowSliceSelectionId, VpGpuCullSetup.ShadowSliceSelection ? 1f : 0f);
-            IssueShadows(shadowMaterial, properties, buffers, layer, startCommand, commandCount, camera, view.shadowArguments);
+            IssueShadows(shadowMaterial, properties, vertexBuffer, indexBuffer, layer, startCommand, commandCount, camera, view.shadowArguments);
         }
 
         private void IssueShadows(
             Material shadowMaterial, MaterialPropertyBlock properties, VpGpuIndexedGeometryBuffers buffers, int layer,
             int startCommand, int commandCount, Camera camera, GraphicsBuffer arguments)
+            => IssueShadows(shadowMaterial, properties, buffers.VertexBuffer, buffers.IndexBuffer, layer, startCommand, commandCount, camera, arguments);
+
+        private void IssueShadows(
+            Material shadowMaterial, MaterialPropertyBlock properties, GraphicsBuffer vertexBuffer, GraphicsBuffer indexBuffer, int layer,
+            int startCommand, int commandCount, Camera camera, GraphicsBuffer arguments)
         {
-            if (!BindCommands(properties, buffers, startCommand, commandCount))
+            if (!BindCommands(properties, vertexBuffer, startCommand, commandCount))
             {
                 return;
             }
@@ -2423,7 +2484,7 @@ namespace Zantetsu.Rendering
                 shadowCastingMode = ShadowCastingMode.On,
                 receiveShadows = false,
             };
-            IssueUnityIndirect(renderParams, buffers.IndexBuffer, arguments, commandCount, startCommand);
+            IssueUnityIndirect(renderParams, indexBuffer, arguments, commandCount, startCommand);
         }
 
         private static void IssueUnityIndirect(
@@ -2537,6 +2598,9 @@ namespace Zantetsu.Rendering
         /// commands are not within the uploaded ones.
         /// </summary>
         private bool BindCommands(MaterialPropertyBlock properties, VpGpuIndexedGeometryBuffers buffers, int startCommand, int commandCount)
+            => BindCommands(properties, buffers.VertexBuffer, startCommand, commandCount);
+
+        private bool BindCommands(MaterialPropertyBlock properties, GraphicsBuffer vertexBuffer, int startCommand, int commandCount)
         {
             ThrowIfDisposed();
             if (startCommand < 0 || commandCount < 0 || startCommand > CommandCount - commandCount)
@@ -2549,7 +2613,7 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            properties.SetBuffer(VerticesId, buffers.VertexBuffer);
+            properties.SetBuffer(VerticesId, vertexBuffer);
             properties.SetBuffer(InstanceObjectToWorldId, _instanceBuffer);
 
             // Bound here, where the forward call and the shadow call both pass, so within one registration neither

@@ -1,0 +1,94 @@
+// The bounds of every drawn individual of the skin draw (DESIGN 4.5.12), from its skinning palette and its model's
+// bone boxes, written for the GPU selection (VpInstanceCull.compute, CullInstanceBounds), the shadow caster's slice
+// judgement and the AppSW distance selection to read. One thread per logical instance slot of the batch.
+//
+// Each bone box is the box of every vertex with a weight on that bone, at the bind pose, in the model's frame. The
+// palette matrix of the bone (renderer-local: inverse(renderer) * bone * bindPose) carries it as
+//     centre' = L * centre + t,  extents' = abs(L) * extents
+// and the instance's bounds are the union of the carried boxes. A linear blend of non-negative weights summing to one
+// lies in the convex hull of the bones' transformed points, which the union of the carried boxes holds; so every
+// skinned vertex of the instance is inside. The boxes are not averaged by weight, and the margin for the arithmetic's
+// rounding is in the boxes themselves (VpSkinModel.BoxMargin).
+//
+// A slot of no individual (the record's active flag off, or no bone) is written as empty: extents below zero.
+#pragma kernel SkinInstanceBounds
+
+// Matches Zantetsu.Rendering.VpSkinRecord, 32 bytes.
+struct VpSkinRecord
+{
+    uint paletteStart;
+    uint previousPaletteStart;
+    uint boneCount;
+    uint boneBoxStart;
+    uint flags;
+    uint pad0, pad1, pad2;
+};
+
+// Matches Zantetsu.Rendering.VpSkinBoneBox, 32 bytes; extents below zero is a bone no vertex uses.
+struct VpSkinBoneBox
+{
+    float3 centre;
+    float pad0;
+    float3 extents;
+    float pad1;
+};
+
+// Matches Zantetsu.Rendering.VpInstanceBounds, 32 bytes.
+struct VpInstanceBounds
+{
+    float3 centre;
+    float pad0;
+    float3 extents;
+    float pad1;
+};
+
+#define VP_SKIN_RECORD_ACTIVE 1u
+
+StructuredBuffer<VpSkinRecord> _VpSkinRecords;
+StructuredBuffer<float4x4> _VpSkinPalette;
+StructuredBuffer<VpSkinBoneBox> _VpSkinBoneBoxes;
+RWStructuredBuffer<VpInstanceBounds> _VpInstanceBoundsOut;
+
+uint _VpSkinInstanceCount;
+
+[numthreads(64, 1, 1)]
+void SkinInstanceBounds(uint3 id : SV_DispatchThreadID)
+{
+    uint slot = id.x;
+    if (slot >= _VpSkinInstanceCount)
+    {
+        return;
+    }
+
+    VpSkinRecord record = _VpSkinRecords[slot];
+    float3 lo = float3(1e30, 1e30, 1e30);
+    float3 hi = float3(-1e30, -1e30, -1e30);
+    bool any = false;
+    uint bones = (record.flags & VP_SKIN_RECORD_ACTIVE) != 0u ? record.boneCount : 0u;
+    [loop]
+    for (uint b = 0u; b < bones; b++)
+    {
+        VpSkinBoneBox box = _VpSkinBoneBoxes[record.boneBoxStart + b];
+        if (box.extents.x < 0.0)
+        {
+            continue;
+        }
+
+        float4x4 m = _VpSkinPalette[record.paletteStart + b];
+        float3 centre = mul(m, float4(box.centre, 1.0)).xyz;
+        float3 extents = float3(
+            abs(m._m00) * box.extents.x + abs(m._m01) * box.extents.y + abs(m._m02) * box.extents.z,
+            abs(m._m10) * box.extents.x + abs(m._m11) * box.extents.y + abs(m._m12) * box.extents.z,
+            abs(m._m20) * box.extents.x + abs(m._m21) * box.extents.y + abs(m._m22) * box.extents.z);
+        lo = min(lo, centre - extents);
+        hi = max(hi, centre + extents);
+        any = true;
+    }
+
+    VpInstanceBounds result;
+    result.centre = any ? (lo + hi) * 0.5 : float3(0.0, 0.0, 0.0);
+    result.extents = any ? (hi - lo) * 0.5 : float3(-1.0, -1.0, -1.0);
+    result.pad0 = 0.0;
+    result.pad1 = 0.0;
+    _VpInstanceBoundsOut[slot] = result;
+}

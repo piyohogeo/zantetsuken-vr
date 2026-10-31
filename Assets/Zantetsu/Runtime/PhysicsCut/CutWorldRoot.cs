@@ -567,7 +567,9 @@ namespace Zantetsu.PhysicsCut
                 UnityEngine.Debug.Log(
                     "VP BODY ROUTE: VP3C-NATIVE -- GPU selection with native argument entries, drawn by the "
                     + (VpNativeDrawPlugin.Vulkan ? "Vulkan indexed multi-draw" : "Direct3D 12 ExecuteIndirect") + " plugin, " + profile.StencilSettings.cameraCapacity + " views; shadow slice selection "
-                    + (VpGpuCullSetup.ShadowSliceSelection && !VpNativeDrawPlugin.Vulkan ? "on" : "off") + "; selected: " + BodyRouteReason
+                    + (VpGpuCullSetup.ShadowSliceSelection && !VpNativeDrawPlugin.Vulkan ? "on" : "off")
+                    + (VpNativeDrawPlugin.Vulkan ? " (skin draw casters: " + (VpGpuCullSetup.ShadowSliceSelection && VpGpuCullSetup.Skin24SliceSelectionOnVulkan ? "on, " + VpGpuCullSetup.Skin24SliceSelectionArgument : "off") + ")" : "")
+                    + "; selected: " + BodyRouteReason
                     + "; plugin: " + VpNativeDrawPlugin.DescribeState(),
                     this);
             }
@@ -675,6 +677,9 @@ namespace Zantetsu.PhysicsCut
             // What is drawn follows the physics owners, and only them: a fragment with no owner in the scene is not
             // drawn somewhere it used to be.
             Display.Placement = Placement;
+
+            // The skin draw beside the display (DESIGN 4.5.12), where the launch and the body route allow it.
+            MakeSkinDisplay(materialsBySourceIndex);
 
             Func<WorkDestination, IWorkExecutor> destinations = executors ?? nextWorldExecutors;
             nextWorldExecutors = null;
@@ -1037,6 +1042,7 @@ namespace Zantetsu.PhysicsCut
             ReleaseFusion();
             ReleaseRest();
             Owners?.Dispose();
+            ReleaseSkinDisplay();
             Display?.Dispose();
             CutInputConnectivity.Clear();
             if (_ownsPaletteBinding)

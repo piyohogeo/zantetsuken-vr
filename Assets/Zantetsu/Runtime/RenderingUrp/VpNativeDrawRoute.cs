@@ -51,7 +51,7 @@ namespace Zantetsu.Rendering.Urp
     /// route records; it never draws through Unity's calls instead.
     /// </para>
     /// </summary>
-    public sealed class VpNativeDrawRoute : IVpNativeDrawSink, IVpNativeClipDrawSink, IVpNativeClipListDrawSink, IDisposable
+    public sealed class VpNativeDrawRoute : IVpNativeDrawSink, IVpNativeClipDrawSink, IVpNativeClipListDrawSink, IVpNativeSkinDrawSink, IDisposable
     {
         // RenderGraph takes the caller's file through [CallerFilePath], which would put the building machine's
         // folders into the Player (unit 11): the project-relative path is given instead.
@@ -69,6 +69,9 @@ namespace Zantetsu.Rendering.Urp
         }
         public const string CasterVariant = "caster-plugin";
         public const string CopyShaderResource = "VpNativeConstantCopy";
+
+        /// <summary>The suffix of the skin draw's variants (DESIGN 4.5.12), after the no-clip suffix: forward-plugin-cascade-soft-stereo-noclip-skin24.</summary>
+        public const string SkinSuffix = "-skin24";
 
         // The main thread's work of this route, apart: not nested in one another, so that each is its own time. The
         // render thread's part (the plugin's event) is not here; it stands under the passes' own profiling samplers.
@@ -146,6 +149,7 @@ namespace Zantetsu.Rendering.Urp
         private GraphicsBuffer _zeroCounts;
         private int _declaredFrame = -1;
         private Camera _declaredCamera;
+        private readonly List<VpIndexedIndirectDrawBatch> _declaredBatches = new List<VpIndexedIndirectDrawBatch>(2);
         private readonly List<Block> _blocks = new List<Block>(64);
         private ComputeShader _copy;
         private int _copyKernel;
@@ -186,6 +190,8 @@ namespace Zantetsu.Rendering.Urp
             public readonly List<CpuBlock> cpuBlocks = new List<CpuBlock>(3);
             public int vertexArguments = -1, vertexVertices = -1, vertexInstances = -1, vertexClips = -1, vertexVisible = -1, vertexCullCommands = -1;
             public int pixelSpecCube = -1, pixelShadowMap = -1, pixelPaletteSurface = -1, pixelPaletteCaps = -1, pixelBaseMap = -1;
+            // The skin draw's (DESIGN 4.5.12): the instance records, the palettes, the instance bounds, the previous transforms.
+            public int vertexSkinRecords = -1, vertexSkinPalette = -1, vertexInstanceBounds = -1, vertexInstancePrevious = -1;
         }
 
         private sealed class GpuBlock
@@ -217,6 +223,10 @@ namespace Zantetsu.Rendering.Urp
             // the camera's judgement of the list; null, or not valid, issues every entry.
             public bool clipList;
             public VpClipSelection selection;
+
+            // The skin draw's run (DESIGN 4.5.12): its buffers take the place of `buffers`, and the variant is the
+            // skin one. Null for an ordinary run.
+            public VpSkinDrawBuffers skin;
         }
 
         private struct ClipIssue
@@ -396,6 +406,10 @@ namespace Zantetsu.Rendering.Urp
             public uint argumentsGeneration, visibleGeneration, instancesGeneration, clipsGeneration, cullCommandsGeneration, indexGeneration, vertexGeneration;
             public RenderTexture shadowMap;
 
+            // The skin draw's buffers (DESIGN 4.5.12), bound where the variant reads them; null for an ordinary issue.
+            public GraphicsBuffer skinRecords, skinPalette, instanceBounds, instancePrevious;
+            public uint skinRecordsGeneration, skinPaletteGeneration, instancePreviousGeneration;
+
             // The command compaction (DESIGN 4.5.10): set, the arguments are the compacted entries of the run and the
             // GPU counted them into slot countSlot of counts; the run's length is the most the draw may take
             // (vkCmdDrawIndexedIndirectCount). The frame's zero pass zeroed the slots before any compaction. zeroCounts,
@@ -423,6 +437,27 @@ namespace Zantetsu.Rendering.Urp
                 cullCommandsGeneration = batch.CullCommandGeneration;
                 vertexGeneration = buffers.VertexGeneration;
                 indexGeneration = buffers.IndexGeneration;
+            }
+
+            // The same for the skin draw's run: its geometry and its own buffers, with their generations.
+            public void TakeSkin(VpIndexedIndirectDrawBatch batch, VpSkinDrawBuffers skin)
+            {
+                argumentsGeneration = batch.CullViewGeneration;
+                visibleGeneration = batch.CullViewGeneration;
+                instancesGeneration = batch.InstanceGeneration;
+                clipsGeneration = batch.ClipGeneration;
+                cullCommandsGeneration = batch.CullCommandGeneration;
+                vertexBuffer = skin.VertexBuffer;
+                indexBuffer = skin.IndexBuffer;
+                vertexGeneration = skin.VertexGeneration;
+                indexGeneration = skin.IndexGeneration;
+                skinRecords = skin.Records;
+                skinPalette = skin.Palette;
+                instanceBounds = skin.InstanceBounds;
+                instancePrevious = skin.InstancePrevious;
+                skinRecordsGeneration = skin.RecordsGeneration;
+                skinPaletteGeneration = skin.PaletteGeneration;
+                instancePreviousGeneration = skin.PreviousGeneration;
             }
         }
 
@@ -495,6 +530,26 @@ namespace Zantetsu.Rendering.Urp
         public long BodiesIssued { get; private set; }
         public long MotionTaken { get; private set; }
         public long MotionIssued { get; private set; }
+
+        /// <summary>The skin draw's runs (DESIGN 4.5.12): taken and issued, the bodies, the casters (one a split) and the motion.</summary>
+        public long SkinBodiesTaken { get; private set; }
+        public long SkinBodiesIssued { get; private set; }
+        public long SkinCastersTaken { get; private set; }
+        public long SkinCastersIssued { get; private set; }
+        public long SkinMotionIssued { get; private set; }
+        /// <summary>The skin issues the motion pass took (counted apart from <see cref="MotionTaken"/>, as the issues are: review 3).</summary>
+        public long SkinMotionTaken { get; private set; }
+        public long SkinSelectionBarriers { get; private set; }
+
+        /// <summary>
+        /// The slice selection the last caster pass gave its issues' constants (SKIN-BENCH-3): the skin draw's casters and
+        /// the ordinary ones, each as <see cref="VpGpuCullSetup.CasterSliceSelectionFor"/> decided (null: none issued yet).
+        /// </summary>
+        public bool? SkinCasterSliceSelection { get; private set; }
+        public bool? OrdinaryCasterSliceSelection { get; private set; }
+
+        /// <summary>The context of a caster issue's shared GPU constant blocks: <see cref="VpGpuCullSetup.CasterConstantContext"/>.</summary>
+        public static int CasterConstantContext(int split, float sliceSelection) => VpGpuCullSetup.CasterConstantContext(split, sliceSelection);
         public long CastersIssued { get; private set; }
         public long CasterRunsNotDrawn { get; private set; }
 
@@ -516,6 +571,8 @@ namespace Zantetsu.Rendering.Urp
         public string LastCasterSkipReason { get; private set; }
         public int LastSplitCount { get; private set; }
         public long XrFramesNotDrawn { get; private set; }
+        /// <summary>How many pipelines this route holds now (made at the first draw of each material/variant/state: a measurement starts after they exist).</summary>
+        public int PipelineCount => _pipelines.Count;
         public long Refused { get; private set; }
         public long RingFull { get; private set; }
         public long PipelineFailures { get; private set; }
@@ -1163,7 +1220,9 @@ namespace Zantetsu.Rendering.Urp
                 commands.SetComputeIntParam(copy, InstanceMultiplierId, inputs.instanceMultiplier);
                 commands.SetComputeVectorParam(copy, ShadowBiasId, inputs.shadowBias);
                 commands.SetComputeVectorParam(copy, LightDirectionId, inputs.lightDirection);
-                commands.SetComputeFloatParam(copy, ShadowSliceSelectionId, Plugin.Vulkan ? 0f : inputs.sliceSelection);
+                // As the issue decided it (VpGpuCullSetup.CasterSliceSelectionFor): the ordinary casters' 0 on Vulkan is
+                // decided there, not here, so that the skin draw's casters may carry 1 (SKIN-BENCH-3).
+                commands.SetComputeFloatParam(copy, ShadowSliceSelectionId, inputs.sliceSelection);
                 if (inputs.stereo)
                 {
                     commands.SetComputeMatrixArrayParam(copy, StereoMatrixVpId, _stereoVP);
@@ -1229,7 +1288,50 @@ namespace Zantetsu.Rendering.Urp
 
             CastersTaken++;
             passes.casterRuns.Add(new Issue { batch = batch, buffers = buffers, material = material, startCommand = startCommand, commandCount = commandCount, view = view });
-            DeclareCasterBounds(camera, batch, buffers, material, layer);
+            DeclareCasterBounds(camera, batch, buffers.VertexBuffer, buffers.IndexBuffer, material, layer);
+        }
+
+        public void AddSkinBody(Camera camera, VpIndexedIndirectDrawBatch batch, VpSkinDrawBuffers buffers, Material material, int startCommand, int commandCount, int view, int layer)
+        {
+            CameraPasses passes = PassesOf(camera, false);
+            if (passes == null || buffers == null)
+            {
+                return;
+            }
+
+            SkinBodiesTaken++;
+            var issue = new Issue { batch = batch, material = material, startCommand = startCommand, commandCount = commandCount, view = view, skin = buffers };
+            passes.bodies.Add(issue);
+            if (Plugin.Vulkan) passes.motionBodies.Add(issue);
+        }
+
+        public void AddSkinCasters(Camera camera, VpIndexedIndirectDrawBatch batch, VpSkinDrawBuffers buffers, Material material, int startCommand, int commandCount, int view, int layer)
+        {
+            CameraPasses passes = PassesOf(camera, false);
+            if (passes == null || buffers == null)
+            {
+                return;
+            }
+
+            SkinCastersTaken++;
+            passes.casterRuns.Add(new Issue { batch = batch, material = material, startCommand = startCommand, commandCount = commandCount, view = view, skin = buffers });
+            // The skin batch's casters are told to Unity's culling as the ordinary batch's are: both, so that a frame
+            // whose casters are all of one batch still gets its shadow map (DESIGN 4.5.12).
+            DeclareCasterBounds(camera, batch, buffers.VertexBuffer, buffers.IndexBuffer, material, layer);
+        }
+
+        public bool IssueSelectionBarrier(CommandBuffer commands)
+        {
+            if (!Plugin.Vulkan) return true;
+            if (_drawData == null)
+            {
+                LastFailure = "the route's ring is not made yet (no camera enqueued)";
+                return false;
+            }
+
+            if (!IssueComputeBarrier(commands, Time.frameCount)) return false;
+            SkinSelectionBarriers++;
+            return true;
         }
 
         public void AddClipBody(Camera camera, VpGpuIndexedGeometryBuffers buffers, Material material, VpGeometryRange range,
@@ -1265,15 +1367,30 @@ namespace Zantetsu.Rendering.Urp
         /// per cascade in its shadow pass, whatever the command count. Once per camera per frame.
         /// </summary>
         private void DeclareCasterBounds(Camera camera, VpIndexedIndirectDrawBatch batch, VpGpuIndexedGeometryBuffers buffers, Material material, int layer, bool warming = false)
+            => DeclareCasterBounds(camera, batch, buffers.VertexBuffer, buffers.IndexBuffer, material, layer, warming);
+
+        // Once per camera, frame and batch: a frame drawing two batches (the ordinary display's and the skin draw's)
+        // declares both, so that neither alone completes the camera's declaration (DESIGN 4.5.12).
+        private void DeclareCasterBounds(Camera camera, VpIndexedIndirectDrawBatch batch, GraphicsBuffer vertexBuffer, GraphicsBuffer indexBuffer, Material material, int layer, bool warming = false)
         {
             int frame = Time.frameCount;
-            if (!warming && _declaredFrame == frame && ReferenceEquals(_declaredCamera, camera))
+            if (!warming)
             {
-                return;
+                if (_declaredFrame != frame || !ReferenceEquals(_declaredCamera, camera))
+                {
+                    _declaredFrame = frame;
+                    _declaredCamera = camera;
+                    _declaredBatches.Clear();
+                }
+
+                if (_declaredBatches.Contains(batch))
+                {
+                    return;
+                }
+
+                _declaredBatches.Add(batch);
             }
 
-            _declaredFrame = frame;
-            _declaredCamera = camera;
             using (DeclareMarker.Auto())
             {
                 if (_zeroArguments == null)
@@ -1283,7 +1400,7 @@ namespace Zantetsu.Rendering.Urp
                 }
 
                 batch.NativeDrawBuffers(0, out _, out GraphicsBuffer visible, out _, out _, out GraphicsBuffer instances, out GraphicsBuffer clips, out GraphicsBuffer cullCommands);
-                _declareProperties.SetBuffer("_VpVertices", buffers.VertexBuffer);
+                _declareProperties.SetBuffer("_VpVertices", vertexBuffer);
                 _declareProperties.SetBuffer("_VpInstanceObjectToWorld", instances);
                 _declareProperties.SetBuffer("_VpInstanceClip", clips);
                 _declareProperties.SetBuffer("_VpCullCommands", cullCommands);
@@ -1297,7 +1414,7 @@ namespace Zantetsu.Rendering.Urp
                     shadowCastingMode = ShadowCastingMode.ShadowsOnly,
                     receiveShadows = false,
                 };
-                Graphics.RenderPrimitivesIndexedIndirect(parameters, MeshTopology.Triangles, buffers.IndexBuffer, _zeroArguments, 1, 0);
+                Graphics.RenderPrimitivesIndexedIndirect(parameters, MeshTopology.Triangles, indexBuffer, _zeroArguments, 1, 0);
                 CasterBoundsDeclared++;
             }
         }
@@ -1310,6 +1427,9 @@ namespace Zantetsu.Rendering.Urp
                 .Append(", bodies taken ").Append(BodiesTaken).Append(", issued ").Append(BodiesIssued)
                 .Append(" (last variant ").Append(LastBodyVariant ?? "none").Append(")")
                 .Append(", motion taken ").Append(MotionTaken).Append(", issued ").Append(MotionIssued)
+                .Append(", skin bodies taken ").Append(SkinBodiesTaken).Append(" issued ").Append(SkinBodiesIssued)
+                .Append(", skin caster runs taken ").Append(SkinCastersTaken).Append(" issues ").Append(SkinCastersIssued)
+                .Append(", skin motion taken ").Append(SkinMotionTaken).Append(" issued ").Append(SkinMotionIssued).Append(", skin selection barriers ").Append(SkinSelectionBarriers)
                 .Append(", caster runs taken ").Append(CastersTaken).Append(", caster issues ").Append(CastersIssued)
                 .Append(" (last splits ").Append(LastSplitCount).Append("), caster runs not drawn ").Append(CasterRunsNotDrawn)
                 .Append(LastCasterSkipReason != null ? " (last: " + LastCasterSkipReason + ")" : "")
@@ -1627,6 +1747,13 @@ namespace Zantetsu.Rendering.Urp
         }
 
         // The names of the variants, fixed strings: nothing is concatenated per frame.
+        /// <summary>The skin draw's variant of a body or motion variant: with no clip, and the skin suffix (DESIGN 4.5.12).</summary>
+        public static string SkinVariantOf(string variant)
+        {
+            if (variant.EndsWith(SkinSuffix, StringComparison.Ordinal)) return variant;
+            return (variant.Contains("-noclip") ? variant : variant + NoClipSuffix) + SkinSuffix;
+        }
+
         private static string VariantName(string body, bool stereo)
         {
             if (!stereo) return body;
@@ -1739,6 +1866,10 @@ namespace Zantetsu.Rendering.Urp
             entry.pixelPaletteSurface = pipeline.Find(Plugin.Stage.Pixel, Plugin.BindingKind.Texture, "_VpPaletteSurface");
             entry.pixelPaletteCaps = pipeline.Find(Plugin.Stage.Pixel, Plugin.BindingKind.Texture, "_VpPaletteCaps");
             entry.pixelBaseMap = pipeline.Find(Plugin.Stage.Pixel, Plugin.BindingKind.Texture, "_BaseMap");
+            entry.vertexSkinRecords = pipeline.Find(Plugin.Stage.Vertex, Plugin.BindingKind.Buffer, "_VpSkinRecords");
+            entry.vertexSkinPalette = pipeline.Find(Plugin.Stage.Vertex, Plugin.BindingKind.Buffer, "_VpSkinPalette");
+            entry.vertexInstanceBounds = pipeline.Find(Plugin.Stage.Vertex, Plugin.BindingKind.Buffer, "_VpInstanceBounds");
+            entry.vertexInstancePrevious = pipeline.Find(Plugin.Stage.Vertex, Plugin.BindingKind.Buffer, "_VpInstancePrevious");
             _pipelines.Add(key, entry);
             return entry;
         }
@@ -1793,6 +1924,7 @@ namespace Zantetsu.Rendering.Urp
         private struct BoundPointers
         {
             public IntPtr arguments, shaderArguments, visible, instances, clips, cullCommands, indexBuffer, vertexBuffer, specCube, paletteSurface, paletteCaps, baseMap, shadowMap, gpuConstants, counts, zeroCounts;
+            public IntPtr skinRecords, skinPalette, instanceBounds, instancePrevious;
             public Texture specCubeTexture, paletteSurfaceTexture, paletteCapsTexture, baseMapTexture;
             // A texture that is a render texture is bound through its colour render buffer handle (resolved by Unity
             // when the event runs), not a texture pointer that a re-creation would leave stale.
@@ -1861,6 +1993,23 @@ namespace Zantetsu.Rendering.Urp
                 if (entry.vertexCullCommands >= 0)
                 {
                     pointers.cullCommands = _pointers.Buffer(bound.cullCommands, bound.cullCommandsGeneration);
+                }
+
+                // The skin draw's buffers (DESIGN 4.5.12): a variant that reads one of them is issued with it, or refused.
+                if (entry.vertexSkinRecords >= 0 || entry.vertexSkinPalette >= 0 || entry.vertexInstanceBounds >= 0 || entry.vertexInstancePrevious >= 0)
+                {
+                    if ((entry.vertexSkinRecords >= 0 && bound.skinRecords == null) || (entry.vertexSkinPalette >= 0 && bound.skinPalette == null)
+                        || (entry.vertexInstanceBounds >= 0 && bound.instanceBounds == null) || (entry.vertexInstancePrevious >= 0 && bound.instancePrevious == null))
+                    {
+                        PipelineFailures++;
+                        LastFailure = "the skin variant reads a skin buffer the issue does not carry";
+                        return false;
+                    }
+
+                    if (entry.vertexSkinRecords >= 0) pointers.skinRecords = _pointers.Buffer(bound.skinRecords, bound.skinRecordsGeneration);
+                    if (entry.vertexSkinPalette >= 0) pointers.skinPalette = _pointers.Buffer(bound.skinPalette, bound.skinPaletteGeneration);
+                    if (entry.vertexInstanceBounds >= 0) pointers.instanceBounds = _pointers.Buffer(bound.instanceBounds);   // GPU-written alone
+                    if (entry.vertexInstancePrevious >= 0) pointers.instancePrevious = _pointers.Buffer(bound.instancePrevious, bound.instancePreviousGeneration);
                 }
 
                 if (entry.pixelSpecCube >= 0)
@@ -1998,6 +2147,11 @@ namespace Zantetsu.Rendering.Urp
                 {
                     drawData.SetBuffer(entry.vertexCullCommands, pointers.cullCommands, bound.cullCommands.count, bound.cullCommands.stride, false);
                 }
+
+                if (entry.vertexSkinRecords >= 0) drawData.SetBuffer(entry.vertexSkinRecords, pointers.skinRecords, bound.skinRecords.count, bound.skinRecords.stride, false);
+                if (entry.vertexSkinPalette >= 0) drawData.SetBuffer(entry.vertexSkinPalette, pointers.skinPalette, bound.skinPalette.count, bound.skinPalette.stride, false);
+                if (entry.vertexInstanceBounds >= 0) drawData.SetBuffer(entry.vertexInstanceBounds, pointers.instanceBounds, bound.instanceBounds.count, bound.instanceBounds.stride, false);
+                if (entry.vertexInstancePrevious >= 0) drawData.SetBuffer(entry.vertexInstancePrevious, pointers.instancePrevious, bound.instancePrevious.count, bound.instancePrevious.stride, false);
 
                 if (entry.pixelSpecCube >= 0)
                 {
@@ -2251,7 +2405,15 @@ namespace Zantetsu.Rendering.Urp
                 }
 
                 if (_motion && (cameraData.xr == null || !cameraData.xr.enabled || !cameraData.xr.hasMotionVectorPass)) { Bodies.Clear(); return; }
-                if (_motion) _route.MotionTaken += Bodies.Count;
+                if (_motion)
+                {
+                    // Taken as they are issued: the skin's issues apart from the ordinary bodies' (SkinMotionIssued /
+                    // MotionIssued), so that a frame that issued everything compares equal in both (review 3).
+                    int skin = 0;
+                    for (int i = 0; i < Bodies.Count; i++) if (Bodies[i].skin != null) skin++;
+                    _route.MotionTaken += Bodies.Count - skin;
+                    _route.SkinMotionTaken += skin;
+                }
                 else _route.Recorded++;
                 _route.CollectResults(_passes.frame);
                 if (!_motion) _route.LastFrameIssues = 0;
@@ -2455,6 +2617,27 @@ namespace Zantetsu.Rendering.Urp
                         _motionConditions.eyePlanes[eye * VpCullConditions.EyePlaneCount + 5] = new Vector4(row.x, row.y, row.z, row.w + motionFar);
                     }
                     _motionConditions.eyeCount = eyes;
+
+                    // Every batch's distance selection first, before any issue of this pass prepares a block: the
+                    // compute barrier a compaction needs after a selection is refused while a prepared block of
+                    // another issue stands (IssueComputeBarrier), so with two batches (the display's and the skin
+                    // draw's) the second's run would be drawn fixed (review 1, item 7). Issued here, the selections
+                    // precede every issue and one barrier stands between them and the first compaction.
+                    for (int i = 0; i < Bodies.Count; i++)
+                    {
+                        Issue issue = Bodies[i];
+                        if (issue.clipList || !_motionSelected.Add(issue.batch)) continue;
+                        if (!_motionSelections.TryGetValue(issue.batch, out var selection))
+                            _motionSelections.Add(issue.batch, selection = issue.batch.CreateCullOutput());
+                        // The CPU time of recording the extra culling's commands (VpAppSwMarkers), not the GPU's.
+                        using (VpAppSwMarkers.NativeCullRecord.Auto())
+                        {
+                            // The commands of the clip route keep nothing here either: the batch's commands say which.
+                            issue.batch.IssueCull(commands, selection, _motionConditions);
+                            // Its entries are read by this pass's compaction next: the plugin's barrier goes between.
+                            _route.NoteSelectionIssued();
+                        }
+                    }
                 }
                 {
                     for (int i = 0; i < Bodies.Count; i++)
@@ -2464,7 +2647,8 @@ namespace Zantetsu.Rendering.Urp
                         // selection's own commands by the variant with no clip when the display draws its clipped
                         // instances apart (its material says so), and with the clip record otherwise. The Vulkan
                         // route's variant was settled when the pass was recorded.
-                        string issueVariant = Plugin.Vulkan ? data.variant
+                        string issueVariant = issue.skin != null ? SkinVariantOf(data.variant)
+                            : Plugin.Vulkan ? data.variant
                             : issue.clipList ? ClipListVariantOf(data.variant)
                             : _route.OrdinaryDrawsHaveNoClip(issue.material) ? data.variant + NoClipSuffix : data.variant;
                         PipelineEntry entry = _route.PipelineFor(issue.material, issueVariant, state, out string failure);
@@ -2550,27 +2734,26 @@ namespace Zantetsu.Rendering.Urp
                             out GraphicsBuffer instances, out GraphicsBuffer clips, out GraphicsBuffer cullCommands);
                         if (motionFar > 0f)
                         {
-                            if (!_motionSelections.TryGetValue(issue.batch, out var selection))
-                                _motionSelections.Add(issue.batch, selection = issue.batch.CreateCullOutput());
-                            if (_motionSelected.Add(issue.batch))
-                            {
-                                // The CPU time of recording the extra culling's commands (VpAppSwMarkers), not the GPU's.
-                                using (VpAppSwMarkers.NativeCullRecord.Auto())
-                                {
-                                    // The commands of the clip route keep nothing here either: the batch's commands say which.
-                                    issue.batch.IssueCull(commands, selection, _motionConditions);
-                                    // Its entries are read by this pass's compaction next: the plugin's barrier goes between.
-                                    _route.NoteSelectionIssued();
-                                }
-                            }
+                            // The batch's distance selection, issued above before any block of this pass was prepared.
+                            VpIndexedIndirectDrawBatch.CullOutput selection = _motionSelections[issue.batch];
                             forwardArguments = selection.ForwardArguments; forwardVisible = selection.ForwardVisible;
                         }
                         var bound = new Bound
                         {
                             arguments = forwardArguments, visible = forwardVisible, instances = instances, clips = clips, cullCommands = cullCommands,
-                            indexBuffer = issue.buffers.IndexBuffer, vertexBuffer = issue.buffers.VertexBuffer, shadowMap = shadowMap,
+                            shadowMap = shadowMap,
                         };
-                        bound.TakeGenerations(issue.batch, issue.buffers);
+                        if (issue.skin != null)
+                        {
+                            bound.TakeSkin(issue.batch, issue.skin);
+                        }
+                        else
+                        {
+                            bound.indexBuffer = issue.buffers.IndexBuffer;
+                            bound.vertexBuffer = issue.buffers.VertexBuffer;
+                            bound.TakeGenerations(issue.batch, issue.buffers);
+                        }
+
                         if (compacts)
                         {
                             // Experiment: this run's body entries compacted (the motion's from its own selection), drawn by count.
@@ -2580,7 +2763,8 @@ namespace Zantetsu.Rendering.Urp
                         }
                         if (_route.IssueOne(commands, entry, issue.material, bound, issue.startCommand, issue.commandCount, viewport, inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame))
                         {
-                            if (_motion) _route.MotionIssued++; else _route.BodiesIssued++;
+                            if (issue.skin != null) { if (_motion) _route.SkinMotionIssued++; else _route.SkinBodiesIssued++; }
+                            else if (_motion) _route.MotionIssued++; else _route.BodiesIssued++;
                             if (!_motion && !data.stereo && issue.batch.SinglePassInstanced) _route.SingleViewBodiesFromDoubled++;
                             // No string is made here: the name is the binding's, read by the diagnosis that asks.
                             _route.LastBodyGpuBlocks.Clear();
@@ -3042,13 +3226,17 @@ namespace Zantetsu.Rendering.Urp
                 _gpuConstantsUsed = 0;
                 _route._copiedGpuBlocks.Clear();
                 int firstBlock = _route._blocks.Count;
-                float sliceSelection = VpGpuCullSetup.ShadowSliceSelection ? 1f : 0f;
+                float sliceSelection = VpGpuCullSetup.ShadowSliceSelection ? 1f : 0f;   // the global switch: the direct clip casters' CPU judgement
                 bool compacts = _route.CompactsCommands;
                 if (compacts) _route.BeginCompactions();
                 {
                     for (int i = 0; i < _passes.casterRuns.Count; i++)
                     {
                         Issue issue = _passes.casterRuns[i];
+                        // The selection this issue's constants carry (SKIN-BENCH-3): the ordinary casters keep 0 on Vulkan
+                        // (their judgement would read command-zero bounds), the skin draw's may select there when asked.
+                        float issueSlice = VpGpuCullSetup.CasterSliceSelectionFor(issue.skin != null, Plugin.Vulkan, VpGpuCullSetup.ShadowSliceSelection, VpGpuCullSetup.Skin24SliceSelectionOnVulkan);
+                        if (issue.skin != null) _route.SkinCasterSliceSelection = issueSlice > 0.5f; else _route.OrdinaryCasterSliceSelection = issueSlice > 0.5f;
                         var state = new VpNativeRenderState
                         {
                             colourFormat = GraphicsFormat.None,
@@ -3062,7 +3250,8 @@ namespace Zantetsu.Rendering.Urp
                             depthBias = _route.CasterDepthBiasSigned,
                             slopeScaledDepthBias = _route.CasterSlopeScaledDepthBiasSigned,
                         };
-                        string casterVariant = Plugin.Vulkan ? (Plugin.VulkanNoClipShadowShaders ? CasterVariant + "-noclip" : CasterVariant)
+                        string casterVariant = issue.skin != null ? CasterVariant + NoClipSuffix + SkinSuffix
+                            : Plugin.Vulkan ? (Plugin.VulkanNoClipShadowShaders ? CasterVariant + "-noclip" : CasterVariant)
                             : issue.clipList ? ClipListCasterVariant
                             : _route.OrdinaryDrawsHaveNoClip(issue.material) ? CasterVariant + NoClipSuffix : CasterVariant;
                         PipelineEntry entry = _route.PipelineFor(issue.material, casterVariant, state, out string failure);
@@ -3095,9 +3284,18 @@ namespace Zantetsu.Rendering.Urp
                             bound = new Bound
                             {
                                 arguments = shadowArguments, visible = shadowVisible, instances = instances, clips = clips, cullCommands = cullCommands,
-                                indexBuffer = issue.buffers.IndexBuffer, vertexBuffer = issue.buffers.VertexBuffer,
                             };
-                            bound.TakeGenerations(issue.batch, issue.buffers);
+                            if (issue.skin != null)
+                            {
+                                bound.TakeSkin(issue.batch, issue.skin);
+                            }
+                            else
+                            {
+                                bound.indexBuffer = issue.buffers.IndexBuffer;
+                                bound.vertexBuffer = issue.buffers.VertexBuffer;
+                                bound.TakeGenerations(issue.batch, issue.buffers);
+                            }
+
                             // Experiment: the run's caster entries compacted once, drawn by count into every split.
                             if (compacts && !VpCommandCompaction.CastersFixed) _route.CompactRun(commands, issue.batch, issue.batch.CompactionOf(issue.view, _passes.frame),
                                 shadowArguments, 1, issue.startCommand, issue.commandCount, _passes.frame, ref bound);
@@ -3112,16 +3310,17 @@ namespace Zantetsu.Rendering.Urp
                                 instanceMultiplier = 1,
                                 shadowBias = _biases[split],
                                 lightDirection = data.lightDirection,
-                                sliceSelection = sliceSelection,
+                                sliceSelection = issueSlice,
                             };
                             inputs.matrixVP = inputs.projection * inputs.matrixV;
+                            int constantContext = CasterConstantContext(split, issueSlice);
                             if (issue.clipList)
                             {
                                 // A clip list's casters in this split: one issue for each run of entries the camera's
                                 // judgement keeps here -- an entry that casts into some split, and whose box does not
                                 // lie wholly outside this slice (the judgement the selection's casters make in their
                                 // vertex stage, asked under the same conditions: the switch on, a slice that is a box).
-                                bool slices = sliceSelection > 0.5f && inputs.projection.m33 == 1f;
+                                bool slices = issueSlice > 0.5f && inputs.projection.m33 == 1f;
                                 float bias = Mathf.Abs(_biases[split].x) + Mathf.Abs(_biases[split].y);
                                 int listEnd = issue.startCommand + issue.commandCount;
                                 if (split == 0) _route.ClipCasterEntriesTaken += issue.commandCount;
@@ -3140,7 +3339,7 @@ namespace Zantetsu.Rendering.Urp
                                     }
 
                                     if (split < VpCullConditions.SplitCapacity) _route._clipCasterEntriesKept[split] += run;
-                                    if (_route.IssueOne(commands, entry, issue.material, bound, at, run, _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame, constantContext: split))
+                                    if (_route.IssueOne(commands, entry, issue.material, bound, at, run, _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame, constantContext: constantContext))
                                     {
                                         _route.ClipCasterIssues++;
                                     }
@@ -3151,9 +3350,9 @@ namespace Zantetsu.Rendering.Urp
                                 continue;
                             }
 
-                            if (_route.IssueOne(commands, entry, issue.material, bound, issue.startCommand, issue.commandCount, _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame, constantContext: split))
+                            if (_route.IssueOne(commands, entry, issue.material, bound, issue.startCommand, issue.commandCount, _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame, constantContext: constantContext))
                             {
-                                _route.CastersIssued++;
+                                if (issue.skin != null) _route.SkinCastersIssued++; else _route.CastersIssued++;
                                 if (i == 0 && split == 0) _route.LastCasterGpuBlocks.Clear();
                                 for (int b = 0; b < entry.gpuBlocks.Count; b++)
                                 {

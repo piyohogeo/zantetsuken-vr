@@ -94,12 +94,24 @@ namespace Zantetsu.Core.Animation
         /// <summary>The frame the pose was last applied in, and the target and Source Time it was evaluated at.</summary>
         public int AppliedFrame { get; private set; } = -1;
 
+        /// <summary>
+        /// How many times a pose was written to the bones by this player (every successful <see cref="ApplyNow"/>, whole
+        /// or subset, and a preparation's sweep): what a reader of the bones compares to know whether they changed since
+        /// it last read them. The frame number alone cannot tell two applications in one frame apart (a hit forcing the
+        /// whole pose after the ordinary update, SKIN-BENCH-3).
+        /// </summary>
+        public int ApplyRevision { get; private set; }
+
         public double AppliedTargetTime { get; private set; } = double.NaN;
 
         public double AppliedSourceTime { get; private set; } = double.NaN;
 
         /// <summary>The seconds the last bind took: the table read and the bones resolved, once, before any playback.</summary>
         public double BindSeconds { get; private set; }
+
+        /// <summary>The seconds the last <see cref="ApplyNow"/> spent evaluating the table and applying the bones (Editor and Development only; 0 elsewhere): SKIN-BENCH-2 section 5.</summary>
+        public double LastEvaluateSeconds { get; private set; }
+        public double LastApplySeconds { get; private set; }
 
         /// <summary>Whether this plays nothing until <see cref="TryRequireBones"/> has confirmed the bones.</summary>
         public bool RequiresBones => requiresBones;
@@ -272,18 +284,23 @@ namespace Zantetsu.Core.Animation
                 _table = planned;
             }
             bool evaluated;
+            long evaluateBegan = Began();
             using (s_evaluate.Auto())
             {
                 evaluated = bones == null
                     ? _table.TryEvaluate(source, _positions, _rotations)
                     : _table.TryEvaluate(source, bones, count, _positions, _rotations);
             }
+#if ZANTETSU_OBSERVE
+            LastEvaluateSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - evaluateBegan) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
 
             if (!evaluated)
             {
                 return false;
             }
 
+            long applyBegan = Began();
             using (s_apply.Auto())
             {
                 if (bones == null)
@@ -311,6 +328,10 @@ namespace Zantetsu.Core.Animation
                 }
             }
 
+#if ZANTETSU_OBSERVE
+            LastApplySeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - applyBegan) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
+            ApplyRevision++;
             AppliedFrame = Time.frameCount;
             AppliedTargetTime = target;
             AppliedSourceTime = source;
@@ -340,6 +361,7 @@ namespace Zantetsu.Core.Animation
                 }
             }
 
+            ApplyRevision++;
             return true;
         }
 

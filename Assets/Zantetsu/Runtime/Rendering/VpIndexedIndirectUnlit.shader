@@ -22,6 +22,12 @@
 // VP_NO_CLIP is the ordinary-object variant: Clip records, calculations and SV_ClipDistance outputs are absent.
 // VP_NATIVE_DIRECT is the rare provisional Clip path: CPU direct commands select transform/Clip records from a small
 // uniform buffer. It reads neither the indirect arguments nor the GPU selection/instance storage buffers.
+// VP_SKIN24 is the skin draw's variant (DESIGN 4.5.12): the vertices are the 24-byte VpSkinVertex of a skinned model
+// (VpSkinVertex.hlsl), skinned in the vertex stage by the instance's palette -- the instance's record
+// (_VpSkinRecords) says where its palette begins in _VpSkinPalette -- and then carried by the instance transform as
+// any vertex is. The motion pass skins the position by the current and by the previous palette and carries them by the
+// current and the previous instance transform (_VpInstancePrevious). Everything after the position -- clip, shading --
+// is the ordinary code; the skin draw is drawn with VP_NO_CLIP.
 Shader "Zantetsu/VP Indexed Indirect Unlit"
 {
     Properties
@@ -60,6 +66,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #pragma multi_compile_local _ VP_NO_CLIP
             #pragma multi_compile _ VP_PIXEL_CLIP
             #pragma shader_feature_local VP_NATIVE_DIRECT
+            #pragma shader_feature_local VP_SKIN24
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing
@@ -81,7 +88,15 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #include "VpCompactVertex.hlsl"
             #include "VpPaletteAtlas.hlsl"
 
+        #if defined(VP_SKIN24)
+            // The skin draw: 24-byte vertices, each instance's record and the palettes (VpSkinVertex.hlsl).
+            #include "VpSkinVertex.hlsl"
+            StructuredBuffer<VpSkinVertex> _VpVertices;
+            StructuredBuffer<VpSkinRecord> _VpSkinRecords;
+            StructuredBuffer<float4x4> _VpSkinPalette;
+        #else
             StructuredBuffer<VpRenderVertex> _VpVertices;
+        #endif
         #if !defined(VP_NATIVE_DIRECT)
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
         #endif
@@ -213,7 +228,6 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                     return output;
                 }
 
-                VpRenderVertex vertex = _VpVertices[input.vertexID];
                 uint physicalInstance = VpPhysicalInstanceID(input.instanceID);
                 uint logicalInstance = _VpInstanceMultiplier == 2u ? physicalInstance >> 1 : physicalInstance;
             #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
@@ -224,7 +238,20 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #else
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
             #endif
-                float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
+            #if defined(VP_SKIN24)
+                // The instance's own pose: skinned in its own frame by its palette, then carried as any vertex is.
+                VpSkinVertex skin = _VpVertices[input.vertexID];
+                VpSkinRecord record = _VpSkinRecords[logicalInstance];
+                float3 positionOS;
+                float3 normalOS;
+                VpSkinPositionNormal(skin, _VpSkinPalette, record.paletteStart, positionOS, normalOS);
+                VpRenderVertex vertex = VpSkinAttributes(skin);
+            #else
+                VpRenderVertex vertex = _VpVertices[input.vertexID];
+                float3 positionOS = vertex.position;
+                float3 normalOS = VpDecodeNormal(vertex);
+            #endif
+                float3 positionWS = mul(objectToWorld, float4(positionOS, 1.0)).xyz;
 
                 // DESIGN 5.1: every plane is tested on the world position as the transform leaves it. The renderer
                 // adds no displacement of its own, so where a side is drawn is where what it follows puts it; what
@@ -242,7 +269,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #endif
 
                 output.positionCS = TransformWorldToHClip(positionWS);
-                output.normalWS = mul((float3x3)objectToWorld, VpDecodeNormal(vertex));
+                output.normalWS = mul((float3x3)objectToWorld, normalOS);
                 output.positionWS = positionWS;
                 output.uv = TRANSFORM_TEX(VpDecodeUv(vertex), _BaseMap);
                 output.rawUv = VpDecodeUv(vertex);
@@ -312,6 +339,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #pragma multi_compile_local _ VP_NO_CLIP
             #pragma multi_compile _ VP_PIXEL_CLIP
             #pragma shader_feature_local VP_NATIVE_DIRECT
+            #pragma shader_feature_local VP_SKIN24
             #pragma vertex VertexMotion
             #pragma fragment FragmentMotion
             #pragma multi_compile_instancing
@@ -329,7 +357,17 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
         #endif
             #include "VpCompactVertex.hlsl"
 
+        #if defined(VP_SKIN24)
+            // The skin draw's motion (DESIGN 4.5.12): the position by the current and by the previous palette, each
+            // carried by its own instance transform -- the object's movement and the bones' deformation both.
+            #include "VpSkinVertex.hlsl"
+            StructuredBuffer<VpSkinVertex> _VpVertices;
+            StructuredBuffer<VpSkinRecord> _VpSkinRecords;
+            StructuredBuffer<float4x4> _VpSkinPalette;
+            StructuredBuffer<float4x4> _VpInstancePrevious;
+        #else
             StructuredBuffer<VpRenderVertex> _VpVertices;
+        #endif
         #if !defined(VP_NATIVE_DIRECT)
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
         #endif
@@ -413,7 +451,6 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                     return output;
                 }
 
-                VpRenderVertex vertex = _VpVertices[input.vertexID];
                 uint physicalInstance = VpPhysicalInstanceID(input.instanceID);
                 uint logicalInstance = _VpInstanceMultiplier == 2u ? physicalInstance >> 1 : physicalInstance;
             #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
@@ -424,7 +461,16 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #else
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
             #endif
+            #if defined(VP_SKIN24)
+                VpSkinVertex skin = _VpVertices[input.vertexID];
+                VpSkinRecord record = _VpSkinRecords[logicalInstance];
+                float3 positionWS = mul(objectToWorld, float4(VpSkinPosition(skin, _VpSkinPalette, record.paletteStart), 1.0)).xyz;
+                float3 previousWS = mul(_VpInstancePrevious[logicalInstance], float4(VpSkinPosition(skin, _VpSkinPalette, record.previousPaletteStart), 1.0)).xyz;
+            #else
+                VpRenderVertex vertex = _VpVertices[input.vertexID];
                 float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
+                float3 previousWS = positionWS;
+            #endif
 
             #if !defined(VP_NO_CLIP)
             #if defined(VP_NATIVE_DIRECT)
@@ -436,10 +482,11 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #endif
 
                 // As URP's ObjectMotionVectors.hlsl under APPLICATION_SPACE_WARP_MOTION, with the instance transform
-                // already applied: current and previous clip positions of the same world point (camera-only motion).
+                // already applied: current and previous clip positions of the same world point (camera-only motion),
+                // or -- the skin draw -- of the point where it was in the previous frame (object motion and skinning).
                 output.positionCSNoJitter = mul(_NonJitteredViewProjMatrix, float4(positionWS, 1.0));
                 output.positionCS = output.positionCSNoJitter;
-                output.previousPositionCSNoJitter = mul(_PrevViewProjMatrix, float4(positionWS, 1.0));
+                output.previousPositionCSNoJitter = mul(_PrevViewProjMatrix, float4(previousWS, 1.0));
                 return output;
             }
 
