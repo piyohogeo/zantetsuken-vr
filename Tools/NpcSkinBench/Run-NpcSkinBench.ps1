@@ -17,6 +17,11 @@
   frames and steps in every launch. The Player exits by itself: 0 a valid sample, 23 completed but not a valid sample of
   the route asked for (fallback or refusals), 14 failed. Whether the comparison holds (the eye within -PoseToleranceMetres /
   -PoseToleranceDegrees, the rows in view) is in bench-result.json (comparisonValid), apart from the route's validity.
+  The launcher returns normally whenever its own cleanup succeeded, whatever the Player did; this script then reads the
+  end record (exit.txt: its last 'exit <code>' line) and the result, and throws -- a failure of this launch, a fault of
+  the matrix -- when the record is missing, the Player was killed at the timeout or in the cleanup, its exit code is
+  neither 0 nor 23, or bench-result.json is missing (TL review, 2026-10-31). Exit 23 is reported and returns normally:
+  the result says why the sample is not valid.
 .EXAMPLE
   .\Run-NpcSkinBench.ps1 -Name n64-skin24-update-cascade1 -Exe <Player.exe> -RunRoot <folder> -Route skin24 -Count 64 -Pose update -Shadows cascade1 -Invoke <path>\Invoke-XrSimPlayer.ps1
 #>
@@ -94,3 +99,15 @@ if (Test-Path -LiteralPath $result) { Get-Content -LiteralPath $result -Encoding
 $exitFile = Join-Path $run 'exit.txt'
 if (Test-Path -LiteralPath $exitFile) { Get-Content -LiteralPath $exitFile -Encoding UTF8 | Select-Object -First 3 }
 if ($launchError) { throw $launchError }
+# The end record and the result, checked here (the launcher threw only for its own failures): see .DESCRIPTION.
+if (-not (Test-Path -LiteralPath $exitFile)) { throw "no end record: $exitFile is missing (the launcher left no exit.txt)" }
+$exitLines = @(Get-Content -LiteralPath $exitFile -Encoding UTF8)
+$exitLine = @($exitLines | Where-Object { $_ -match '^exit \S+' } | Select-Object -Last 1)
+if ($exitLine.Count -eq 0) { throw "the end record has no 'exit <code>' line: $exitFile" }
+$code = ([regex]::Match($exitLine[0], '^exit (\S+)')).Groups[1].Value
+if ($code -eq 'timeout' -or ($exitLines | Where-Object { $_ -match '^TIMEOUT' }).Count -gt 0) { throw "the Player did not end within $TimeoutSeconds s and was killed (exit.txt: '$($exitLine[0])'; see $run\player.log)" }
+if ($code -notmatch '^\d+$') { throw "the Player did not end by itself (exit.txt: '$($exitLine[0])'; see $run\exit.txt)" }
+if ($code -ne '0' -and $code -ne '23') { throw "the Player ended with exit $code (0 a valid sample, 23 completed but not a sample, 14 failed; see $run\exit.txt and $run\player.log)" }
+$resultJson = Join-Path $run 'run\bench-result.json'
+if (-not (Test-Path -LiteralPath $resultJson)) { throw "the Player ended with exit $code but left no result: $resultJson is missing" }
+if ($code -eq '23') { "NOTE: the Player completed but its sample is not valid for the route asked (exit 23): see $result" }
