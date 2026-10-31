@@ -22,6 +22,8 @@ namespace Zantetsu.EditorTools.Sandbox
         public const string BootScenePath = "Assets/Scenes/" + SandboxScenario.BootSceneName + ".unity";
         public const string CityScenePath = "Assets/Licensed/WalkCity/WalkCity.unity";
         public const string NpcScenePath = "Assets/Licensed/MultiNpc/MultiNpcCity.unity";
+        /// <summary>The NPC skin benchmark's scene (npc-skin-bench), carried when it has been made (NpcSkinBenchSceneBuild).</summary>
+        public const string SkinBenchScenePath = NpcSkinBenchSceneBuild.PcScenePath;
 
         private const string OutArgument = "-zantetsuPlayerOut";
 
@@ -153,7 +155,9 @@ namespace Zantetsu.EditorTools.Sandbox
                 Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats " + before + " -> true for this build; kind "
                     + (statsVerifyDevelopment ? "Development with " + StatsVerifySymbol + " (" + StatsVerifyDevelopmentArgument + "): the statistics' VERIFICATION build for the allocation check, not for distribution"
                         : development ? "Development" : statsVerify ? "Release with " + StatsVerifySymbol + " (" + StatsVerifyArgument + "): the statistics' VERIFICATION build, not for distribution" : "Release (" + ReleaseArgument + ")"));
-                var scenes = DemoBuildPolicy.SelectScenes(new[] { CityScenePath, NpcScenePath }, out bool demo);
+                string[] privateScenes = File.Exists(SkinBenchScenePath) ? new[] { CityScenePath, NpcScenePath, SkinBenchScenePath } : new[] { CityScenePath, NpcScenePath };
+                Debug.Log("SCENARIO PLAYER BUILD: scenes " + string.Join(", ", privateScenes) + (File.Exists(SkinBenchScenePath) ? "" : " (no NPC skin bench scene: npc-skin-bench is not in this Player)"));
+                var scenes = DemoBuildPolicy.SelectScenes(privateScenes, out bool demo);
                 using (DemoBuildPolicy.Scope(demo, scenes))
                     built = !string.IsNullOrEmpty(directory) && CutWorldSandboxPlayerBuild.Build(directory, scenes, statsVerify ? new[] { StatsVerifySymbol } : null, development);
             }

@@ -83,6 +83,8 @@ namespace Zantetsu.Core.Statistics
                     sample.HasMain = Positive(t.cpuMainThreadFrameTime, out sample.MainMs);
                     sample.HasRender = Positive(t.cpuRenderThreadFrameTime, out sample.RenderMs);
                     sample.HasGpu = Positive(t.gpuFrameTime, out sample.GpuMs);
+                    sample.HasPresentWait = Positive(t.cpuMainThreadPresentWaitTime, out sample.PresentWaitMs);
+                    sample.FrameStart = t.frameStartTimestamp;
                     if (!sample.HasGpu) GpuAbsent++;
 #if ZANTETSU_OBSERVE
                     ObserveLag(frame, t.frameStartTimestamp);

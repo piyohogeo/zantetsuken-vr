@@ -25,6 +25,7 @@ namespace Zantetsu.Quest
         {
             if (kind == SandboxScenarioKind.StaticWait) return QuestStaticDemo.StartForScenario();
             if (kind == SandboxScenarioKind.EmptyXr) return QuestEmptyXrDiagnosis.StartForScenario();   // diagnosis only (unit 22)
+            if (kind == SandboxScenarioKind.NpcSkinBench) return QuestNpcSkinBench.StartForScenario();
             return QuestNpcSlashDemo.StartForScenario(kind);
         }
     }

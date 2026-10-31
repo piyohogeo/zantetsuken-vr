@@ -23,6 +23,9 @@ namespace Zantetsu.Sandbox
 
         /// <summary>DIAGNOSIS ONLY (unit 22): the empty XR scene -- the project's XR and URP configuration with nothing of the game (Quest).</summary>
         EmptyXr = 4,
+
+        /// <summary>The NPC skin benchmark: a crowd of uncut skinned individuals drawn by one skin route, measured; no cut, no crowd plan.</summary>
+        NpcSkinBench = 5,
     }
 
     /// <summary>The scenario a launch chose, where it was read from, and what is wrong with the launch if anything is.</summary>
@@ -93,7 +96,7 @@ namespace Zantetsu.Sandbox
         /// <summary>The Player's exit code when the launch's scenario cannot be run as asked.</summary>
         public const int FailureExitCode = 22;
 
-        private static readonly string[] k_names = { "play", "static-wait", "city-walk", "npc-slash", "empty-xr" };
+        private static readonly string[] k_names = { "play", "static-wait", "city-walk", "npc-slash", "empty-xr", "npc-skin-bench" };
 
         /// <summary>
         /// The development checks that start by themselves on their own argument: the sandbox scene's walk, the
@@ -134,6 +137,7 @@ namespace Zantetsu.Sandbox
                 case SandboxScenarioKind.StaticWait: return new[] { "WalkCity", "QuestStaticSeed14" };
                 case SandboxScenarioKind.NpcSlash: return new[] { "MultiNpcCity", "QuestNpcSlash10" };
                 case SandboxScenarioKind.EmptyXr: return new[] { "QuestEmptyXr" };
+                case SandboxScenarioKind.NpcSkinBench: return new[] { "NpcSkinBench", "QuestNpcSkinBench" };
                 default: return new[] { "WalkCity", "QuestCityWalk" };
             }
         }
@@ -224,29 +228,40 @@ namespace Zantetsu.Sandbox
             bool propSlash = Has(SandboxPropSlashPlayerCheck.Argument);
             bool cityWalk = Has(SandboxPropSlashPlayerCheck.CityWalkArgument);
             bool drawCompare = Has(SandboxDrawComparePlayerCheck.Argument);
+            bool skinBench = Has(NpcSkinBenchSettings.Argument);
             switch (kind)
             {
                 case SandboxScenarioKind.Play:
-                    if (propSlash || drawCompare)
+                    if (propSlash || drawCompare || skinBench)
                     {
-                        return "the launch names no scenario, which is play, and carries " + (propSlash ? SandboxPropSlashPlayerCheck.Argument : SandboxDrawComparePlayerCheck.Argument)
+                        return "the launch names no scenario, which is play, and carries " + (propSlash ? SandboxPropSlashPlayerCheck.Argument : drawCompare ? SandboxDrawComparePlayerCheck.Argument : NpcSkinBenchSettings.Argument)
                             + ", which starts a scripted run: name its scenario with " + Argument + " (" + Name(SandboxScenarioKind.StaticWait) + " for "
                             + SandboxDrawComparePlayerCheck.Argument + "; " + Name(SandboxScenarioKind.CityWalk) + " for " + SandboxPropSlashPlayerCheck.Argument + " with "
-                            + SandboxPropSlashPlayerCheck.CityWalkArgument + ", " + Name(SandboxScenarioKind.NpcSlash) + " without)";
+                            + SandboxPropSlashPlayerCheck.CityWalkArgument + ", " + Name(SandboxScenarioKind.NpcSlash) + " without; " + Name(SandboxScenarioKind.NpcSkinBench) + " for "
+                            + NpcSkinBenchSettings.Argument + ")";
                     }
 
                     return null;
                 case SandboxScenarioKind.StaticWait:
                     if (propSlash) return Name(kind) + " does not run " + SandboxPropSlashPlayerCheck.Argument;
+                    if (skinBench) return Name(kind) + " does not run " + NpcSkinBenchSettings.Argument;
                     if (!drawCompare) return Name(kind) + " needs " + SandboxDrawComparePlayerCheck.Argument + " <directory> and its arguments";
                     return null;
                 case SandboxScenarioKind.CityWalk:
                     if (drawCompare) return Name(kind) + " does not run " + SandboxDrawComparePlayerCheck.Argument;
+                    if (skinBench) return Name(kind) + " does not run " + NpcSkinBenchSettings.Argument;
                     if (!propSlash) return Name(kind) + " needs " + SandboxPropSlashPlayerCheck.Argument + " <directory> and its arguments";
                     if (!cityWalk) return Name(kind) + " needs " + SandboxPropSlashPlayerCheck.CityWalkArgument + " (without it the Prop Slash entry is " + Name(SandboxScenarioKind.NpcSlash) + ")";
                     return null;
+                case SandboxScenarioKind.NpcSkinBench:
+                    // The benchmark (DESIGN 3.4): its own argument with the results' directory; no cut, no draw comparison beside it.
+                    if (propSlash) return Name(kind) + " does not run " + SandboxPropSlashPlayerCheck.Argument;
+                    if (drawCompare) return Name(kind) + " does not run " + SandboxDrawComparePlayerCheck.Argument;
+                    if (!skinBench) return Name(kind) + " needs " + NpcSkinBenchSettings.Argument + " <directory> and its arguments";
+                    return null;
                 default:
                     if (drawCompare) return Name(kind) + " does not run " + SandboxDrawComparePlayerCheck.Argument;
+                    if (skinBench) return Name(kind) + " does not run " + NpcSkinBenchSettings.Argument;
                     if (!propSlash) return Name(kind) + " needs " + SandboxPropSlashPlayerCheck.Argument + " <directory> and its arguments";
                     if (cityWalk) return Name(kind) + " does not run " + SandboxPropSlashPlayerCheck.CityWalkArgument + " (that is " + Name(SandboxScenarioKind.CityWalk) + ")";
                     return null;
@@ -461,6 +476,10 @@ namespace Zantetsu.Sandbox
             else if (kind == SandboxScenarioKind.EmptyXr)
             {
                 failure = "the empty XR scene diagnosis runs on the Quest only (no platform entry here)";
+            }
+            else if (kind == SandboxScenarioKind.NpcSkinBench)
+            {
+                failure = NpcSkinBenchRunner.StartForScenario(scene);
             }
             else
             {

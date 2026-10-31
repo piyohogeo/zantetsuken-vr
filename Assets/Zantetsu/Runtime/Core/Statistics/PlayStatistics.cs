@@ -38,6 +38,11 @@ namespace Zantetsu.Core.Statistics
     {
         public bool HasMain, HasRender, HasGpu, HasGpuXr;
         public float MainMs, RenderMs, GpuMs, GpuXrMs;
+        /// <summary>The main thread's wait for the present within its frame (FrameTiming.cpuMainThreadPresentWaitTime); read with the main time, for the benchmark.</summary>
+        public bool HasPresentWait;
+        public float PresentWaitMs;
+        /// <summary>The result's frame start (FrameTiming.frameStartTimestamp), so that a reader can tell which frame a late result describes; 0 when no result.</summary>
+        public ulong FrameStart;
     }
 
     /// <summary>The buffers whose use and room the statistics keep (names and units in <see cref="PlayStatistics.CapacityName"/>).</summary>
