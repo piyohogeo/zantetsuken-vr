@@ -8,12 +8,17 @@
   NpcSkinBench scene. The launch is made through the city walk's Simulator launcher (Invoke-XrSimPlayer.ps1: the Simulator
   selected for this process only, its settings saved and restored, no head replay: the head stays where the Simulator puts
   it). Each route is a launch of its own: -Route smr gives -zantetsuSkinUnity, -Route skin24 gives -zantetsuSkinDraw. The
+  The launcher is not in this repository: it is unit X1 (2026-10-03) of the city walk record, generalised from
+  RunXr207.ps1, kept at <walk record>\repro-draft\final8\Tools\XrSim\Invoke-XrSimPlayer.ps1 (31,673 bytes, sha256
+  778b280d5af301524259ed715b20702756e117df61513460f86a4bf91d4aa0fc), and needs the Meta XR Simulator v207 installed; give
+  its path as -Invoke (mandatory). Another launcher may be given if it takes the same parameters (-Name, -RunRoot, -Exe,
+  -Arguments, -RecordFiles, the Simulator's selection and restore).
   measurement is -MeasureFrames frames after the pose clock's resynchronisation and -SettleFrames (SKIN-BENCH-2): the same
   frames and steps in every launch. The Player exits by itself: 0 a valid sample, 23 completed but not a valid sample of
   the route asked for (fallback or refusals), 14 failed. Whether the comparison holds (the eye within -PoseToleranceMetres /
   -PoseToleranceDegrees, the rows in view) is in bench-result.json (comparisonValid), apart from the route's validity.
 .EXAMPLE
-  .\Run-NpcSkinBench.ps1 -Name n64-skin24-update-cascade1 -Exe <Player.exe> -RunRoot <folder> -Route skin24 -Count 64 -Pose update -Shadows cascade1
+  .\Run-NpcSkinBench.ps1 -Name n64-skin24-update-cascade1 -Exe <Player.exe> -RunRoot <folder> -Route skin24 -Count 64 -Pose update -Shadows cascade1 -Invoke <path>\Invoke-XrSimPlayer.ps1
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Name,
@@ -40,7 +45,7 @@ param(
     [string]$ProfilerFile = '',            # diagnosis: the Profiler's binary log of the measurement (such a run is not a sample)
     [string[]]$Extra = @(),
     [int]$TimeoutSeconds = 600,
-    [string]$Invoke = (Join-Path $PSScriptRoot '..\XrSim\Invoke-XrSimPlayer.ps1'),   # the city walk's Simulator launcher (final8 tooling, kept outside this repository so far): give its path
+    [Parameter(Mandatory = $true)][string]$Invoke,   # the Simulator launcher Invoke-XrSimPlayer.ps1 (outside this repository; its identity in .DESCRIPTION)
     [string]$RepositoryRoot = ''
 )
 $ErrorActionPreference = 'Stop'

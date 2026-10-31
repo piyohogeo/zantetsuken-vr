@@ -40,6 +40,8 @@ def main():
     groups = {}
     excluded = []
     for r in runs:
+        if r.get('profilerDiagnosis') is True:
+            excluded.append('%s: profiler diagnosis (the Profiler\'s load is in its frames: not a performance sample)' % r['_name']); continue
         if r.get('valid') is not True or r.get('comparisonValid') is not True:
             excluded.append('%s: valid %s, comparison %s [%s]' % (r['_name'], r.get('valid'), r.get('comparisonValid'), '; '.join((r.get('invalidities') or []) + (r.get('comparisonIssues') or [])))); continue
         cond = (r.get('individuals'), r.get('pose'), r.get('shadows'), r.get('updateCount'), r.get('requestedRoute'))

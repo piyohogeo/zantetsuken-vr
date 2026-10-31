@@ -5,7 +5,8 @@ the launches that are valid AND whose comparison holds). Written as summary.csv 
 Two validities stand apart (SKIN-BENCH-2 section 2): `valid` (the route and the resources: no fallback, no refusal, no growth)
 and `comparison` (the eye within the tolerances, the rows in view, the frames asked measured) -- and, across the two routes of a
 condition, the A/B start poses within the tolerances. A launch that fails either is listed and left out of the comparison,
-with the reason.
+with the reason. A Profiler diagnosis launch (profilerDiagnosis true: the Profiler's own load is in its frames) is listed
+too and left out of every comparison (TL review, 2026-10-31).
 
 Usage: Summarize-NpcSkinBench.py <run root> [--out <folder>]"""
 import io, json, os, sys, glob, math, statistics
@@ -33,7 +34,7 @@ def stat(r, key, field='median'):
 def fmt(v, digits=3):
     return '' if v is None else ('%.*f' % (digits, v))
 
-COLUMNS = ['name', 'requestedRoute', 'actualRoute', 'valid', 'comparison', 'count', 'pose', 'shadows', 'individuals', 'models', 'vertices', 'bones', 'framesMeasured', 'steps',
+COLUMNS = ['name', 'requestedRoute', 'actualRoute', 'valid', 'comparison', 'profilerDiagnosis', 'count', 'pose', 'shadows', 'individuals', 'models', 'vertices', 'bones', 'framesMeasured', 'steps',
            'gpu_med', 'gpu_p95', 'gpu_n', 'xrgpu_med', 'xrgpu_p95', 'xrgpu_n', 'main_med', 'main_p95', 'main_n', 'render_med', 'render_p95', 'render_n', 'present_med', 'present_n', 'dt_med',
            'poseEval_med', 'poseApply_med', 'skinFrame_med', 'skinPalette_med', 'skinGather_med', 'skinUpload_med', 'skinUploadPalette_med', 'paletteWrites_med',
            'gather', 'gatherActual', 'skinSlice', 'updateCount', 'skinPrepare_med', 'skinSchedule_med', 'skinCompleteWait_med', 'skinPublish_med', 'jobs', 'lateSchedules', 'lateRegathers', 'jobFailures',
@@ -47,6 +48,7 @@ def row_of(r):
     e = r.get('eyeStart') or {}
     return {
         'name': r['name'], 'requestedRoute': r.get('requestedRoute'), 'actualRoute': r.get('actualRoute'), 'valid': r.get('valid'), 'comparison': r.get('comparisonValid'),
+        'profilerDiagnosis': r.get('profilerDiagnosis'),
         'count': r.get('count'), 'pose': r.get('pose'), 'shadows': r.get('shadows'), 'individuals': r.get('individuals'), 'models': r.get('models'),
         'vertices': r.get('vertices'), 'bones': r.get('bones'), 'framesMeasured': r.get('framesMeasured'), 'steps': '%s..%s' % (r.get('measureStepStart'), r.get('measureStepEnd')),
         'gpu_med': stat(r, 'ftGpuMs'), 'gpu_p95': stat(r, 'ftGpuMs', 'p95'), 'gpu_n': stat(r, 'ftGpuMs', 'count'),
@@ -79,13 +81,19 @@ def cell(v):
         return '%.3f' % v
     return str(v)
 
+def angle_apart(a, b):
+    """The smaller angle between two headings in degrees (359.9 and 0.1 are 0.2 apart)."""
+    x = abs(float(a) - float(b)) % 360.0
+    return 360.0 - x if x > 180.0 else x
+
 def pose_apart(a, b, tol_m, tol_d):
-    """The distance and angle between two start poses; None when either is missing."""
+    """The distance and the largest per-axis angle between two start poses; None when either is missing. Each axis is
+    wrapped on its own before the largest is taken (TL review, 2026-10-31: wrapping the largest raw difference let
+    (359.9, 0.9) against (0.1, 359.1) pass as 0.2 degrees while the pitch is 1.8 apart)."""
     if not a or not b:
         return None, None, None
     d = math.sqrt(sum((float(a.get(k, 0)) - float(b.get(k, 0))) ** 2 for k in ('x', 'y', 'z')))
-    ang = max(abs(float(a.get(k, 0)) - float(b.get(k, 0))) for k in ('yaw', 'pitch', 'roll'))
-    ang = min(ang, 360 - ang) if ang > 180 else ang
+    ang = max(angle_apart(a.get(k, 0), b.get(k, 0)) for k in ('yaw', 'pitch', 'roll'))
     return d, ang, (d <= (tol_m or 0.01) and ang <= (tol_d or 1.0))
 
 def main():
@@ -109,7 +117,7 @@ def main():
              '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
     for x in rows:
         lines.append('| %s | %s -> %s | %s | %s | %s | %s | %s (%s) | %s / %s | %s / %s (%s) | %s / %s (%s) | %s / %s | %s / %s | %s | %s / %s | %s / %s / %s / %s / %s | %s / %s / %s / %s | %s | %s | %s/%s/%s | %s/%s/%s | %s / %s | %s | %s / %s | %s / %s | %s | %s |' % (
-            x.get('name'), x.get('requestedRoute'), x.get('actualRoute'), x.get('valid'), x.get('comparison'), cell(x.get('count')), x.get('pose'), x.get('shadows'), cell(x.get('cascades')),
+            x.get('name'), x.get('requestedRoute'), x.get('actualRoute'), ('%s (profiler diagnosis)' % x.get('valid')) if x.get('profilerDiagnosis') is True else x.get('valid'), x.get('comparison'), cell(x.get('count')), x.get('pose'), x.get('shadows'), cell(x.get('cascades')),
             cell(x.get('framesMeasured')), x.get('steps'), fmt(x.get('gpu_med')), fmt(x.get('gpu_p95')), cell(x.get('gpu_n')), fmt(x.get('xrgpu_med')), fmt(x.get('xrgpu_p95')), cell(x.get('xrgpu_n')),
             fmt(x.get('main_med')), fmt(x.get('main_p95')), fmt(x.get('render_med')), fmt(x.get('render_p95')), fmt(x.get('dt_med')),
             fmt(x.get('poseEval_med')), fmt(x.get('poseApply_med')), fmt(x.get('skinFrame_med')), fmt(x.get('skinPalette_med')), fmt(x.get('skinGather_med')), fmt(x.get('skinUpload_med')), fmt(x.get('skinUploadPalette_med')),
@@ -127,6 +135,8 @@ def main():
         smr, skin = of('SMR'), of('SKIN24')
         excluded = []
         def ok(x):
+            if x.get('profilerDiagnosis') is True:
+                excluded.append(x['name'] + ': profiler diagnosis (the Profiler\'s load is in its frames: not a performance sample)'); return False
             if x.get('valid') is not True:
                 excluded.append(x['name'] + ': route invalid'); return False
             if x.get('comparison') is not True:

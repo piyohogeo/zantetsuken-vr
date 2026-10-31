@@ -31,7 +31,7 @@ param(
     [switch]$Skin24Slice,
     [int]$UpdateCount = -1,
     [string[]]$Extra = @(),
-    [string]$Invoke = (Join-Path $PSScriptRoot '..\XrSim\Invoke-XrSimPlayer.ps1'),   # the city walk's Simulator launcher (final8 tooling, kept outside this repository so far): give its path
+    [Parameter(Mandatory = $true)][string]$Invoke,   # the Simulator launcher Invoke-XrSimPlayer.ps1 (see Run-NpcSkinBench.ps1 -Invoke)
     [string]$RepositoryRoot = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -40,6 +40,7 @@ $log = Join-Path $RunRoot 'matrix.log'
 function Say([string]$text) { $line = "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) $text"; Add-Content -LiteralPath $log -Value $line -Encoding UTF8; Write-Output $line }
 Say "matrix: count $Count, repeats $Repeats, poses $($Poses -join '/'), shadows $($Shadows -join '/'), measure $MeasureFrames frames (settle $SettleFrames), fixed view $([bool]$FixedView), join gap $PaletteJoinGap, exe $Exe"
 $runs = @()
+$faults = 0
 for ($r = 1; $r -le $Repeats; $r++) {
     $order = if ($r % 2 -eq 1) { @('smr', 'skin24') } else { @('skin24', 'smr') }
     foreach ($pose in $Poses) {
@@ -55,13 +56,17 @@ for ($r = 1; $r -le $Repeats; $r++) {
                         -PoseToleranceMetres $PoseToleranceMetres -PoseToleranceDegrees $PoseToleranceDegrees -FixedView:$FixedView -PaletteJoinGap $PaletteJoinGap `
                         -Gather $Gather -WorkerFrom $WorkerFrom -Skin24Slice:$Skin24Slice -UpdateCount $UpdateCount `
                         -Extra $Extra -Invoke $Invoke -RepositoryRoot $RepositoryRoot 2>&1 | ForEach-Object { Say "  | $_" }
-                } catch { Say "  FAULT: $($_.Exception.Message)" }
+                } catch { $faults++; Say "  FAULT: $($_.Exception.Message)" }
                 $runs += $name
             }
         }
     }
 }
-Say "matrix ended: $($runs.Count) launches"
+Say "matrix ended: $($runs.Count) launches, $faults faulted"
 $python = Get-Command py -ErrorAction SilentlyContinue
 if ($python) { & py -3 (Join-Path $PSScriptRoot 'Summarize-NpcSkinBench.py') $RunRoot 2>&1 | ForEach-Object { Say "  $_" } }
 else { Say 'no py launcher: run Summarize-NpcSkinBench.py by hand' }
+# The launches go on after a fault (the matrix is the record of every attempt), but the matrix itself ends as a failure
+# when any faulted, so that a caller does not read an all-FAULT matrix as a success (TL review, 2026-10-31).
+if ($faults -gt 0) { Say "FAILED: $faults of $($runs.Count) launches faulted (see the FAULT lines above)"; exit 1 }
+exit 0
