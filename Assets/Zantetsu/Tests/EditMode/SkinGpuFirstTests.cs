@@ -26,7 +26,7 @@ namespace Zantetsu.Tests.EditMode
         [TearDown]
         public void TearDown()
         {
-            VpSkinBakeSetup.Mode = VpSkinBakeMode.Cpu;
+            VpSkinBakeSetup.Mode = VpSkinBakeSetup.Default;   // back to the DEFAULT (cpu-float since 2026-11-03), not to cpu
             foreach (IDisposable d in _disposables) d.Dispose();
             _disposables.Clear();
             foreach (UnityEngine.Object o in _objects) if (o != null) UnityEngine.Object.DestroyImmediate(o);
@@ -58,18 +58,31 @@ namespace Zantetsu.Tests.EditMode
             return mesh;
         }
 
+        /// <summary>
+        /// CPU-SKIN-FLOAT-DEFAULT-1 (2026-11-03): no argument is cpu-float, the DEFAULT; an unrecognised value keeps that default;
+        /// <c>-zantetsuSkinBake cpu</c> names the 24-byte bake explicitly (the way back), and says so (Explicit).
+        /// </summary>
         [Test]
-        public void TheLaunchChoice_IsCpuByDefault_AndTheLastRecognisedValueWins()
+        public void TheLaunchChoice_IsCpuFloatByDefault_AndTheLastRecognisedValueWins()
         {
+            Assert.That(VpSkinBakeSetup.Default, Is.EqualTo(VpSkinBakeMode.CpuFloat), "the default since 2026-11-03");
             VpSkinBakeSetup.ReadArguments(new[] { "player.exe" });
-            Assert.That(VpSkinBakeSetup.Mode, Is.EqualTo(VpSkinBakeMode.Cpu));
+            Assert.That(VpSkinBakeSetup.Mode, Is.EqualTo(VpSkinBakeMode.CpuFloat), "no argument: the default, cpu-float");
+            Assert.That(VpSkinBakeSetup.Explicit, Is.False);
             Assert.That(VpSkinBakeSetup.Unrecognised, Is.Null);
+            VpSkinBakeSetup.ReadArguments(new[] { "x", VpSkinBakeSetup.Argument, "cpu" });
+            Assert.That(VpSkinBakeSetup.Mode, Is.EqualTo(VpSkinBakeMode.Cpu), "explicit cpu: the 24-byte bake, the way back");
+            Assert.That(VpSkinBakeSetup.Explicit, Is.True);
+            VpSkinBakeSetup.ReadArguments(new[] { "x", VpSkinBakeSetup.Argument, "cpu-float" });
+            Assert.That(VpSkinBakeSetup.Mode, Is.EqualTo(VpSkinBakeMode.CpuFloat));
+            Assert.That(VpSkinBakeSetup.Explicit, Is.True);
             VpSkinBakeSetup.ReadArguments(new[] { "x", VpSkinBakeSetup.Argument, "gpu" });
             Assert.That(VpSkinBakeSetup.Mode, Is.EqualTo(VpSkinBakeMode.Gpu));
             VpSkinBakeSetup.ReadArguments(new[] { VpSkinBakeSetup.Argument, "GPU", VpSkinBakeSetup.Argument, "float" });
             Assert.That(VpSkinBakeSetup.Mode, Is.EqualTo(VpSkinBakeMode.Float));
             VpSkinBakeSetup.ReadArguments(new[] { VpSkinBakeSetup.Argument, "fast" });
-            Assert.That(VpSkinBakeSetup.Mode, Is.EqualTo(VpSkinBakeMode.Cpu), "an unrecognised value keeps the default");
+            Assert.That(VpSkinBakeSetup.Mode, Is.EqualTo(VpSkinBakeMode.CpuFloat), "an unrecognised value keeps the default (cpu-float)");
+            Assert.That(VpSkinBakeSetup.Explicit, Is.False);
             Assert.That(VpSkinBakeSetup.Unrecognised, Is.EqualTo("fast"));
             VpSkinBakeSetup.ReadArguments(new[] { VpSkinBakeSetup.Argument });
             Assert.That(VpSkinBakeSetup.Unrecognised, Is.EqualTo("(no value)"));

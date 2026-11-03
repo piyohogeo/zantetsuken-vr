@@ -45,6 +45,51 @@ namespace Zantetsu.Rendering
         /// <summary>How many models were made in this process (measurement and tests).</summary>
         public static int CreatedCount { get; private set; }
 
+        // ----- the live models (CPU-SKIN-FLOAT-DEFAULT-1 accounting): counted by live object, never by family or mesh asset ---------
+        private static readonly HashSet<VpSkinModel> s_live = new HashSet<VpSkinModel>();
+        private static long s_liveVertices, s_liveModelBytes, s_liveFloatBytes, s_peakLiveModelBytes, s_peakLiveFloatBytes;
+        private static int s_liveFloatInputs, s_peakLive, s_peakLiveFloatInputs, s_floatInputsMade, s_freed;
+        private static double s_floatPreparationTotal, s_floatPreparationMax;
+
+        /// <summary>What this model is to its maker: "share" (one a mesh of a crowd's share, read by its pooled slots) or "own" (an individual's own).</summary>
+        public string Usage { get; set; } = "own";
+
+        /// <summary>How many models are alive now (made and not yet freed).</summary>
+        public static int LiveCount => s_live.Count;
+
+        /// <summary>The bytes of the live models' float inputs now.</summary>
+        public static long LiveFloatInputBytes => s_liveFloatBytes;
+
+        /// <summary>The most models alive at once, and the most float-input bytes alive at once, in this process.</summary>
+        public static int PeakLiveCount => s_peakLive;
+        public static long PeakLiveFloatInputBytes => s_peakLiveFloatBytes;
+
+        /// <summary>Resets the peaks and the totals (tests, a scenario's start); the live set itself is what is alive.</summary>
+        public static void ResetAccountingPeaks()
+        {
+            s_peakLive = s_live.Count; s_peakLiveModelBytes = s_liveModelBytes; s_peakLiveFloatBytes = s_liveFloatBytes; s_peakLiveFloatInputs = s_liveFloatInputs;
+            s_floatInputsMade = 0; s_freed = 0; s_floatPreparationTotal = 0; s_floatPreparationMax = 0;
+        }
+
+        /// <summary>
+        /// The live models, counted by object: how many (share / own), their vertices, the bytes of the 24-byte input with the indices,
+        /// topology and bone boxes, the float inputs alive (count, bytes, the preparation times' total and largest), and the peaks of
+        /// this process. Reported at a world's end, at a walk's summary and at the Quest play's readiness.
+        /// </summary>
+        public static string DescribeLive()
+        {
+            int share = 0, own = 0;
+            foreach (VpSkinModel m in s_live) { if (m.Usage == "share") share++; else own++; }
+            var t = new System.Text.StringBuilder();
+            t.Append("skin models live ").Append(s_live.Count).Append(" (share ").Append(share).Append(", own ").Append(own).Append("), vertices ").Append(s_liveVertices)
+                .Append(", 24-byte input with indices/topology/bone boxes ").Append(s_liveModelBytes).Append(" bytes")
+                .Append("; float inputs live ").Append(s_liveFloatInputs).Append(" (").Append(s_liveFloatBytes).Append(" bytes, ").Append(VpSkinFloatVertex.Stride).Append(" a vertex)")
+                .Append("; peaks: models ").Append(s_peakLive).Append(", model bytes ").Append(s_peakLiveModelBytes).Append(", float inputs ").Append(s_peakLiveFloatInputs).Append(" (").Append(s_peakLiveFloatBytes).Append(" bytes)")
+                .Append("; float inputs made ").Append(s_floatInputsMade).Append(" (preparation incl. the array: total ").Append((s_floatPreparationTotal * 1000.0).ToString("F2", System.Globalization.CultureInfo.InvariantCulture))
+                .Append(" ms, largest ").Append((s_floatPreparationMax * 1000.0).ToString("F2", System.Globalization.CultureInfo.InvariantCulture)).Append(" ms); models made ").Append(CreatedCount).Append(", freed ").Append(s_freed);
+            return t.ToString();
+        }
+
         private VpSkinModel(Mesh mesh, VpSkinVertex[] vertices, uint[] indices, int[] topology, int topologyCount, VpSkinBoneBox[] boxes,
             Matrix4x4[] bindPoses, int usedBones, Bounds bindBounds)
         {
@@ -63,6 +108,9 @@ namespace Zantetsu.Rendering
             _topology = new NativeArray<int>(topology, Allocator.Persistent);
             _boneBoxes = new NativeArray<VpSkinBoneBox>(boxes, Allocator.Persistent);
             CreatedCount++;
+            s_live.Add(this); s_liveVertices += VertexCount; s_liveModelBytes += NativeBytes;
+            if (s_live.Count > s_peakLive) s_peakLive = s_live.Count;
+            if (s_liveModelBytes > s_peakLiveModelBytes) s_peakLiveModelBytes = s_liveModelBytes;
         }
 
         /// <summary>The mesh this model was made from (an owner compares it before lending the model to a renderer).</summary>
@@ -348,6 +396,50 @@ namespace Zantetsu.Rendering
             return _sharedInput != null;
         }
 
+        // ----- the CPU-only float input (CPU-SKIN-FLOAT-1) -----------------------------------------------------------------
+        private VpSkinFloatInput _floatInput;
+        private string _floatInputRefusal;
+        private bool _floatInputTried;
+
+        /// <summary>
+        /// The model's CPU-only float input for the synchronous bake (<c>-zantetsuSkinBake cpu-float</c>), made once by
+        /// <see cref="TryPrepareFloatInput"/>; null while not made or refused. Shared by every individual of the model, freed with it.
+        /// </summary>
+        public VpSkinFloatInput FloatInput => _floatInput;
+
+        /// <summary>Why the float input was refused, when it was; null otherwise.</summary>
+        public string FloatInputRefusal => _floatInputRefusal;
+
+        /// <summary>The bytes the float input holds beside the 24-byte input (0 when none).</summary>
+        public long FloatInputBytes => _floatInput != null ? _floatInput.NativeBytes : 0;
+
+        /// <summary>
+        /// Prepares the float input once (cold: the handle's preparation, never a hit): true when it is there; false, with the
+        /// reason kept, when the mesh is outside the accepted conditions (<see cref="VpSkinFloatInput.TryCreate"/>), and the same
+        /// answer is given again without trying again. Nothing is made unless this is called: a launch that does not ask for the
+        /// route allocates no float input.
+        /// </summary>
+        public bool TryPrepareFloatInput(out string refusal)
+        {
+            ThrowIfDisposed();
+            if (_floatInput != null) { refusal = null; return true; }
+            if (_floatInputTried) { refusal = _floatInputRefusal; return false; }
+            _floatInputTried = true;
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            VpSkinFloatInput.TryCreate(this, out _floatInput, out refusal);
+            VpSkinBakeMarks.Note("float-input", began);
+            _floatInputRefusal = refusal;
+            if (_floatInput != null)
+            {
+                s_liveFloatInputs++; s_liveFloatBytes += _floatInput.NativeBytes; s_floatInputsMade++;
+                s_floatPreparationTotal += _floatInput.PreparationSeconds; if (_floatInput.PreparationSeconds > s_floatPreparationMax) s_floatPreparationMax = _floatInput.PreparationSeconds;
+                if (s_liveFloatBytes > s_peakLiveFloatBytes) s_peakLiveFloatBytes = s_liveFloatBytes;
+                if (s_liveFloatInputs > s_peakLiveFloatInputs) s_peakLiveFloatInputs = s_liveFloatInputs;
+            }
+
+            return _floatInput != null;
+        }
+
         /// <summary>The owner's end: freed now, or when the last holder releases it.</summary>
         public void Dispose()
         {
@@ -360,6 +452,14 @@ namespace Zantetsu.Rendering
         private void Free()
         {
             if (_disposed) return;
+            if (s_live.Remove(this))
+            {
+                s_liveVertices -= VertexCount; s_liveModelBytes -= NativeBytes; s_freed++;
+                if (_floatInput != null) { s_liveFloatInputs--; s_liveFloatBytes -= _floatInput.NativeBytes; }
+                // The world's end release, visible in the Player's log (DEFAULT-1): the last live model freed, with the float inputs.
+                if (s_live.Count == 0) Debug.Log("VP SKIN MODELS (released): none live; models made " + CreatedCount + ", freed " + s_freed + "; float inputs made " + s_floatInputsMade + ", live 0 (0 bytes)");
+            }
+
             _disposed = true;
             if (_vertices.IsCreated) _vertices.Dispose();
             if (_indices.IsCreated) _indices.Dispose();
@@ -367,6 +467,8 @@ namespace Zantetsu.Rendering
             if (_boneBoxes.IsCreated) _boneBoxes.Dispose();
             _sharedInput?.Dispose();
             _sharedInput = null;
+            _floatInput?.Dispose();
+            _floatInput = null;
         }
 
         private void ThrowIfDisposed()

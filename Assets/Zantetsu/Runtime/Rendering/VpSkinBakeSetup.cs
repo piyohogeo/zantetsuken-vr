@@ -21,11 +21,19 @@ namespace Zantetsu.Rendering
         /// of the GPU route (the same arithmetic and packing, without the GPU and without the worker).
         /// </summary>
         Float = 2,
+
+        /// <summary>
+        /// The CPU-only float input (CPU-SKIN-FLOAT-1): the synchronous CPU bake of the model's float positions, normals and
+        /// weights (no quantization at the input; the output's normal is encoded as always), prepared cold once a model, with
+        /// no GPU buffer. A body the skin draw shows, or a model whose float input was refused, keeps the 24-byte bake.
+        /// </summary>
+        CpuFloat = 3,
     }
 
     /// <summary>
-    /// The launch's choice of the skin bake (<c>-zantetsuSkinBake cpu|gpu|float</c>; nothing means <see cref="VpSkinBakeMode.Cpu"/>,
-    /// the product's path as it was). Read once from the command line; a test sets <see cref="Mode"/> directly.
+    /// The launch's choice of the skin bake (<c>-zantetsuSkinBake cpu|cpu-float|gpu|float</c>; nothing means <see cref="Default"/>:
+    /// <see cref="VpSkinBakeMode.CpuFloat"/> since 2026-11-03 (CPU-SKIN-FLOAT-DEFAULT-1); <c>cpu</c> is the 24-byte bake, the default
+    /// before that date and the way back). Read once from the command line; a test sets <see cref="Mode"/> directly.
     /// The choice is a world's at its making, written in its <c>VP SKIN BAKE:</c> line; the GPU and float routes fall
     /// back to the CPU route, request by request, where their inputs or resources are refused, and that is recorded.
     /// </summary>
@@ -33,16 +41,24 @@ namespace Zantetsu.Rendering
     {
         public const string Argument = "-zantetsuSkinBake";
 
+        /// <summary>
+        /// The mode a launch without the argument runs: cpu-float since 2026-11-03 (CPU-SKIN-FLOAT-DEFAULT-1, after CPU-SKIN-FLOAT-1's
+        /// comparison); cpu (the 24-byte bake) before. <c>-zantetsuSkinBake cpu</c> is the way back.
+        /// </summary>
+        public const VpSkinBakeMode Default = VpSkinBakeMode.CpuFloat;
+
         private static bool s_read;
         private static VpSkinBakeMode s_mode;
         private static string s_unrecognised;
+        private static bool s_explicit;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void Reset()
         {
             s_read = false;
-            s_mode = VpSkinBakeMode.Cpu;
+            s_mode = Default;
             s_unrecognised = null;
+            s_explicit = false;
         }
 
         /// <summary>The mode asked for (the command line's, or what a test set).</summary>
@@ -60,6 +76,16 @@ namespace Zantetsu.Rendering
             }
         }
 
+        /// <summary>Whether the command line named a recognised mode (false: the launch runs the <see cref="Default"/>).</summary>
+        public static bool Explicit
+        {
+            get
+            {
+                Read();
+                return s_explicit;
+            }
+        }
+
         /// <summary>A value after the argument that named no mode, kept for the world's line; null when none.</summary>
         public static string Unrecognised
         {
@@ -70,18 +96,19 @@ namespace Zantetsu.Rendering
             }
         }
 
-        /// <summary>The mode's name in the launch line and the records: "cpu", "gpu" or "float".</summary>
+        /// <summary>The mode's name in the launch line and the records: "cpu", "cpu-float", "gpu" or "float".</summary>
         public static string Name(VpSkinBakeMode mode)
         {
             switch (mode)
             {
                 case VpSkinBakeMode.Gpu: return "gpu";
                 case VpSkinBakeMode.Float: return "float";
+                case VpSkinBakeMode.CpuFloat: return "cpu-float";
                 default: return "cpu";
             }
         }
 
-        /// <summary>Parses one value of the argument; false for anything but cpu, gpu or float (case does not matter).</summary>
+        /// <summary>Parses one value of the argument; false for anything but cpu, cpu-float, gpu or float (case does not matter).</summary>
         public static bool TryParse(string value, out VpSkinBakeMode mode)
         {
             mode = VpSkinBakeMode.Cpu;
@@ -91,6 +118,7 @@ namespace Zantetsu.Rendering
                 case "cpu": mode = VpSkinBakeMode.Cpu; return true;
                 case "gpu": mode = VpSkinBakeMode.Gpu; return true;
                 case "float": mode = VpSkinBakeMode.Float; return true;
+                case "cpu-float": mode = VpSkinBakeMode.CpuFloat; return true;
                 default: return false;
             }
         }
@@ -99,8 +127,9 @@ namespace Zantetsu.Rendering
         public static void ReadArguments(string[] arguments)
         {
             s_read = true;
-            s_mode = VpSkinBakeMode.Cpu;
+            s_mode = Default;
             s_unrecognised = null;
+            s_explicit = false;
             if (arguments == null) return;
             for (int i = 0; i < arguments.Length; i++)
             {
@@ -110,6 +139,7 @@ namespace Zantetsu.Rendering
                 {
                     s_mode = mode;
                     s_unrecognised = null;
+                    s_explicit = true;
                 }
                 else
                 {

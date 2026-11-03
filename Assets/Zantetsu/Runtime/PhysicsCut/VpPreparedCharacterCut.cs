@@ -72,6 +72,7 @@ namespace Zantetsu.PhysicsCut
         static readonly Unity.Profiling.ProfilerMarker s_preparePhysics = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.Physics");
         static readonly Unity.Profiling.ProfilerMarker s_prepareHitShape = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.HitShape");
         static readonly Unity.Profiling.ProfilerMarker s_prepareCold = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.Cold");
+        static readonly Unity.Profiling.ProfilerMarker s_prepareFloatInput = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.FloatInput");
 
         static bool Usable(CutWorldRoot world) => world != null && world.IsReady
             && !world.IsEnding && !world.IsReleased && !world.TerminationRequested;
@@ -126,6 +127,15 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 if (!direct) return false;
+                // CPU-SKIN-FLOAT-DEFAULT-1: under cpu-float the model's float input is prepared HERE, in the handle's cold preparation
+                // (every product path: a crowd's pooled slot over the share's model, a slot of its own, a character of its own), once a
+                // model (an individual of a model already prepared makes nothing); a cpu / float / gpu launch makes none. A hit or a held
+                // resume then reads it and makes nothing. A refusal is kept on the handle and the hit takes the 24-byte bake, saying why.
+                if (VpSkinBakeSetup.Mode == VpSkinBakeMode.CpuFloat)
+                {
+                    using (s_prepareFloatInput.Auto()) made.direct.Model.TryPrepareFloatInput(out made.floatSkinInputRefusal);
+                }
+
                 // Reserve the cold display allocations before creating/cooking per-instance physics meshes.
                 bool slot;
                 using (s_prepareSlot.Auto()) slot = world.Display.TryPrepareRoot(made.direct, out made.slot);

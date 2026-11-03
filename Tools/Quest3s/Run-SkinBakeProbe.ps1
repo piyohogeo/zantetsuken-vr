@@ -28,7 +28,7 @@ param(
     [ValidateRange(0, 60)][int]$CutStagger = 0,
     [ValidateRange(1, 20)][int]$CutRounds = 1,
     [switch]$CutNoVerify,            # the cut bench as a performance run: no picture, no readback in the measured frames
-    [ValidateSet('', 'cpu', 'gpu', 'float')][string]$SkinBake = '',   # -zantetsuSkinBake cpu|gpu|float in the intent's unity extra ('' leaves the Player's default: cpu)
+    [ValidateSet('', 'cpu', 'cpu-float', 'gpu', 'float')][string]$SkinBake = '',   # -zantetsuSkinBake cpu|cpu-float|gpu|float in the intent's unity extra ('' leaves the Player's default: cpu-float since 2026-11-03; cpu = the 24-byte bake)
     [ValidateSet('legacy', 'horizontal')][string]$CutPlane = 'legacy',   # PLANE-1: the cut bench's plane
     [ValidateRange(0, 60)][int]$CutPictureFrames = 0,   # SKIN-LINES-1: verification runs picture every frame pre..+N after the last request
     [ValidateRange(0, 60)][int]$HoldCpuReady = 0,       # PLANE-1 diagnosis: the gpu route's CPU bake held out of the dispatcher N frames

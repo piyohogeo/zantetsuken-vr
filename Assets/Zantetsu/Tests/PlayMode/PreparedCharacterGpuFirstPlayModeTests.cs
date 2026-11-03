@@ -44,7 +44,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         [TearDown]
         public void GpuFirstTearDown()
         {
-            VpSkinBakeSetup.Mode = VpSkinBakeMode.Cpu;
+            VpSkinBakeSetup.Mode = VpSkinBakeSetup.Default;   // back to the DEFAULT (cpu-float since 2026-11-03), not to cpu
+            VpSkinFloatInput.RefuseForTest = null;
             VpSkinBakePending.HoldForTest = null;
             VpSkinBakeSnapshot.FailKernelForTest = false;
             VpSkinBakeSnapshot.InvalidateOutputForTest = false;
@@ -900,6 +901,251 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(LowestSkinnedZ(handle), Is.GreaterThanOrEqualTo(4.99f));
             VpSkinBakeStats.Record record = VpSkinBakeStats.Records.Last();
             Assert.That(record.route, Is.EqualTo("float"));
+            // CPU-SKIN-FLOAT-1 review 1 (P2): this route measures no bake time -- NaN on the handle and in the record (blank in the CSV), never a zero.
+            Assert.That(double.IsNaN(handle.LastBakeKernelSeconds) && double.IsNaN(handle.LastBakeAppendSeconds) && double.IsNaN(handle.LastShowSeconds), Is.True, "not measured: NaN");
+            Assert.That(double.IsNaN(record.appendSeconds) && double.IsNaN(record.showSeconds), Is.True, "not measured in the record either");
+            string[] csv = VpSkinBakeStats.CsvLines().Last().Split(',');
+            Assert.That(csv[14], Is.Empty, "blank in the CSV (appendMs)");
+            Assert.That(csv[9], Is.Empty, "blank in the CSV (kernelMs; review 2)");
+            Assert.That(csv[15], Is.Empty, "blank in the CSV (showMs)");
+            yield return UntilCommitted(handle.Operation);
+        }
+
+        // ----- CPU-SKIN-FLOAT-1: the CPU-only float input ---------------------------------------------------------------------
+
+        /// <summary>
+        /// **The cpu-float route bakes the pose synchronously from the model's float input.** No resources, no GPU region, no
+        /// deferral: the hit is accepted at once as the 24-byte route's is, the storage holds the float bake's geometry, the record
+        /// names the route asked for and taken with the bake's own times, and the cut commits.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator CpuFloatRoute_BakesThePoseSynchronouslyFromTheFloatInput_AndTheCutIsAcceptedAtOnce()
+        {
+            VpSkinBakeSetup.Mode = VpSkinBakeMode.CpuFloat;
+            yield return ReadyCharacter(SmallRoom);
+            Assert.That(coldWorld.SkinBake, Is.Null, "the route has no resources of its own: " + coldWorld.SkinBakeReason);
+            Assert.That(coldWorld.SkinBakeRoute, Is.EqualTo("cpu-float"));
+            var handle = PrepareBonedCharacter(out Transform bone, out GameObject root);
+            yield return null;
+            Assert.That(handle.TryFinishPreparation(), Is.True, "L:TryFinishPreparation");
+            Assert.That(handle.TryPrepareFloatSkinInput(out string refusal), Is.True, refusal);
+            Assert.That(handle.SkinModelForWarm.FloatInputBytes, Is.EqualTo((long)handle.SkinModelForWarm.VertexCount * VpSkinFloatVertex.Stride));
+            coldWorld.Driver.RemainingMainSeconds = () => 1;
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(handle);
+            int syncs = VpSkinBakeStats.CpuFloatSyncs, fallbacks = VpSkinBakeStats.Fallbacks;
+            bone.localPosition = new Vector3(0, 0, 5);
+            var hits = Evaluate(detector, CharacterLevel(1, 0.3f, 2f, 8f), 1);
+            Assert.That(hits[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published).Or.EqualTo(ProvisionalCutAcceptance.Pending));
+            Assert.That(handle.Operation.IsSet, Is.True, "L:Operation.IsSet");
+            Assert.That(VpSkinBakeStats.CpuFloatSyncs - syncs, Is.EqualTo(1));
+            Assert.That(VpSkinBakeStats.Fallbacks - fallbacks, Is.Zero);
+            Assert.That(coldWorld.Display.GpuRegionCount, Is.Zero, "L:GpuRegionCount");
+            Assert.That(coldWorld.Storage.DeferredPendingCount, Is.Zero, "L:DeferredPendingCount");
+            Assert.That(LowestSkinnedZ(handle), Is.GreaterThanOrEqualTo(4.99f));
+            VpSkinBakeStats.Record record = VpSkinBakeStats.Records.Last();
+            Assert.That(record.route, Is.EqualTo("cpu-float"));
+            Assert.That(record.requestedRoute, Is.EqualTo("cpu-float"));
+            Assert.That(record.fallback, Is.Null.Or.Empty);
+            Assert.That(record.kernelSeconds, Is.GreaterThan(0.0).And.LessThanOrEqualTo(record.appendSeconds), "the kernel's time lies inside the append's");
+            Assert.That(record.appendSeconds, Is.LessThanOrEqualTo(record.hitMainSeconds), "the append's time lies inside the hit's");
+            Assert.That(handle.LastRoute, Is.EqualTo("cpu-float"));
+            Assert.That(handle.LastRequestedRoute, Is.EqualTo("cpu-float"));
+            Assert.That(handle.LastBakeAppendSeconds, Is.EqualTo(record.appendSeconds));
+            yield return UntilCommitted(handle.Operation);
+        }
+
+        /// <summary>
+        /// **A model whose float input is refused takes the 24-byte bake under cpu-float, and says why.** The handle's preparation asked
+        /// for the input and was refused (the test's reason): the hit is accepted as before, the record's route is cpu, the route asked
+        /// for cpu-float, the fallback's reason the refused input, and nothing was allocated for it. (Before CPU-SKIN-FLOAT-DEFAULT-1 the
+        /// case was "not prepared"; the default's preparation makes the input, so the refusal is what remains to test.)
+        /// </summary>
+        [UnityTest]
+        public IEnumerator CpuFloatRoute_WithoutTheFloatInput_TakesThe24ByteBake_AndSaysWhy()
+        {
+            VpSkinBakeSetup.Mode = VpSkinBakeMode.CpuFloat;
+            VpSkinFloatInput.RefuseForTest = "refused for the test";
+            yield return ReadyCharacter(SmallRoom);
+            var handle = PrepareBonedCharacter(out Transform bone, out GameObject root);
+            yield return null;
+            Assert.That(handle.TryFinishPreparation(), Is.True, "L:TryFinishPreparation");
+            Assert.That(handle.FloatSkinInputRefusal, Is.EqualTo("refused for the test"), "the preparation asked and was refused");
+            Assert.That(handle.SkinModelForWarm.FloatInput, Is.Null, "nothing was made");
+            Assert.That(handle.SkinModelForWarm.FloatInputBytes, Is.Zero, "nothing allocated for the refused input");
+            coldWorld.Driver.RemainingMainSeconds = () => 1;
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(handle);
+            int cpu = VpSkinBakeStats.CpuSyncs, syncs = VpSkinBakeStats.CpuFloatSyncs, fallbacks = VpSkinBakeStats.Fallbacks;
+            bone.localPosition = new Vector3(0, 0, 5);
+            var hits = Evaluate(detector, CharacterLevel(1, 0.3f, 2f, 8f), 1);
+            Assert.That(hits[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published).Or.EqualTo(ProvisionalCutAcceptance.Pending));
+            Assert.That(VpSkinBakeStats.CpuSyncs - cpu, Is.EqualTo(1));
+            Assert.That(VpSkinBakeStats.CpuFloatSyncs - syncs, Is.Zero);
+            Assert.That(VpSkinBakeStats.Fallbacks - fallbacks, Is.EqualTo(1));
+            VpSkinBakeStats.Record record = VpSkinBakeStats.Records.Last();
+            Assert.That(record.route, Is.EqualTo("cpu"));
+            Assert.That(record.requestedRoute, Is.EqualTo("cpu-float"));
+            Assert.That(record.fallback, Does.Contain("float input"));
+            Assert.That(handle.DeferredFallbackReason, Does.Contain("float input"));
+            Assert.That(LowestSkinnedZ(handle), Is.GreaterThanOrEqualTo(4.99f));
+            yield return UntilCommitted(handle.Operation);
+        }
+
+        /// <summary>
+        /// **A body the skin draw shows keeps the 24-byte bake.** The display's vertex stage reads the 24-byte input, so the cut's
+        /// geometry stays that input's; the float input, though prepared, is not read, and the record says why.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator CpuFloatRoute_ABodyDrawnByTheSkinDraw_KeepsThe24ByteBake()
+        {
+            VpSkinBakeSetup.Mode = VpSkinBakeMode.CpuFloat;
+            yield return ReadyCharacter(SmallRoom);
+            var handle = PrepareBonedCharacter(out Transform bone, out GameObject root);
+            yield return null;
+            Assert.That(handle.TryFinishPreparation(), Is.True, "L:TryFinishPreparation");
+            Assert.That(handle.TryPrepareFloatSkinInput(out string refusal), Is.True, refusal);
+            handle.DisplayedBySkinDraw = true;
+            coldWorld.Driver.RemainingMainSeconds = () => 1;
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(handle);
+            int cpu = VpSkinBakeStats.CpuSyncs, syncs = VpSkinBakeStats.CpuFloatSyncs;
+            bone.localPosition = new Vector3(0, 0, 5);
+            var hits = Evaluate(detector, CharacterLevel(1, 0.3f, 2f, 8f), 1);
+            Assert.That(hits[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published).Or.EqualTo(ProvisionalCutAcceptance.Pending));
+            Assert.That(VpSkinBakeStats.CpuSyncs - cpu, Is.EqualTo(1));
+            Assert.That(VpSkinBakeStats.CpuFloatSyncs - syncs, Is.Zero);
+            VpSkinBakeStats.Record record = VpSkinBakeStats.Records.Last();
+            Assert.That(record.route, Is.EqualTo("cpu"));
+            Assert.That(record.requestedRoute, Is.EqualTo("cpu-float"));
+            Assert.That(record.fallback, Does.Contain("skin draw"));
+            yield return UntilCommitted(handle.Operation);
+        }
+
+        /// <summary>
+        /// **A held request resumed under cpu-float bakes the hit's pose from the float input.** Held before acceptance for want of
+        /// room, taken up by the driver's update once the room comes back: the same one acceptance, the pose the hit met (not the
+        /// bones' position at the resume), the route taken cpu-float, no fallback -- the order of a held resume is the 24-byte route's.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator CpuFloatRoute_AHeldRequest_ResumesFromTheHitsPose_ByTheFloatInput()
+        {
+            VpSkinBakeSetup.Mode = VpSkinBakeMode.CpuFloat;
+            yield return ReadyCharacter(SmallRoom);
+            var handle = PrepareBonedCharacter(out Transform bone, out GameObject root);
+            yield return null;
+            Assert.That(handle.TryFinishPreparation(), Is.True, "L:TryFinishPreparation");
+            Assert.That(handle.TryPrepareFloatSkinInput(out string refusal), Is.True, refusal);
+            coldWorld.Driver.RemainingMainSeconds = () => 1;
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(handle);
+            VpCutOutputReservation held = HoldAllButThreeVertices();
+            int fallbacks = VpSkinBakeStats.Fallbacks;
+            bone.localPosition = new Vector3(0, 0, 5);
+            var hits = Evaluate(detector, CharacterLevel(1, 0.3f, 2f, 8f), 1);
+            Assert.That(hits.Count, Is.EqualTo(1));
+            Assert.That(hits[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Held), "held, before acceptance");
+            Assert.That(handle.IsHeld, Is.True);
+            Assert.That(handle.LastRoute, Is.Null, "no bake yet: the hold comes before the display input");
+            for (int i = 0; i < 3; i++) yield return null;
+            Assert.That(handle.IsHeld, Is.True);
+            bone.localPosition = new Vector3(0, 0, -5);
+            Assert.That(coldWorld.Storage.TryCancelCutOutput(held), Is.True, "the other work gives its room back");
+            yield return null;
+            Assert.That(handle.IsHeld, Is.False, "taken up by the driver's update");
+            Assert.That(handle.Operation.IsSet, Is.True, "accepted: one Operation");
+            Assert.That(handle.LastRoute, Is.EqualTo("cpu-float"), "the resume baked from the float input");
+            Assert.That(handle.LastRequestedRoute, Is.EqualTo("cpu-float"));
+            Assert.That(handle.DeferredFallbackReason, Is.Null);
+            Assert.That(VpSkinBakeStats.Fallbacks - fallbacks, Is.Zero);
+            Assert.That(double.IsNaN(handle.LastBakeKernelSeconds), Is.False, "the resume's bake was measured");
+            Assert.That(coldWorld.Geometry.TryGetGeometry(handle.Source, out VpStoredGeometry input), Is.True);
+            Assert.That(coldWorld.Storage.TryGetCommittedVertices(input.vertexStart, input.vertexCount, out NativeArray<VpRenderVertex> skinned), Is.True);
+            for (int v = 0; v < skinned.Length; v++) Assert.That(skinned[v].position.z, Is.GreaterThanOrEqualTo(4.99f), "skinned at the bone the hit met (z 5), not where it is now (z -5)");
+            CutOperationId operation = handle.Operation;
+            yield return UntilCommitted(operation);
+            Assert.That(coldWorld.Ledger.OperationCount, Is.EqualTo(1), "one acceptance, not two");
+        }
+
+        // ----- CPU-SKIN-FLOAT-DEFAULT-1: the default is cpu-float ---------------------------------------------------------------
+
+        /// <summary>
+        /// **Without any argument the route is cpu-float, and a normally prepared body is cut by it.** Nothing of the test prepares the
+        /// float input: the handle's cold preparation made it (one a model), the world's line says the default, the hit's record names
+        /// cpu-float as asked and taken, with no fallback, and the bake was measured.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Default_IsCpuFloat_AndANormallyPreparedBodyIsCutByIt()
+        {
+            VpSkinBakeSetup.ReadArguments(new[] { "player.exe" });   // no argument: the launch's default
+            Assert.That(VpSkinBakeSetup.Mode, Is.EqualTo(VpSkinBakeMode.CpuFloat));
+            Assert.That(VpSkinBakeSetup.Explicit, Is.False);
+            yield return ReadyCharacter(SmallRoom);
+            Assert.That(coldWorld.SkinBakeRoute, Is.EqualTo("cpu-float"));
+            Assert.That(coldWorld.SkinBakeReason, Does.Contain("default"));
+            Assert.That(coldWorld.SkinBake, Is.Null, "no GPU resources");
+            int floatInputs = VpSkinFloatInput.CreatedCount;
+            var handle = PrepareBonedCharacter(out Transform bone, out GameObject root);
+            yield return null;
+            Assert.That(handle.TryFinishPreparation(), Is.True, "L:TryFinishPreparation");
+            Assert.That(handle.FloatSkinInputRefusal, Is.Null, "the preparation made the float input");
+            Assert.That(handle.SkinModelForWarm.FloatInput, Is.Not.Null, "made by the handle's cold preparation, not by the test");
+            Assert.That(VpSkinFloatInput.CreatedCount - floatInputs, Is.EqualTo(1), "one input for the one model");
+            Assert.That(handle.SkinModelForWarm.SharedInput, Is.Null, "no GPU shared input under cpu-float");
+            coldWorld.Driver.RemainingMainSeconds = () => 1;
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(handle);
+            int syncs = VpSkinBakeStats.CpuFloatSyncs, cpu = VpSkinBakeStats.CpuSyncs, fallbacks = VpSkinBakeStats.Fallbacks;
+            bone.localPosition = new Vector3(0, 0, 5);
+            var hits = Evaluate(detector, CharacterLevel(1, 0.3f, 2f, 8f), 1);
+            Assert.That(hits[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published).Or.EqualTo(ProvisionalCutAcceptance.Pending));
+            Assert.That(VpSkinBakeStats.CpuFloatSyncs - syncs, Is.EqualTo(1), "cut by cpu-float");
+            Assert.That(VpSkinBakeStats.CpuSyncs - cpu, Is.Zero, "not by the 24-byte bake");
+            Assert.That(VpSkinBakeStats.Fallbacks - fallbacks, Is.Zero, "no fallback");
+            Assert.That(VpSkinFloatInput.CreatedCount - floatInputs, Is.EqualTo(1), "the hit made no input");
+            VpSkinBakeStats.Record record = VpSkinBakeStats.Records.Last();
+            Assert.That(record.route, Is.EqualTo("cpu-float"));
+            Assert.That(record.requestedRoute, Is.EqualTo("cpu-float"));
+            Assert.That(double.IsNaN(record.kernelSeconds), Is.False, "the bake was measured");
+            Assert.That(LowestSkinnedZ(handle), Is.GreaterThanOrEqualTo(4.99f));
+            yield return UntilCommitted(handle.Operation);
+        }
+
+        /// <summary>
+        /// **Explicit cpu is the 24-byte bake, the way back.** <c>-zantetsuSkinBake cpu</c>: no float input is made at the preparation, the
+        /// world's line says cpu, the hit's record names cpu as asked and taken, with no fallback.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator ExplicitCpu_IsThe24ByteBake_AndMakesNoFloatInput()
+        {
+            VpSkinBakeSetup.ReadArguments(new[] { "player.exe", VpSkinBakeSetup.Argument, "cpu" });
+            Assert.That(VpSkinBakeSetup.Mode, Is.EqualTo(VpSkinBakeMode.Cpu));
+            Assert.That(VpSkinBakeSetup.Explicit, Is.True);
+            yield return ReadyCharacter(SmallRoom);
+            Assert.That(coldWorld.SkinBakeRoute, Is.EqualTo("cpu"));
+            Assert.That(coldWorld.SkinBakeReason, Does.Contain("asked"));
+            int floatInputs = VpSkinFloatInput.CreatedCount;
+            var handle = PrepareBonedCharacter(out Transform bone, out GameObject root);
+            yield return null;
+            Assert.That(handle.TryFinishPreparation(), Is.True, "L:TryFinishPreparation");
+            Assert.That(handle.SkinModelForWarm.FloatInput, Is.Null, "no float input under cpu");
+            Assert.That(handle.SkinModelForWarm.FloatInputBytes, Is.Zero);
+            Assert.That(VpSkinFloatInput.CreatedCount - floatInputs, Is.Zero, "nothing made");
+            coldWorld.Driver.RemainingMainSeconds = () => 1;
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(handle);
+            int syncs = VpSkinBakeStats.CpuFloatSyncs, cpu = VpSkinBakeStats.CpuSyncs, fallbacks = VpSkinBakeStats.Fallbacks;
+            bone.localPosition = new Vector3(0, 0, 5);
+            var hits = Evaluate(detector, CharacterLevel(1, 0.3f, 2f, 8f), 1);
+            Assert.That(hits[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published).Or.EqualTo(ProvisionalCutAcceptance.Pending));
+            Assert.That(VpSkinBakeStats.CpuSyncs - cpu, Is.EqualTo(1), "the 24-byte bake");
+            Assert.That(VpSkinBakeStats.CpuFloatSyncs - syncs, Is.Zero);
+            Assert.That(VpSkinBakeStats.Fallbacks - fallbacks, Is.Zero, "no fallback: cpu was asked for");
+            VpSkinBakeStats.Record record = VpSkinBakeStats.Records.Last();
+            Assert.That(record.route, Is.EqualTo("cpu"));
+            Assert.That(record.requestedRoute, Is.EqualTo("cpu"));
+            Assert.That(record.fallback, Is.Null.Or.Empty);
+            Assert.That(LowestSkinnedZ(handle), Is.GreaterThanOrEqualTo(4.99f));
             yield return UntilCommitted(handle.Operation);
         }
     }

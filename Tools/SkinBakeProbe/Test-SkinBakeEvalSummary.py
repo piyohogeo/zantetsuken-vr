@@ -155,6 +155,10 @@ def main():
         rc2 = S.main(['x', os.path.join(root, 'cutt-gpu1-A'), os.path.join(root, 'cutt-gpu1-B'), os.path.join(root, 'cutt-cpu1-A'), os.path.join(root, 'cutt-cpu1-B'), os.path.join(root, 'cutt-cpu1-C'), os.path.join(root, 'cutt-cpu1-Z'), '--out', out, '--window', '32'])
         text2 = open(out, encoding='utf-8').read()
         ok &= check(rc2 == 0 and 'INVALID' in text2 and '| local |' in text2 and '(build zzz99999)' in text2 and '(build abc12345)' in text2, '17. the summary names the invalid rounds, the local kind and each build')
+        # review 1 (CPU-SKIN-FLOAT-1): a bake time the route did not measure is blank -> None -> the metric is None and the comparison is skipped, never a 0
+        ok &= check(runA.rounds[1]['bakeKernelMs'] is None and runA.rounds[1]['bakeAppendMs'] is None and runA.rounds[1]['showMs'] is None, '18. a record without bake-time columns gives None, not 0')
+        ok &= check(S.compare(groups, 'PC', 'abc12345', 1, 'cpu', 'gpu', 'bakeKernelMs') is None, '18b. no comparison on an unmeasured bake time')
+        ok &= check(S.f('NaN') is None and S.f('') is None and S.f('nan') is None and S.f('0.5') == 0.5, '18c. a NaN string is None, never a number (review 2)')
     finally:
         shutil.rmtree(root, ignore_errors=True)
     print('ALL PASS' if ok else 'SOME FAILED')

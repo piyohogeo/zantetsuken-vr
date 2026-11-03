@@ -283,6 +283,11 @@ namespace Zantetsu.PhysicsCut
             bool registered=false;
             long runBegan=System.Diagnostics.Stopwatch.GetTimestamp();
             string route="cpu";
+            // CPU-SKIN-FLOAT-1: what this request records of its bake (the benches read them from the handle right after the call). NaN = not
+            // measured (the GPU-first and the experimental float routes measure no bake here; review 1): blank in the records, never a zero.
+            double appendSeconds=double.NaN,kernelSeconds=double.NaN,showSeconds=double.NaN;
+            LastRoute=null; LastRequestedRoute=VpSkinBakeSetup.Name(VpSkinBakeSetup.Mode);
+            LastBakeKernelSeconds=LastBakeAppendSeconds=LastShowSeconds=double.NaN;
             // The GPU-first route's pieces (DESIGN 4.5.15): the geometry shown from the GPU bake and the world's bake work.
             bool gpuFirst=false; VpStoredGeometry gpuGeometry=default; VpSkinBakePending.Work gpuWork=null;
             try
@@ -342,7 +347,23 @@ namespace Zantetsu.PhysicsCut
                 else
                 {
                     if(fromHit && VpSkinBakeSetup.Mode==VpSkinBakeMode.Float && world.Storage.RoomRefusalCount==refusalsBefore)VpSkinBakeStats.NoteFallback("float: "+floatWhy);
-                    appended=direct.TryAppendCapturedForDisplay(world.Storage,out output);
+                    // The CPU-only float input (CPU-SKIN-FLOAT-1): asked for by -zantetsuSkinBake cpu-float, read when the model prepared it
+                    // and the body is not drawn by the skin draw (whose 24-byte input the display must match); the 24-byte bake otherwise,
+                    // with the reason. The same synchronous append either way: nothing of the order of the hit or of a held resume changes.
+                    bool wantFloatInput=VpSkinBakeSetup.Mode==VpSkinBakeMode.CpuFloat;
+                    if(wantFloatInput)
+                    {
+                        string floatInputWhy=DisplayedBySkinDraw ? "skin draw display: the 24-byte input is the display's"
+                            : direct.Model.FloatInput==null ? "float input: "+(direct.Model.FloatInputRefusal??"not prepared") : null;
+                        if(floatInputWhy!=null){wantFloatInput=false;DeferredFallbackReason=floatInputWhy;VpSkinBakeStats.NoteFallback("cpu-float: "+floatInputWhy);}
+                    }
+                    direct.FloatInputRequested=wantFloatInput;
+                    long appendBegan=System.Diagnostics.Stopwatch.GetTimestamp();
+                    try { appended=direct.TryAppendCapturedForDisplay(world.Storage,out output); }
+                    finally { direct.FloatInputRequested=false; }
+                    appendSeconds=(System.Diagnostics.Stopwatch.GetTimestamp()-appendBegan)/(double)System.Diagnostics.Stopwatch.Frequency;
+                    kernelSeconds=direct.LastKernelSeconds;
+                    if(appended && direct.LastBakeUsedFloatInput)route="cpu-float";
                 }
                 VpStoredGeometry shownGeometry=gpuFirst?gpuGeometry:floatRoute?floatGeometry:output.Geometry;
                 displayScope.Dispose();
@@ -387,9 +408,12 @@ namespace Zantetsu.PhysicsCut
                 // Issued here unless a hit already identified this character; either way the cut names that fragment.
                 if(!Source.IsSet)Source=world.Ledger.AddFragment();
                 // The GPU-first route showed its root already (TryBeginGpuFirst, this same call).
+                long showBegan=System.Diagnostics.Stopwatch.GetTimestamp();
                 bool shownOk=gpuFirst ? true : floatRoute
                     ? world.Display.TryShowPreparedRootGeometry(slot,floatGeometry,Source,renderer.transform.localToWorldMatrix)
                     : world.Display.TryShowPreparedRoot(slot,output,Source,renderer.transform.localToWorldMatrix,Matrix4x4.identity);
+                // The show's time is measured for the synchronous 24-byte / cpu-float route only (the same scope as the bake's): the others stay NaN.
+                if(!gpuFirst && !floatRoute)showSeconds=(System.Diagnostics.Stopwatch.GetTimestamp()-showBegan)/(double)System.Diagnostics.Stopwatch.Frequency;
                 if(!shownOk)
                 {
                     // A refused show took nothing in: the display registers a geometry only as its last step, and every
@@ -427,11 +451,12 @@ namespace Zantetsu.PhysicsCut
                     using(s_request.Auto()) accepted=world.Driver.RequestPreparedCut(ask,lease,out transaction,out _);
                     if(transaction!=null)Operation=transaction.Operation;
                     if(accepted==ProvisionalCutAcceptance.Pending)withdrawal.BeginCutDisplay();
+                    LastRoute=route; LastBakeKernelSeconds=kernelSeconds; LastBakeAppendSeconds=appendSeconds; LastShowSeconds=showSeconds;
                     if(fromHit)
                     {
                         double hitSeconds=(System.Diagnostics.Stopwatch.GetTimestamp()-runBegan)/(double)System.Diagnostics.Stopwatch.Frequency;
                         if(gpuFirst)VpSkinBakeStats.NoteGpuHit(gpuWork.RequestId,direct.VertexCount,direct.Model.BoneCount,Time.frameCount,hitSeconds,gpuWork.Snapshot!=null?gpuWork.Snapshot.Dispatches:0,accepted);
-                        else VpSkinBakeStats.NoteSync(route,direct.VertexCount,hitSeconds,0,accepted);
+                        else VpSkinBakeStats.NoteSync(route,LastRequestedRoute,direct.VertexCount,hitSeconds,kernelSeconds,appendSeconds,showSeconds,route==LastRequestedRoute?null:DeferredFallbackReason,accepted);
                     }
                     return Result(VpCharacterCutOutcome.Requested,accepted);
                 }

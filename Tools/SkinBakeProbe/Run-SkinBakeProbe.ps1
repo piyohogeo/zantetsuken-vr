@@ -44,7 +44,7 @@ param(
     [ValidateRange(1, 120)][int]$MotionCheckHold = 12,
     [switch]$MotionView,             # MOTION-CAPTURE-1 step 6: the cut bench's eye follows the check's sequence from the first request (with -MotionCapture; StepCm/Frames/Hold above)
     [ValidateSet('none', 'draw', 'skin-prepare', 'skin-dispatch', 'draw+skin-dispatch')][string]$Warm = 'none',   # SKIN-GPU-FIRST-STARTUP-1: the preparation before the bench (the PC has no QuestDrawPrewarm: 'draw' is recorded as not warmed)
-    [ValidateSet('', 'cpu', 'gpu', 'float')][string]$SkinBake = '',   # -zantetsuSkinBake cpu|gpu|float ('' leaves the Player's default: cpu)
+    [ValidateSet('', 'cpu', 'cpu-float', 'gpu', 'float')][string]$SkinBake = '',   # -zantetsuSkinBake cpu|cpu-float|gpu|float ('' leaves the Player's default: cpu-float since 2026-11-03; cpu = the 24-byte bake)
     [double]$EdgeRight = 0.95,       # the edge windows' x (metres along the root): the PC picture's right edge (partly cut) and left edge
     [double]$EdgeLeft = -4.1,
     [ValidateSet('native', 'default')][string]$BodyRoute = 'native',   # -zantetsuVp3cNative (the plugin's indirect route) or the Player's default

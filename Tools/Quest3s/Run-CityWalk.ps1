@@ -33,6 +33,7 @@ param(
     [ValidateRange(0, 100000)][int]$WorkerFrom = 0,           # SKIN-BENCH-3: dirty individuals from which the worker gathers (-zantetsuSkinGatherWorkerFrom; 0 always)
     [ValidateRange(0, 1000000)][int]$SkinModels = 0,          # SKIN-BENCH-3 (TL review 3): the skin draw's model room (-zantetsuSkinModelCapacity; 0 the profile's, 8 in the city walk's)
     [ValidateRange(0, 1000000)][int]$SkinBoneBoxes = 0,       # SKIN-BENCH-3 (TL review 3): the skin draw's bone box room (-zantetsuSkinBoneBoxCapacity; 0 the profile's 2048; 66 a model)
+    [ValidateSet('', 'cpu', 'cpu-float', 'float', 'gpu')][string]$SkinBake = '',   # CPU-SKIN-FLOAT-DEFAULT-1: -zantetsuSkinBake in the intent's unity extra ('' = the Player's default, cpu-float since 2026-11-03; cpu = the 24-byte bake, the way back)
     [string]$Package = 'com.zantetsuken.quest.citywalk',   # the APK that runs it: this scenario's own, or the one of every scenario (com.zantetsuken.quest)
     [string]$Serial = '340YC10G7D0FZ9',
     [string]$Adb = 'C:\Program Files\RenderDocForMetaQuest\plugins\android\adb.exe'
@@ -85,6 +86,7 @@ if ($Gather) { $unityArguments += " -zantetsuSkinGather $Gather" }
 if ($WorkerFrom -gt 0) { $unityArguments += " -zantetsuSkinGatherWorkerFrom $WorkerFrom" }
 if ($SkinModels -gt 0) { $unityArguments += " -zantetsuSkinModelCapacity $SkinModels" }
 if ($SkinBoneBoxes -gt 0) { $unityArguments += " -zantetsuSkinBoneBoxCapacity $SkinBoneBoxes" }
+if ($SkinBake) { $unityArguments += " -zantetsuSkinBake $SkinBake" }
 Invoke-Adb shell "am start -a android.intent.action.MAIN -n $package/com.unity3d.player.UnityPlayerGameActivity -e unity '$unityArguments'"
 Write-Output "Quest City Walk: mode=$Mode, AppSW=$(!$AppSwOff), profiler=$(!$NoProfiler), prewarm=$(!$NoPrewarm), AppSpace=$AppSpacePoseMode, AppSWfar=$AppSwFarMeters, fixedView=$AppSwFixedView, fragmentGroupsMax=$FragmentGroupsMax, spatialSplit=$([bool]$SpatialSplit), checks=$(!$ChecksOff), detail=$(!$DetailOff), commandCompaction=$(!$FixedCommands), skinDraw=$([bool]$SkinDraw), skinUnity=$([bool]$SkinUnity)."
 Write-Output "Pull profiles and results from $deviceFiles/runs. Check QUEST CITY WALK, QUEST THREAD, PROP SLASH and VrApi."

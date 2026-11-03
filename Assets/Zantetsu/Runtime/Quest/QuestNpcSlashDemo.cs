@@ -86,6 +86,7 @@ namespace Zantetsu.Quest
         private string _loggerBeginAdmission = "Disabled";
         private string _warmFailure;
         private QuestDrawPrewarm _prewarm;
+        private string _lastSkinBakeLine;   // the skin bake statistics as last written (review 1, P2): written again only when they changed
         private float _nextStatus;
 
         // Play's preparation (2026-10-18): from the scenario's start until the drawing is warmed (or that has failed or
@@ -577,6 +578,8 @@ namespace Zantetsu.Quest
                 + crowds.Length + " crowd(s)");
             _prewarm = new QuestDrawPrewarm(_camera, world, _drawing, _config.mode == "vp3c-native", _config.appSw, false, QuestDrawPrewarm.DefaultTimeoutSeconds, FirstPreparedSkinModel);
             yield return _prewarm.Run();
+            // CPU-SKIN-FLOAT-DEFAULT-1: the live skin models and their float inputs when play is ready (the preparation's end).
+            Debug.Log(LogPrefix + "skin models at ready: " + Zantetsu.Rendering.VpSkinModel.DescribeLive());
             _phase = "Play";
             foreach (string line in _prewarm.Report) Debug.Log(LogPrefix + "prewarm: " + line);
             if (_prewarm.Completed)
@@ -772,6 +775,14 @@ namespace Zantetsu.Quest
                 if (_config.mode == "vp3c-native") Debug.Log("QUEST NPC COMPACTION: " + VpCommandCompaction.DescribeRun());
                 if (VpCommandCompaction.VerificationEnabled) Debug.Log("QUEST NPC COMPACTION: " + VpCommandCompaction.ReadVerification());
                 if (VpCommandCompaction.SnapshotEnabled || VpCommandCompaction.CastersFixed) Debug.Log("QUEST NPC SNAPSHOTS: castersFixed=" + VpCommandCompaction.CastersFixed + "; " + VpCommandCompaction.DescribeSnapshots());
+                // The effective skin bake routes and the fallbacks so far (CPU-SKIN-FLOAT-DEFAULT-1 review 1, P2): play has no end
+                // and a force-stop writes nothing, so the counts are written with this status whenever they changed.
+                string skinBake = Zantetsu.PhysicsCut.VpSkinBakeStats.Describe();
+                if (skinBake != _lastSkinBakeLine)
+                {
+                    _lastSkinBakeLine = skinBake;
+                    Debug.Log(LogPrefix + "skin bake (so far): " + skinBake + "; syncs are counted at the hit only (a held request's resume bakes again, uncounted; its fallback is counted)");
+                }
                 // The shared Main budget of the frame this line is written in (DESIGN 4.4): the application's period as
                 // settled at the frame's start (from ApplicationFrameSeconds, below), the common margin and the budget.
                 Debug.Log(LogPrefix + "mode=" + _config.mode + " phase=" + (_run != null ? _run.Phase : _phase)

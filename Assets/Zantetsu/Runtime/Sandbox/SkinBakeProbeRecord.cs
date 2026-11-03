@@ -51,6 +51,9 @@ namespace Zantetsu.Sandbox
             "physicsObservedFrame", "ledgerEventFrame", "clipBeforeRenderFrame", "readyEventFrame", "readyOutcome", "committedEventFrame", "framesToLedgerEvent", "framesToClipBeforeRender", "framesToReadyEvent", "framesToCommitEvent",
             // EVAL-1 review 1 (P2-3): "valid", or "invalid: ..." when a reset before the round did not return to the initial state (the summary leaves such rounds out).
             "roundValid",
+            // CPU-SKIN-FLOAT-1: the route the launch asked for (the route column is the route TAKEN), and the synchronous bake's times from the
+            // handle: the kernel alone, the append (kernel + indices + storage), the display's show (the transfer); 0 for the GPU route.
+            "requestedRoute", "bakeKernelMs", "bakeAppendMs", "showMs",
         };
         /// <summary>The cut bench's picture rows (PLANE-1), written as skin-bake-cut-pictures.csv: for every picture and body, the events observed so far (frames; -1 not observed by the bench, which may have missed an event between two observations), the display states and the physics placements (position, rotation as Euler degrees) of the source and the two sides, at the bench's step of the pictured frame.</summary>
         public static readonly string[] CutPictureColumns =

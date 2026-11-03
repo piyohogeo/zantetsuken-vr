@@ -15,7 +15,7 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The GPU-first/float routes' resources, or null (the CPU route, or the route could not be made).</summary>
         public VpSkinBakeResources SkinBake { get; private set; }
 
-        /// <summary>"cpu", "gpu" or "float": the route this world runs its hits down.</summary>
+        /// <summary>"cpu", "cpu-float", "gpu" or "float": the route this world runs its hits down.</summary>
         public string SkinBakeRoute { get; private set; } = "cpu";
 
         public string SkinBakeReason { get; private set; }
@@ -42,8 +42,19 @@ namespace Zantetsu.PhysicsCut
             if (mode == VpSkinBakeMode.Cpu)
             {
                 SkinBakeRoute = "cpu";
-                SkinBakeReason = "the default: the synchronous CPU bake of the 24-byte input" + unrecognised;
+                SkinBakeReason = (VpSkinBakeSetup.Explicit ? "asked (" + VpSkinBakeSetup.Argument + " cpu)" : "the default") + ": the synchronous CPU bake of the 24-byte input (the default until 2026-11-03; the way back from cpu-float)" + unrecognised;
                 Debug.Log("VP SKIN BAKE: cpu -- " + SkinBakeReason, this);
+                return;
+            }
+
+            if (mode == VpSkinBakeMode.CpuFloat)
+            {
+                // CPU-SKIN-FLOAT-1: no resources of its own -- the model's float input is prepared by the owner, cold, and the bake is the
+                // synchronous one; a body the skin draw shows, or a model whose float input was refused, takes the 24-byte bake (recorded).
+                SkinBakeRoute = "cpu-float";
+                SkinBakeReason = (VpSkinBakeSetup.Explicit ? "asked (" + VpSkinBakeSetup.Argument + " cpu-float)" : "the default since 2026-11-03 (CPU-SKIN-FLOAT-DEFAULT-1; " + VpSkinBakeSetup.Argument + " cpu = the 24-byte bake, the way back)")
+                    + ": the synchronous CPU bake of the model's float input (positions, normals and weights as the mesh holds them, prepared with each handle); the 24-byte bake where a body is drawn by the skin draw or the float input was refused" + unrecognised;
+                Debug.Log("VP SKIN BAKE: cpu-float -- " + SkinBakeReason, this);
                 return;
             }
 
@@ -76,6 +87,8 @@ namespace Zantetsu.PhysicsCut
 
         private void ReleaseSkinBake()
         {
+            // CPU-SKIN-FLOAT-DEFAULT-1: the live skin models (one input a model) and their float inputs, counted by live object, with the peaks.
+            Debug.Log("VP SKIN MODELS (end): " + name + "; " + VpSkinModel.DescribeLive(), this);
             Debug.Log("VP SKIN BAKE (end): " + name + " " + SkinBakeRoute + "; " + VpSkinBakeStats.Describe()
                 + (SkinBake != null ? "; " + SkinBake.Describe() : "")
                 + (SkinBakePending != null ? "; " + SkinBakePending.Describe() : "")

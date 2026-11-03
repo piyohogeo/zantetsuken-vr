@@ -92,6 +92,9 @@ namespace Zantetsu.Sandbox
         /// <summary>Why the mesh's shared skin input (the GPU-first route's) was refused at the preparation; null when made or not asked.</summary>
         public string SharedSkinInputRefusal { get; private set; }
 
+        /// <summary>Why the model's CPU-only float input (CPU-SKIN-FLOAT-1, cpu-float) was refused at the preparation; null when made or not asked.</summary>
+        public string FloatSkinInputRefusal { get; private set; }
+
         /// <summary>The renderer the character is drawn and cut with: the fixed-scale copy sharing the model's bones.</summary>
         public SkinnedMeshRenderer Renderer => _fixedInput != null ? _fixedInput.Renderer : null;
 
@@ -572,6 +575,7 @@ namespace Zantetsu.Sandbox
                     return null;
                 }
 
+                entry.model.Usage = "share";   // one a mesh of the share, read by every pooled slot that carries the mesh (CPU-SKIN-FLOAT-DEFAULT-1 accounting)
                 return entry.model;
             }
 
@@ -579,6 +583,7 @@ namespace Zantetsu.Sandbox
             _ownSkinModel?.Dispose();
             _ownSkinModel = null;
             VpSkinModel.TryCreate(skin, _entry.topologyMap, _entry.topologyCount, world != null ? world.CutInputConnectivity : null, out _ownSkinModel, out _);
+            if (_ownSkinModel != null) _ownSkinModel.Usage = "own";   // a character of its own (not pooled): its own model
             return _ownSkinModel;
         }
 
@@ -652,6 +657,8 @@ namespace Zantetsu.Sandbox
             }
 
             SkinRegistrations++;
+            // The cut of a body the skin draw shows keeps the 24-byte bake (CPU-SKIN-FLOAT-1): the display's input is that one.
+            if (Handle != null) Handle.DisplayedBySkinDraw = true;
             return true;
         }
 
@@ -677,6 +684,7 @@ namespace Zantetsu.Sandbox
             VpSkinDisplay skins = world != null ? world.SkinDisplay : null;
             if (skins != null && !skins.IsDisposed && skins.Remove(_skinHandle)) SkinRemovals++;
             _skinHandle = default;
+            if (Handle != null) Handle.DisplayedBySkinDraw = false;
         }
 
         /// <summary>
@@ -1163,7 +1171,10 @@ namespace Zantetsu.Sandbox
             Handle = handle;
             handle.SetDrawingStopped(UnregisterSkin);
             // The GPU-first/float routes' shared input of the mesh (DESIGN 4.5.15): made cold, here, once a mesh, never at a hit.
-            if (VpSkinBakeSetup.Mode != VpSkinBakeMode.Cpu && !handle.TryPrepareSharedSkinInput(out string sharedWhy)) SharedSkinInputRefusal = sharedWhy;
+            if ((VpSkinBakeSetup.Mode == VpSkinBakeMode.Gpu || VpSkinBakeSetup.Mode == VpSkinBakeMode.Float) && !handle.TryPrepareSharedSkinInput(out string sharedWhy)) SharedSkinInputRefusal = sharedWhy;
+            // The CPU-only float input (CPU-SKIN-FLOAT-1 / -DEFAULT-1): the handle's cold preparation made it (once a model, cpu-float only); its refusal, if any, is kept here.
+            if (VpSkinBakeSetup.Mode == VpSkinBakeMode.CpuFloat) FloatSkinInputRefusal = handle.FloatSkinInputRefusal;
+            handle.DisplayedBySkinDraw = _skinHandle.IsSet;
 
             // Its withdrawal at the first cut: the renderer and the Pose Table's update, if the hierarchy is confirmed to
             // hold nothing else live; the whole root otherwise.

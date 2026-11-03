@@ -217,6 +217,113 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         // The skin handle of a slot, read through its private field (the handle is the display's name for the individual).
+        /// <summary>
+        /// **A slot the skin draw really draws is cut from the 24-byte input under cpu-float** (CPU-SKIN-FLOAT-1 review 1): the slot's
+        /// registration with the world's skin draw sets the handle's flag, the float input is prepared all the same, and the cut's
+        /// bake takes the 24-byte input with the reason recorded -- the cut's geometry stays the display's.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator CpuFloatRoute_ASlotTheSkinDrawDraws_IsCutFromThe24ByteInput()
+        {
+            VpSkinDrawRequest before = VpSkinDrawSetup.Request;
+            VpSkinDrawSetup.Request = VpSkinDrawRequest.SkinDraw;
+            VpSkinBakeSetup.Mode = VpSkinBakeMode.CpuFloat;
+            try
+            {
+                ColdWorld();
+                Assert.That(coldWorld.DrawsSkins, Is.True, coldWorld.SkinRouteReason);
+                Assert.That(coldWorld.SkinBakeRoute, Is.EqualTo("cpu-float"));
+                coldWorld.Driver.RemainingMainSeconds = () => 1.0;
+                SandboxNpcCharacter slot = NeedleSlot(Vector3.zero, out GameObject setup);
+                ColdTrack(setup);
+                yield return UntilPrepared(slot);
+                Assert.That(slot.IsPrepared, Is.True, slot.Failure);
+                Assert.That(slot.FloatSkinInputRefusal, Is.Null, "the float input was prepared with the handle");
+                Assert.That(slot.Handle.SkinModelForWarm.FloatInput, Is.Not.Null);
+                yield return null;
+                Assert.That(slot.Handle.DisplayedBySkinDraw, Is.False, "dormant: not drawn by the skin draw yet");
+                ActivateStill(slot);
+                Assert.That(slot.DrawnBySkinDraw, Is.True, slot.SkinDrawRefusal);
+                Assert.That(slot.Handle.DisplayedBySkinDraw, Is.True, "the registration told the handle");
+                yield return null;
+                int cpu = VpSkinBakeStats.CpuSyncs, cpuFloat = VpSkinBakeStats.CpuFloatSyncs, fallbacks = VpSkinBakeStats.Fallbacks;
+                var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+                detector.AddCharacter(slot.Handle);
+                List<SlashHitConfirmed> cut = Evaluate(detector, PlaneSweep(1, new double3(0, 1, 0), new double3(0.125, 0.125, 0.125), new double3(1, 0, 0)), 1);
+                Assert.That(cut.Count, Is.EqualTo(1));
+                Assert.That(cut[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published));
+                Assert.That(VpSkinBakeStats.CpuSyncs - cpu, Is.EqualTo(1), "the 24-byte bake");
+                Assert.That(VpSkinBakeStats.CpuFloatSyncs - cpuFloat, Is.Zero);
+                Assert.That(VpSkinBakeStats.Fallbacks - fallbacks, Is.EqualTo(1));
+                VpSkinBakeStats.Record record = VpSkinBakeStats.Records[VpSkinBakeStats.Records.Count - 1];
+                Assert.That(record.route, Is.EqualTo("cpu"));
+                Assert.That(record.requestedRoute, Is.EqualTo("cpu-float"));
+                Assert.That(record.fallback, Does.Contain("skin draw"));
+                int left = -1;
+                for (int i = 0; i < 120 && left < 0; i++) { if (!slot.DrawnBySkinDraw) left = Time.frameCount; else yield return null; }
+                Assert.That(left, Is.GreaterThanOrEqualTo(0), "the cut takes it out of the skin draw");
+                Assert.That(slot.Handle == null || !slot.Handle.DisplayedBySkinDraw, Is.True, "the removal cleared the flag (or the handle ended with its cut)");
+                yield return UntilCommitted(cut[0].Operation);
+            }
+            finally
+            {
+                VpSkinDrawSetup.Request = before;
+                VpSkinBakeSetup.Mode = VpSkinBakeSetup.Default;
+            }
+        }
+
+        /// <summary>
+        /// **A re-prepared slot keeps its model's float input** (CPU-SKIN-FLOAT-DEFAULT-1): under the default (cpu-float) a pooled slot's
+        /// preparation makes one float input for the share's model; its cut, its return and its re-preparation make none again -- the
+        /// same input object, the same count, and the live accounting says one model and one input.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Default_ARepreparedSlot_KeepsItsModelsFloatInput_AndMakesNoneAgain()
+        {
+            VpSkinBakeSetup.ReadArguments(new[] { "player.exe" });
+            Assert.That(VpSkinBakeSetup.Mode, Is.EqualTo(VpSkinBakeMode.CpuFloat));
+            ColdWorld();
+            coldWorld.Driver.RemainingMainSeconds = () => 1.0;
+            int made = VpSkinFloatInput.CreatedCount;
+            SandboxNpcCharacter slot = NeedleSlot(Vector3.zero, out GameObject setup);
+            ColdTrack(setup);
+            yield return UntilPrepared(slot);
+            Assert.That(slot.IsPrepared, Is.True, slot.Failure);
+            Assert.That(slot.FloatSkinInputRefusal, Is.Null);
+            VpSkinModel model = slot.Handle.SkinModelForWarm;
+            VpSkinFloatInput input = model.FloatInput;
+            Assert.That(input, Is.Not.Null, "made by the handle's preparation");
+            Assert.That(VpSkinFloatInput.CreatedCount - made, Is.EqualTo(1));
+            Assert.That(VpSkinModel.DescribeLive(), Does.Contain("float inputs live").And.Contain("models live"));
+            yield return null;
+            ActivateStill(slot);
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(slot.Handle);
+            List<SlashHitConfirmed> cut = Evaluate(detector, PlaneSweep(1, new double3(0, 1, 0), new double3(0.125, 0.125, 0.125), new double3(1, 0, 0)), 1);
+            Assert.That(cut.Count, Is.EqualTo(1));
+            Assert.That(VpSkinBakeStats.Records[VpSkinBakeStats.Records.Count - 1].route, Is.EqualTo(slot.DrawnBySkinDraw ? "cpu" : "cpu-float"), "a slot the skin draw drew is cut from the 24-byte input; otherwise cpu-float");
+            Assert.That(VpSkinFloatInput.CreatedCount - made, Is.EqualTo(1), "the hit made none");
+            yield return UntilCommitted(cut[0].Operation);
+            for (int i = 0; i < 60 && !slot.IsReturnReady; i++) yield return null;
+            Assert.That(slot.IsReturnReady, Is.True);
+            Assert.That(slot.TryReprepare(), Is.True, slot.Failure);
+            yield return UntilPrepared(slot);
+            Assert.That(slot.IsPrepared, Is.True, slot.Failure);
+            Assert.That(ReferenceEquals(slot.Handle.SkinModelForWarm, model), Is.True, "the share's model again");
+            Assert.That(ReferenceEquals(model.FloatInput, input), Is.True, "the same float input, not made again");
+            Assert.That(input.IsDisposed, Is.False);
+            Assert.That(VpSkinFloatInput.CreatedCount - made, Is.EqualTo(1), "re-prepared: nothing made again");
+
+            // The release: the share's model and its float input go with the last slot (the live accounting says so).
+            int live = VpSkinModel.LiveCount;
+            Object.Destroy(setup);
+            yield return null;
+            for (int i = 0; i < 120 && !coldWorld.Shutdown(); i++) yield return null;
+            Assert.That(coldWorld.IsReleased, Is.True);
+            Assert.That(input.IsDisposed, Is.True, "the float input went with the share's model");
+            Assert.That(VpSkinModel.LiveCount, Is.EqualTo(live - 1), "the share's model left the live accounting");
+        }
+
         private static VpSkinHandle SlotSkinHandle(SandboxNpcCharacter slot)
             => (VpSkinHandle)typeof(SandboxNpcCharacter).GetField("_skinHandle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(slot);
 

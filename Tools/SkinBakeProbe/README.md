@@ -1,8 +1,9 @@
 # Skin bake probe tools (DESIGN 4.5.14 / 4.5.15)
 
 Measurement and evaluation tools of the `skin-bake-probe` scenario: the GPU bake probe and its cut bench, which measure the
-skin bake routes (`-zantetsuSkinBake cpu|float|gpu`, default cpu) of a prepared character's cut. None of them changes the
-product's defaults; every launch names its route explicitly.
+skin bake routes (`-zantetsuSkinBake cpu|cpu-float|float|gpu`; the product default is cpu-float since 2026-11-03, cpu = the
+24-byte bake before that date, DESIGN 4.5.16) of a prepared character's cut. None of them changes the product's defaults;
+every launch names its route explicitly.
 
 ## Launch
 

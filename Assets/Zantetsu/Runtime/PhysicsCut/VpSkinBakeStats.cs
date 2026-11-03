@@ -19,13 +19,18 @@ namespace Zantetsu.PhysicsCut
         public struct Record
         {
             public long requestId;
-            public string route;        // "gpu", "float", "cpu"
+            public string route;        // "gpu", "float", "cpu", "cpu-float": the route taken
             public int vertexCount, boneCount;
             public int hitFrame, readyFrame;
             public double hitMainSeconds, readyMainSeconds, workerSeconds, kernelSeconds;
             public int dispatches;
             public string acceptance;
             public string basisOutcome;  // gpu: "pending", "ready", "failed: ...", "dropped: ..."
+            // CPU-SKIN-FLOAT-1: the route the launch asked for, the synchronous append's time (kernel + indices + storage), the display
+            // show's time, and why the route taken is not the one asked for (null when it is). NaN = not measured (never written as 0).
+            public string requestedRoute;
+            public double appendSeconds, showSeconds;
+            public string fallback;
         }
 
         public const int RecordCapacity = 4096;
@@ -42,6 +47,7 @@ namespace Zantetsu.PhysicsCut
         public static int FailedAtBegin { get; private set; }
         public static int FloatSyncs { get; private set; }
         public static int CpuSyncs { get; private set; }
+        public static int CpuFloatSyncs { get; private set; }
         public static int Pending { get; private set; }
         public static int MaxPending { get; private set; }
         public static int RecordsNotKept { get; private set; }
@@ -52,7 +58,7 @@ namespace Zantetsu.PhysicsCut
         public static void Reset()
         {
             s_records.Clear(); s_recordOfRequest.Clear(); s_fallbacks.Clear(); s_failures.Clear();
-            Begun = Ready = BasisFailed = Dropped = Fallbacks = FailedAtBegin = FloatSyncs = CpuSyncs = Pending = MaxPending = RecordsNotKept = 0;
+            Begun = Ready = BasisFailed = Dropped = Fallbacks = FailedAtBegin = FloatSyncs = CpuSyncs = CpuFloatSyncs = Pending = MaxPending = RecordsNotKept = 0;
         }
 
         /// <summary>A GPU-first hit accepted (its Run returned): the record, with the bake pending.</summary>
@@ -64,6 +70,9 @@ namespace Zantetsu.PhysicsCut
             {
                 requestId = requestId, route = "gpu", vertexCount = vertexCount, boneCount = boneCount, hitFrame = hitFrame, readyFrame = -1,
                 hitMainSeconds = hitMainSeconds, dispatches = dispatches, acceptance = acceptance.ToString(), basisOutcome = "pending",
+                requestedRoute = "gpu", appendSeconds = double.NaN, showSeconds = double.NaN,
+                // not measured until the bake is collected (NoteReady fills them): blank in the CSV, never a zero (review 2)
+                workerSeconds = double.NaN, kernelSeconds = double.NaN, readyMainSeconds = double.NaN,
             });
         }
 
@@ -114,12 +123,17 @@ namespace Zantetsu.PhysicsCut
 
         internal static void NoteFloatSync() { FloatSyncs++; }
 
-        /// <summary>A synchronous request's record (the CPU route, or the float route): its main-thread time at the hit.</summary>
-        internal static void NoteSync(string route, int vertexCount, double hitMainSeconds, double kernelSeconds, ProvisionalCutAcceptance acceptance)
+        /// <summary>
+        /// A synchronous request's record (the CPU route, the CPU-only float input, or the float route): its main-thread time at the
+        /// hit, the bake's kernel time, the append's time, the show's time, the route asked for and why another was taken.
+        /// </summary>
+        internal static void NoteSync(string route, string requestedRoute, int vertexCount, double hitMainSeconds, double kernelSeconds, double appendSeconds, double showSeconds, string fallback, ProvisionalCutAcceptance acceptance)
         {
             if (route == "cpu") CpuSyncs++;
+            else if (route == "cpu-float") CpuFloatSyncs++;
             int frame = UnityEngine.Time.frameCount;
-            Add(new Record { route = route, vertexCount = vertexCount, hitFrame = frame, readyFrame = frame, hitMainSeconds = hitMainSeconds, kernelSeconds = kernelSeconds, acceptance = acceptance.ToString(), basisOutcome = "" });
+            Add(new Record { route = route, requestedRoute = requestedRoute, vertexCount = vertexCount, hitFrame = frame, readyFrame = frame, hitMainSeconds = hitMainSeconds, kernelSeconds = kernelSeconds,
+                appendSeconds = appendSeconds, showSeconds = showSeconds, fallback = fallback, acceptance = acceptance.ToString(), basisOutcome = "" });
         }
 
         private static void Add(Record record)
@@ -147,24 +161,28 @@ namespace Zantetsu.PhysicsCut
             var t = new StringBuilder();
             t.Append("skin bake: mode ").Append(VpSkinBakeSetup.Name(VpSkinBakeSetup.Mode)).Append("; gpu-first hits ").Append(Begun).Append(", bakes ready ").Append(Ready)
                 .Append(", failed ").Append(BasisFailed).Append(", dropped ").Append(Dropped).Append(", failed at begin ").Append(FailedAtBegin).Append(", fallbacks to cpu ").Append(Fallbacks)
-                .Append(", float syncs ").Append(FloatSyncs).Append(", cpu syncs ").Append(CpuSyncs)
+                .Append(", float syncs ").Append(FloatSyncs).Append(", cpu syncs ").Append(CpuSyncs).Append(", cpu-float syncs ").Append(CpuFloatSyncs)
                 .Append(", pending now ").Append(Pending).Append(" (max ").Append(MaxPending).Append("), records ").Append(s_records.Count).Append(RecordsNotKept > 0 ? " (+" + RecordsNotKept + " not kept)" : "");
             if (s_fallbacks.Count > 0) { t.Append("; fallbacks:"); foreach (var kv in s_fallbacks) t.Append(' ').Append(kv.Key).Append('=').Append(kv.Value); }
             if (s_failures.Count > 0) { t.Append("; failures:"); foreach (var kv in s_failures) t.Append(' ').Append(kv.Key).Append('=').Append(kv.Value); }
             return t.ToString();
         }
 
+        // A time that was not measured is blank in the CSV (review 1): a reader takes a blank as None, never as a zero.
+        private static string Ms(double seconds) => double.IsNaN(seconds) ? "" : (seconds * 1000.0).ToString("F4", CultureInfo.InvariantCulture);
+
         /// <summary>The records as CSV lines (a header first), for a bench's file.</summary>
         public static IEnumerable<string> CsvLines()
         {
-            yield return "requestId,route,vertexCount,boneCount,hitFrame,readyFrame,hitMainMs,readyMainMs,workerMs,kernelMs,dispatches,acceptance,basisOutcome";
+            yield return "requestId,route,vertexCount,boneCount,hitFrame,readyFrame,hitMainMs,readyMainMs,workerMs,kernelMs,dispatches,acceptance,basisOutcome,requestedRoute,appendMs,showMs,fallback";
             foreach (Record r in s_records)
             {
                 yield return string.Join(",", r.requestId.ToString(CultureInfo.InvariantCulture), r.route, r.vertexCount.ToString(CultureInfo.InvariantCulture), r.boneCount.ToString(CultureInfo.InvariantCulture),
                     r.hitFrame.ToString(CultureInfo.InvariantCulture), r.readyFrame.ToString(CultureInfo.InvariantCulture),
-                    (r.hitMainSeconds * 1000.0).ToString("F4", CultureInfo.InvariantCulture), (r.readyMainSeconds * 1000.0).ToString("F4", CultureInfo.InvariantCulture),
-                    (r.workerSeconds * 1000.0).ToString("F4", CultureInfo.InvariantCulture), (r.kernelSeconds * 1000.0).ToString("F4", CultureInfo.InvariantCulture),
-                    r.dispatches.ToString(CultureInfo.InvariantCulture), r.acceptance ?? "", (r.basisOutcome ?? "").Replace(',', ';'));
+                    (r.hitMainSeconds * 1000.0).ToString("F4", CultureInfo.InvariantCulture), Ms(r.readyMainSeconds),
+                    Ms(r.workerSeconds), Ms(r.kernelSeconds),
+                    r.dispatches.ToString(CultureInfo.InvariantCulture), r.acceptance ?? "", (r.basisOutcome ?? "").Replace(',', ';'),
+                    r.requestedRoute ?? r.route, Ms(r.appendSeconds), Ms(r.showSeconds), (r.fallback ?? "").Replace(',', ';'));
             }
         }
     }

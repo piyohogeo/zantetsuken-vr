@@ -106,6 +106,23 @@ namespace Zantetsu.Rendering
         /// <summary>How many inputs were made in this process (measurement and tests).</summary>
         public static int CreatedCount { get; private set; }
 
+        // ----- the CPU-only float input (CPU-SKIN-FLOAT-1) -----------------------------------------------------------------
+
+        /// <summary>
+        /// Set by the request before an append: the next bake reads the model's float input (<see cref="VpSkinModel.FloatInput"/>)
+        /// when the model has one; the 24-byte input otherwise. Cleared by the request after the append.
+        /// </summary>
+        public bool FloatInputRequested { get; set; }
+
+        /// <summary>Whether the last bake read the float input (true) or the 24-byte input (false).</summary>
+        public bool LastBakeUsedFloatInput { get; private set; }
+
+        /// <summary>The last bake's kernel time (the skinning alone, whichever input), seconds.</summary>
+        public double LastKernelSeconds { get; private set; }
+
+        /// <summary>The last bake's write time (the kernel and the index copy), seconds.</summary>
+        public double LastWriteSeconds { get; private set; }
+
         /// <summary>Lends this input to <paramref name="borrower"/>, forgetting any pose taken before. False while it is lent or disposed.</summary>
         public bool TryLend(object borrower)
         {
@@ -240,6 +257,7 @@ namespace Zantetsu.Rendering
         void Warm()
         {
             VpDirectSkinKernel.Skin(null, null, null, 0, null, null, bounds, valid);
+            VpSkinFloatInputKernel.Skin(null, null, null, 0, null, null, bounds, valid);
             VpDirectSkinKernel.CopyIndices(null, null, 0, 0);
         }
 
@@ -338,11 +356,34 @@ namespace Zantetsu.Rendering
         internal bool Write(NativeArray<VpRenderVertex> output, NativeArray<int> outputTopology,
             NativeArray<uint> outputIndices, int baseVertex, out float3 min, out float3 max)
         {
-            VpDirectSkinKernel.Skin(model.VertexPointer, matrices, model.TopologyPointer, VertexCount,
-                (VpRenderVertex*)output.GetUnsafePtr(), (int*)outputTopology.GetUnsafePtr(), bounds, valid);
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            // The float input where the request asked for it and the model has one (CPU-SKIN-FLOAT-1); the 24-byte input otherwise.
+            // The same output, topology, bounds and validity either way; only the input and its quantization differ.
+            VpSkinFloatInput floatInput = FloatInputRequested ? model.FloatInput : null;
+            bool useFloat = floatInput != null && !floatInput.IsDisposed && floatInput.VertexCount == VertexCount;
+            if (useFloat)
+            {
+                VpSkinFloatInputKernel.Skin(floatInput.VertexPointer, matrices, model.TopologyPointer, VertexCount,
+                    (VpRenderVertex*)output.GetUnsafePtr(), (int*)outputTopology.GetUnsafePtr(), bounds, valid);
+            }
+            else
+            {
+                VpDirectSkinKernel.Skin(model.VertexPointer, matrices, model.TopologyPointer, VertexCount,
+                    (VpRenderVertex*)output.GetUnsafePtr(), (int*)outputTopology.GetUnsafePtr(), bounds, valid);
+            }
+
+            long skinned = System.Diagnostics.Stopwatch.GetTimestamp();
+            LastBakeUsedFloatInput = useFloat;
+            LastKernelSeconds = (skinned - began) / (double)System.Diagnostics.Stopwatch.Frequency;
             min = bounds[0]; max = bounds[1];
-            if (valid[0] == 0 || !math.all(math.isfinite(min)) || !math.all(math.isfinite(max)) || !math.all(min <= max)) return false;
+            if (valid[0] == 0 || !math.all(math.isfinite(min)) || !math.all(math.isfinite(max)) || !math.all(min <= max))
+            {
+                LastWriteSeconds = LastKernelSeconds;
+                return false;
+            }
+
             VpDirectSkinKernel.CopyIndices(model.IndexPointer, (uint*)outputIndices.GetUnsafePtr(), IndexCount, (uint)baseVertex);
+            LastWriteSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
             return true;
         }
 

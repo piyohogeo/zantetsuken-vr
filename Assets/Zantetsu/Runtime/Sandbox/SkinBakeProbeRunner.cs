@@ -1004,6 +1004,9 @@ namespace Zantetsu.Sandbox
             public LogicalFragmentId source, positive, negative;
             public CutOperationId operation;
             public string switchCompare = "", fallbackReason = "";
+            // CPU-SKIN-FLOAT-1: the route asked for and the route taken (from the handle right after the call), and the bake's times.
+            public string requestedRoute, effectiveRoute;
+            public double bakeKernelMs, bakeAppendMs, showMs;
             public bool compareAsked, pictureTaken, gpuFirst;
             public VpStoredGeometry gpuGeometry;
             public long gpuRequestId;
@@ -1092,6 +1095,7 @@ namespace Zantetsu.Sandbox
                 var states = new CutRequestState[n];
                 for (int b = 0; b < n; b++) states[b] = new CutRequestState { body = b, round = round, npc = npcs[b], handle = npcs[b].Handle, roundValid = _resetFailure == null ? "valid" : "invalid: " + _resetFailure };
                 if (_resetFailure != null) _invalidRounds++;
+                if (round == 0) RecordSkinInputs(states);
                 lastStates = states;
                 _activeStates = states;
                 _allStates.AddRange(states);
@@ -1139,25 +1143,28 @@ namespace Zantetsu.Sandbox
                         foreach (VpSkinBakeStats.Record r in VpSkinBakeStats.Records)
                         {
                             if (r.requestId != s.gpuRequestId) continue;
-                            basisOutcome = r.basisOutcome ?? ""; readyMainMs = (r.readyMainSeconds * 1000.0).ToString("F4", Inv); bakeWorkerMs = (r.workerSeconds * 1000.0).ToString("F4", Inv);
+                            basisOutcome = r.basisOutcome ?? ""; readyMainMs = MsOrBlank(r.readyMainSeconds * 1000.0); bakeWorkerMs = MsOrBlank(r.workerSeconds * 1000.0);   // NaN (not collected) = blank (review 2)
                             break;
                         }
                     }
                     int rq = s.requestFrame;
-                    _record.CutRequest(round.ToString(Inv), b.ToString(Inv), world.SkinBakeRoute, rq.ToString(Inv), s.outcome.ToString(), s.acceptance.ToString(), s.requestMs.ToString("F4", Inv),
+                    _record.CutRequest(round.ToString(Inv), b.ToString(Inv), s.effectiveRoute ?? world.SkinBakeRoute, rq.ToString(Inv), s.outcome.ToString(), s.acceptance.ToString(), s.requestMs.ToString("F4", Inv),
                         s.acceptedFrame.ToString(Inv), s.physicsFrame.ToString(Inv), s.publishedFrame.ToString(Inv), s.clipFrame.ToString(Inv), s.readyFrame.ToString(Inv), s.committedFrame.ToString(Inv),
                         CutRequestState.F(s.acceptedFrame, rq), CutRequestState.F(s.physicsFrame, rq), CutRequestState.F(s.publishedFrame, rq), CutRequestState.F(s.clipFrame, rq), CutRequestState.F(s.readyFrame, rq), CutRequestState.F(s.committedFrame, rq),
                         s.cutKernelMs >= 0 ? s.cutKernelMs.ToString("F4", Inv) : "", readyMainMs, bakeWorkerMs, s.fallbackReason.Replace(',', ';'), basisOutcome.Replace(',', ';'), s.switchCompare,
                         _settings.cutPlane, SkinBakeProbeCutPlane.Plane(s.planeLocal), SkinBakeProbeCutPlane.Plane(s.planeWorld), SkinBakeProbeCutPlane.Point(s.anchor), s.BudgetWait, s.GeometryWait,
                         s.physicsObservedFrame.ToString(Inv), s.ledgerEventFrame.ToString(Inv), s.clipBeforeRenderFrame.ToString(Inv), s.readyEventFrame.ToString(Inv), s.ReadyOutcomeName, s.committedEventFrame.ToString(Inv),
-                        CutRequestState.F(s.ledgerEventFrame, rq), CutRequestState.F(s.clipBeforeRenderFrame, rq), CutRequestState.F(s.readyEventFrame, rq), CutRequestState.F(s.committedEventFrame, rq), s.roundValid.Replace(',', ';'));
+                        CutRequestState.F(s.ledgerEventFrame, rq), CutRequestState.F(s.clipBeforeRenderFrame, rq), CutRequestState.F(s.readyEventFrame, rq), CutRequestState.F(s.committedEventFrame, rq), s.roundValid.Replace(',', ';'),
+                        s.requestedRoute ?? world.SkinBakeRoute, MsOrBlank(s.bakeKernelMs), MsOrBlank(s.bakeAppendMs), MsOrBlank(s.showMs));
                     _record.Other("cut bench", "round " + round + " body " + b, "observation", SkinBakeProbeReactionEvents.CaseSucceeded(s.operation.IsSet, s.committedEventFrame), Time.frameCount, "outcome " + s.outcome + ", acceptance " + s.acceptance + ", request " + s.requestMs.ToString("F4", Inv) + " ms at frame " + rq
                         + ", accepted +" + CutRequestState.F(s.acceptedFrame, rq) + ", physics +" + CutRequestState.F(s.physicsFrame, rq) + ", ledger published +" + CutRequestState.F(s.publishedFrame, rq) + ", clip shown +" + CutRequestState.F(s.clipFrame, rq) + ", cpu ready +" + CutRequestState.F(s.readyFrame, rq) + ", committed +" + CutRequestState.F(s.committedFrame, rq) + " frames (-1 = not observed by the bench, never 'did not happen': an event between two observations; the verdict is the Commit EVENT below, not this observation)"
                         + (s.cutKernelMs >= 0 ? ", cut kernel " + s.cutKernelMs.ToString("F4", Inv) + " ms" : "") + (s.fallbackReason.Length > 0 ? "; fallback: " + s.fallbackReason : "") + (basisOutcome.Length > 0 ? "; basis: " + basisOutcome : "")
                         + (s.switchCompare.Length > 0 ? "; switch: " + s.switchCompare : "")
                         + "; events (hooks): physics +" + CutRequestState.F(s.physicsFrame, rq) + ", ledger +" + CutRequestState.F(s.ledgerEventFrame, rq) + ", ready +" + CutRequestState.F(s.readyEventFrame, rq) + " (" + s.ReadyOutcomeName + (s.readyEndedFrame >= 0 ? " +" + CutRequestState.F(s.readyEndedFrame, rq) : "") + "), commit +" + CutRequestState.F(s.committedEventFrame, rq)
                         + "; clip state at onBeforeRender +" + CutRequestState.F(s.clipBeforeRenderFrame, rq)
-                        + "; budget wait: " + s.BudgetWait + "; geometry wait: " + s.GeometryWait + "; plane " + s.planeNote + "; round " + s.roundValid);
+                        + "; budget wait: " + s.BudgetWait + "; geometry wait: " + s.GeometryWait + "; plane " + s.planeNote + "; round " + s.roundValid
+                        + "; route asked " + (s.requestedRoute ?? world.SkinBakeRoute) + ", taken " + (s.effectiveRoute ?? "-") + (s.fallbackReason.Length > 0 ? " (fallback: " + s.fallbackReason + ")" : "")
+                        + "; bake kernel " + (double.IsNaN(s.bakeKernelMs) ? "-" : s.bakeKernelMs.ToString("F4", Inv) + " ms") + ", append " + (double.IsNaN(s.bakeAppendMs) ? "-" : s.bakeAppendMs.ToString("F4", Inv) + " ms") + ", show " + (double.IsNaN(s.showMs) ? "-" : s.showMs.ToString("F4", Inv) + " ms") + " (- = not measured on this route)");
                 }
             }
             _record.Fact("cut bench reaction events", "buffers: physics " + _events.Count(SkinBakeProbeReactionEvents.Kind.Physics) + ", ledger " + _events.Count(SkinBakeProbeReactionEvents.Kind.Ledger) + ", commit " + _events.Count(SkinBakeProbeReactionEvents.Kind.Commit) + ", collect " + _events.Count(SkinBakeProbeReactionEvents.Kind.Collect) + "; repeated reports not recorded twice: " + _events.Duplicates + "; not kept (buffer full): " + _events.NotKept + "; verdict by the Commit event (observed frames may stay -1); clip observations at onBeforeRender: " + _clipObservations);
@@ -1379,6 +1386,8 @@ namespace Zantetsu.Sandbox
             s.outcome = result.Outcome; s.acceptance = result.Acceptance; s.source = result.Source; s.operation = result.Operation;
             // Read right after the call: the handle ends with its cut (as any handle), so what it knew is kept here.
             s.fallbackReason = s.handle.DeferredFallbackReason ?? "";
+            s.requestedRoute = s.handle.LastRequestedRoute ?? world.SkinBakeRoute; s.effectiveRoute = s.handle.LastRoute;
+            s.bakeKernelMs = s.handle.LastBakeKernelSeconds * 1000.0; s.bakeAppendMs = s.handle.LastBakeAppendSeconds * 1000.0; s.showMs = s.handle.LastShowSeconds * 1000.0;   // NaN = not measured (gpu / float routes): blank in the CSV
             s.gpuFirst = s.handle.GpuFirstRequestId != 0 && s.fallbackReason.Length == 0 && result.Outcome == VpCharacterCutOutcome.Requested;
             if (s.gpuFirst) { s.gpuGeometry = s.handle.GpuFirstGeometry; s.gpuRequestId = s.handle.GpuFirstRequestId; }
             if (result.Outcome == VpCharacterCutOutcome.Requested && result.Operation.IsSet) { s.acceptedFrame = Time.frameCount; s.acceptedTick = t1; }
@@ -1845,6 +1854,40 @@ namespace Zantetsu.Sandbox
             if (!_events.TryResolveCollect(s.gpuRequestId, out int frame, out long tick, out int code)) return;
             if (code == (int)VpSkinBakeCollectOutcome.Completed) { s.readyEventFrame = frame; s.readyEventTick = tick; }
             else { s.readyEndedFrame = frame; s.readyEndedTick = tick; s.readyOutcome = code; }
+        }
+
+        // CPU-SKIN-FLOAT-1 review 1 (P2): a time the route did not measure (NaN) is a blank field, never a zero.
+        private static string MsOrBlank(double ms) => double.IsNaN(ms) ? "" : ms.ToString("F4", Inv);
+
+        // CPU-SKIN-FLOAT-1 (TL 5): the skin inputs the bench's bodies hold, per distinct model -- what the product candidate needs (the model's
+        // 24-byte input, which the skin draw and the 24-byte bake read; the CPU-only float input beside it, with its preparation time; the GPU
+        // shared input of the gpu/float routes) -- and how many bodies share each. The probe's reference allocations are the probe cases'
+        // (not made by the cut bench). Facts "cut bench skin inputs" and one "cut bench skin model <k>" a model.
+        private void RecordSkinInputs(CutRequestState[] states)
+        {
+            var models = new List<VpSkinModel>(); var bodiesOf = new List<int>();
+            foreach (CutRequestState s in states)
+            {
+                VpSkinModel m = s.handle != null ? s.handle.SkinModelForWarm : null;
+                if (m == null) continue;
+                int at = models.IndexOf(m);
+                if (at < 0) { models.Add(m); bodiesOf.Add(1); } else bodiesOf[at]++;
+            }
+
+            long packedTotal = 0, floatTotal = 0, sharedTotal = 0;
+            for (int k = 0; k < models.Count; k++)
+            {
+                VpSkinModel m = models[k];
+                long shared = m.SharedInput != null ? m.SharedInput.NativeBytes : 0;
+                packedTotal += m.NativeBytes; floatTotal += m.FloatInputBytes; sharedTotal += shared;
+                _record.Fact("cut bench skin model " + k, "bodies " + bodiesOf[k] + "; vertices " + m.VertexCount + ", indices " + m.IndexCount + ", bones " + m.BoneCount + " (used " + m.UsedBoneCount + ")"
+                    + "; 24-byte model (vertices, indices, topology, bone boxes) " + m.NativeBytes + " bytes"
+                    + "; cpu-float input " + (m.FloatInput != null ? m.FloatInputBytes + " bytes (" + VpSkinFloatVertex.Stride + " a vertex), prepared in " + (m.FloatInput.PreparationSeconds * 1000.0).ToString("F3", Inv) + " ms" : "none" + (m.FloatInputRefusal != null ? " (refused: " + m.FloatInputRefusal + ")" : ""))
+                    + "; gpu shared input " + (m.SharedInput != null ? shared + " bytes" : "none" + (m.SharedInputRefusal != null ? " (refused: " + m.SharedInputRefusal + ")" : "")));
+            }
+
+            _record.Fact("cut bench skin inputs", "models " + models.Count + " for " + states.Length + " bodies (one input a model, shared by its bodies; a body holds its palette block only: " + (states.Length > 0 && states[0].handle != null && states[0].handle.SkinModelForWarm != null ? (states[0].handle.SkinModelForWarm.BoneCount * 64 + 48) + " bytes of matrices, bounds and the valid flag (VpDirectSkinInput's block: 64 a bone, 32 for the bounds, 16 for the flag)" : "?") + ")"
+                + "; totals: 24-byte models " + packedTotal + " bytes, cpu-float inputs " + floatTotal + " bytes, gpu shared inputs " + sharedTotal + " bytes; the product candidate under cpu-float holds the 24-byte model AND the float input (" + (packedTotal + floatTotal) + " bytes); under cpu the 24-byte model alone (" + packedTotal + "); the probe's reference arrays are the probe cases', none here");
         }
 
         // EVAL-1 review 1 (P2-4): the events of a request resolved once more from the buffers, with no observation; returns how many were new.

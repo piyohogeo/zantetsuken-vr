@@ -20,6 +20,14 @@ import csv, json, os, sys
 from collections import OrderedDict
 
 
+
+ROUTE_ORDER = ['cpu', 'cpu-float', 'float', 'gpu']
+
+
+def route_rank(route):
+    # the routes in a fixed order; one this list does not know goes last (CPU-SKIN-FLOAT-1 added cpu-float)
+    return ROUTE_ORDER.index(route) if route in ROUTE_ORDER else len(ROUTE_ORDER)
+
 def median(v):
     s = sorted(v); n = len(s)
     return float('nan') if n == 0 else (s[n // 2] if n % 2 else 0.5 * (s[n // 2 - 1] + s[n // 2]))
@@ -227,7 +235,7 @@ def main(argv):
             groups_r = OrderedDict()
             for r in group:
                 groups_r.setdefault((r['route'], r['bodies']), []).append(r)
-            for (route, bodies), rs in sorted(groups_r.items(), key=lambda kv: (kv[0][1], ['cpu', 'float', 'gpu'].index(kv[0][0]) if kv[0][0] in ('cpu', 'float', 'gpu') else 9)):
+            for (route, bodies), rs in sorted(groups_r.items(), key=lambda kv: (kv[0][1], route_rank(kv[0][0]) if kv[0][0] in ('cpu', 'float', 'gpu') else 9)):
                 for rd in all_rounds:
                     br = [x['a']['by_round'][rd] for x in rs if rd in x['a']['by_round']]
                     if not br:
@@ -266,7 +274,7 @@ def main(argv):
         groups = OrderedDict()
         for r in group:
             groups.setdefault((r['route'], r['bodies']), []).append(r)
-        for (route, bodies), rs in sorted(groups.items(), key=lambda kv: (kv[0][1], ['cpu', 'float', 'gpu'].index(kv[0][0]) if kv[0][0] in ('cpu', 'float', 'gpu') else 9)):
+        for (route, bodies), rs in sorted(groups.items(), key=lambda kv: (kv[0][1], route_rank(kv[0][0]) if kv[0][0] in ('cpu', 'float', 'gpu') else 9)):
             req_sum = [x['a']['request_main_sum'] for x in rs]
             resume_sum = [sum(x['a']['ready_main']) for x in rs if x['a']['ready_main']]
             worker = [w for x in rs for w in x['a']['worker']]
@@ -280,7 +288,7 @@ def main(argv):
         lines += ['', '### The frame\'s whole times (medians over the runs; steady = frames from 30 after the last acceptance; request = the request frame, request+1 the next; accept = the acceptance frames of deferred requests)', '',
                   '| route | bodies | steady ftMain | request ftMain | request+1 ftMain | accept ftMain | steady ftGpu | request ftGpu | steady xrAppGpu | request xrAppGpu | accept xrAppGpu | request frame dt | max dt of the 5 after | steady frames | attributed |',
                   '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|']
-        for (route, bodies), rs in sorted(groups.items(), key=lambda kv: (kv[0][1], ['cpu', 'float', 'gpu'].index(kv[0][0]) if kv[0][0] in ('cpu', 'float', 'gpu') else 9)):
+        for (route, bodies), rs in sorted(groups.items(), key=lambda kv: (kv[0][1], route_rank(kv[0][0]) if kv[0][0] in ('cpu', 'float', 'gpu') else 9)):
             def med(key):
                 v = [x['a'][key] for x in rs if x['a'].get(key) is not None]
                 return median(v) if v else None

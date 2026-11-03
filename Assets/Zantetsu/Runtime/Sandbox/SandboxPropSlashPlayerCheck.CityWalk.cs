@@ -693,6 +693,7 @@ namespace Zantetsu.Sandbox
             private bool CityWalkVrsBeganBeforeReady()
             {
                 bool before = !float.IsNaN(_cwHeadMovedAt);
+                StageLine("skin models at ready: " + Zantetsu.Rendering.VpSkinModel.DescribeLive());   // CPU-SKIN-FLOAT-DEFAULT-1: the preparation's end
                 StageLine("VRS order: ready at " + Zantetsu.Core.GamePause.RealtimeSinceStartup.ToString("F2", Inv) + " s (process, frame " + Time.frameCount + ", wall " + System.DateTime.Now.ToString("HH:mm:ss.fff", Inv) + "); "
                     + (before ? "the head had moved already at " + _cwHeadMovedAt.ToString("F2", Inv) + " s during " + _cwHeadMovedStage + ": the VRS began before ready, NOT a synchronisation"
                               : "the head has not moved yet: the VRS begins after ready"));
@@ -769,6 +770,10 @@ namespace Zantetsu.Sandbox
                 }
                 Log("city walk fragment reach (the run): " + CityWalkFragmentReach());
                 Log("city walk skinning (the run): " + CityWalkSkinning());
+                // CPU-SKIN-FLOAT-DEFAULT-1: the live skin models and their float inputs at the walk's end, counted by live object (the peaks too).
+                Log("city walk skin models (the run): " + Zantetsu.Rendering.VpSkinModel.DescribeLive());
+                // Review 1 (P2): the effective bake routes and the fallbacks with their reasons, here too -- a run that keeps its scene (Quest) has no world end.
+                Log("city walk skin bake (the run): " + Zantetsu.PhysicsCut.VpSkinBakeStats.Describe() + "; syncs are counted at the hit only (a held request's resume bakes again, uncounted; its fallback is counted)");
                 Expect(buildingCuts.Count > 0, "[city walk] a building was cut by the katana's Slash (" + buildingCuts.Count + " buildings)");
                 Expect(propRoots.Count > 0, "[city walk] a prop was cut by the katana's Slash and its geometry committed (" + propRoots.Count + " props)");
                 Expect(npcRoots.Count > 0, "[city walk] an NPC was cut by the katana's Slash and its geometry committed (" + npcRoots.Count + " NPCs)");

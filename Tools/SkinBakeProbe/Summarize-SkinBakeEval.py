@@ -32,10 +32,12 @@ from collections import OrderedDict
 
 
 def f(v):
+    # a blank, a non-number or a NaN (a value a record wrote for "not measured") is None, never a number (review 2)
     try:
-        return float(v)
+        x = float(v)
     except (TypeError, ValueError):
         return None
+    return None if x != x else x
 
 
 def i(v, default=-1):
@@ -109,7 +111,13 @@ class Run(object):
         self.platform = 'Quest' if 'Vulkan' in build or 'Android' in build else ('PC' if 'Direct3D12' in build or 'Windows' in build else 'unknown')
         self.build_guid = build.split('buildGUID ')[1].split(';')[0] if 'buildGUID ' in build else ''
         bench = self.facts.get('cut bench', '')
-        self.route = (self.requests[0]['route'] if self.requests else bench.split('skin bake route ')[1].split(' ')[0] if 'skin bake route ' in bench else '?')
+        # CPU-SKIN-FLOAT-1: a run is grouped by the route the launch ASKED for (requestedRoute, where the record has it); the routes TAKEN
+        # (the route column: cpu-float, or cpu after a fallback) are counted apart and shown in the runs table.
+        self.route = (self.requests[0].get('requestedRoute') or self.requests[0]['route']) if self.requests else (bench.split('skin bake route ')[1].split(' ')[0] if 'skin bake route ' in bench else '?')
+        self.routes_taken = OrderedDict()
+        for r in self.requests:
+            taken = r.get('route', '?')
+            self.routes_taken[taken] = self.routes_taken.get(taken, 0) + 1
         self.bodies = i(bench.split('bodies ')[1].split(';')[0]) if 'bodies ' in bench else (max(i(r['body']) for r in self.requests) + 1 if self.requests else 0)
         self.rounds_asked = i(bench.split('rounds ')[1].split(';')[0]) if 'rounds ' in bench else 0
         self.order = 'B' if '-B' in name else ('A' if '-A' in name else '?')
@@ -253,6 +261,7 @@ class Run(object):
                 'readyObserved': frame_delta('cpu-ready-observed'),
                 'commit': frame_delta('committed'), 'commitMs': ms('committed'), 'commitObserved': frame_delta('committed-observed'),
                 'cutKernelMs': f(r.get('cutKernelMs')), 'readyMainMs': f(r.get('readyMainMs')), 'bakeWorkerMs': f(r.get('bakeWorkerMs')),
+                'bakeKernelMs': f(r.get('bakeKernelMs')), 'bakeAppendMs': f(r.get('bakeAppendMs')), 'showMs': f(r.get('showMs')), 'routeTaken': r.get('route', ''), 'routeAsked': r.get('requestedRoute', ''),
                 'fallback': r.get('fallbackReason', ''), 'basis': r.get('basisOutcome', ''), 'budgetWait': r.get('budgetWait', ''), 'geometryWait': r.get('geometryWait', ''),
                 'statsWorkerMs': f(st.get('workerMs')) if st else None, 'statsKernelMs': f(st.get('kernelMs')) if st else None,
             })
@@ -264,20 +273,27 @@ class Run(object):
             # TL review 1 P2-1 / review 2 P3: the request's LOCAL MAIN TOTAL = TryCut's Main + the collect's Main of the same request (the gpu route's readyMainMs, which may fall in a later
             # frame; a synchronous route has none), bodies summed -- the cut's own Main over the frames it touches, never "the hit frame's cost"
             'localMainMs': sum((b['requestMainMs'] or 0) + (b['readyMainMs'] or 0) for b in bodies), 'invalid': self.invalid_rounds.get(rnd),
+            # CPU-SKIN-FLOAT-1: the synchronous bake's own times (bodies summed; None when the record has no such column): the kernel alone, the
+            # append (kernel + indices + storage), the display's show (the transfer) -- the same scopes in every synchronous route.
+            'bakeKernelMs': sum(b['bakeKernelMs'] for b in bodies) if all(b['bakeKernelMs'] is not None for b in bodies) else None,
+            'bakeAppendMs': sum(b['bakeAppendMs'] for b in bodies) if all(b['bakeAppendMs'] is not None for b in bodies) else None,
+            'showMs': sum(b['showMs'] for b in bodies) if all(b['showMs'] is not None for b in bodies) else None,
+            'fallbacks': len([b for b in bodies if b['fallback']]),
             'laterSum': sum(p['main'] for p in later) if later else None, 'laterMax': later_max['main'] if later_max else None, 'laterMaxK': later_max['k'] if later_max else None,
             'windowTotal': total, 'windowAttributed': len(attributed), 'windowPartial': len(attributed) < W, 'windowMax': max(p['main'] for p in attributed) if attributed else None,
             'maxDt': max(dts) if dts else None, 'longFrames': long_frames, 'longFramesAll': all_long,
             'commitMaxFrames': max(commits) if commits else None, 'commitMaxMs': max(commit_ms) if commit_ms else None,
             'commitPastWindow': any(c >= W for c in commits), 'commitsMissing': len([b for b in bodies if b['commit'] is None]),
             'bodies': bodies,
-            'pendingAcceptance': len([b for b in bodies if b['acceptance'] == 'Pending']), 'fallbacks': len([b for b in bodies if b['fallback']]),
+            'pendingAcceptance': len([b for b in bodies if b['acceptance'] == 'Pending']),
             'readyNotCompleted': len([b for b in bodies if self.route == 'gpu' and b['ready'] is None]),
         }
 
 
 METRICS = [('windowTotal', 'window Main total (ms)'), ('hitMain', 'hit frame Main (ms)'), ('laterMax', 'largest later frame Main (ms)'), ('windowMax', 'largest Main in the window (ms)'),
            ('maxDt', 'largest frame-start interval (ms)'), ('commitMaxMs', 'last Commit (ms after the request)'), ('hitTryCutMs', 'TryCut Main at the hit, bodies summed (ms)'),
-           ('localMainMs', 'local Main total per request: TryCut + collect over frames, bodies summed (ms)')]
+           ('localMainMs', 'local Main total per request: TryCut + collect over frames, bodies summed (ms)'),
+           ('bakeKernelMs', 'bake kernel alone, bodies summed (ms)'), ('bakeAppendMs', 'bake append: kernel + indices + storage, bodies summed (ms)'), ('showMs', 'display show (transfer), bodies summed (ms)')]
 FRAME_METRICS = ('windowTotal', 'hitMain', 'laterMax', 'windowMax', 'maxDt', 'commitMaxMs')   # the frame-level metrics, apart from the local cost
 COMPARED_METRICS = [m for m in METRICS if m[0] != 'hitTryCutMs']
 
@@ -349,13 +365,13 @@ def main(argv):
     P('')
     P('## Runs')
     P('')
-    P('| run | platform | build | route | bodies | order | rounds | warm | resets settled | invalid rounds | FTM undetermined frames | FTM duplicate rows | reaction buffers |')
-    P('|---|---|---|---|---|---|---|---|---|---|---|---|---|')
+    P('| run | platform | build | route asked | routes taken | bodies | order | rounds | warm | resets settled | invalid rounds | FTM undetermined frames | FTM duplicate rows | reaction buffers |')
+    P('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|')
     groups = OrderedDict()
     for run in runs:
         settled = sum(1 for v in run.resets.values() if v.startswith('settled')); total_resets = len(run.resets)
-        P('| %s | %s | %s | %s | %d | %s | %d (%d first + %d steady%s) | %s | %d/%d | %s | %d | %d | %s |' % (
-            run.name, run.platform, run.build_guid[:8], run.route, run.bodies, run.order, len(run.rounds), 1 if run.rounds else 0, len(steady_rounds(run)),
+        P('| %s | %s | %s | %s | %s | %d | %s | %d (%d first + %d steady%s) | %s | %d/%d | %s | %d | %d | %s |' % (
+            run.name, run.platform, run.build_guid[:8], run.route, ' '.join('%s %d' % kv for kv in run.routes_taken.items()), run.bodies, run.order, len(run.rounds), 1 if run.rounds else 0, len(steady_rounds(run)),
             ' + %d INVALID' % len(run.invalid_rounds) if run.invalid_rounds else '', run.warm_state(), settled, total_resets,
             ('%s (%s)' % (', '.join(str(r) for r in run.invalid_rounds), list(run.invalid_rounds.values())[0])) if run.invalid_rounds else 'none',
             len(run.undetermined_frames), run.ftm_rows_dropped, run.reaction.replace('|', '/')[:120]))
@@ -427,7 +443,7 @@ def main(argv):
     platform_builds = sorted(set((k[0], k[1]) for k in groups)); body_counts = sorted(set(k[3] for k in groups))
     for platform, build in platform_builds:
         for bodies in body_counts:
-            for a, b in [('cpu', 'float'), ('float', 'gpu'), ('cpu', 'gpu')]:
+            for a, b in [('cpu', 'float'), ('float', 'gpu'), ('cpu', 'gpu'), ('cpu', 'cpu-float')]:
                 for metric, label in COMPARED_METRICS:
                     c = compare(groups, platform, build, bodies, a, b, metric)
                     if c is None:
