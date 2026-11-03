@@ -2,6 +2,7 @@
 <#
 .SYNOPSIS
   One run of the GPU bake probe on the Quest (DESIGN 4.5.14, skin-bake-probe): the configuration pushed, the APK started,
+  exit 0 only when the record appeared on the device AND adb pull returned 0 AND skin-bake-probe.md/.json are at -PullTo (2 = no record in time, 3 = pull failed or incomplete),
   the record waited for and pulled. The record lands under the app's files:
   /sdcard/Android/data/com.zantetsuken.quest.skinbakeprobe/files/runs/<utc>-skinbakeprobe-<id>/ (skin-bake-probe.md/.csv/.json,
   the pictures, quest-platform.txt). With -PullTo the run folder is pulled there when its record appears (or the wait ends).
@@ -93,10 +94,25 @@ while (((Get-Date) - $began).TotalSeconds -lt $WaitSeconds) {
     if ($run) { $r = (Ask shell "ls $deviceFiles/runs/$run/skin-bake-probe.md 2>/dev/null"); if ("$r" -match 'skin-bake-probe') { $done = $true; break } }
 }
 Write-Output "record present: $done after $([int]((Get-Date) - $began).TotalSeconds) s"
+# The record is taken only when adb pull itself returned 0 AND the required record files are at the destination (SAVE-1 review:
+# a broken connection or a failed save on the PC must not end as a success). Exit 0 = record present and pulled; 2 = no record
+# appeared on the device within -WaitSeconds; 3 = the record is on the device but the pull failed or is incomplete.
+$pulled = $false
 if ($run) {
     New-Item -ItemType Directory -Force -Path $PullTo | Out-Null
-    $ErrorActionPreference = 'Continue'; & $Adb -s $Serial pull "$deviceFiles/runs/$run" "$PullTo\$run" 2>$null | Select-Object -Last 1; $ErrorActionPreference = 'Stop'
-    Write-Output "pulled to $PullTo\$run"
-    if (Test-Path "$PullTo\$run\skin-bake-probe.md") { Get-Content "$PullTo\$run\skin-bake-probe.md" | Select-Object -First 3 }
+    $ErrorActionPreference = 'Continue'
+    $pullOutput = @(& $Adb -s $Serial pull "$deviceFiles/runs/$run" "$PullTo\$run" 2>&1 | ForEach-Object { "$_" })
+    $pullExit = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($pullOutput.Count -gt 0) { Write-Output $pullOutput[-1] }
+    $required = @('skin-bake-probe.md', 'skin-bake-probe.json')
+    $missing = @($required | Where-Object { -not (Test-Path -LiteralPath "$PullTo\$run\$_" -PathType Leaf) })
+    if ($pullExit -ne 0) { Write-Output "PULL FAILED: adb pull exit $pullExit (the record stays on the device: $deviceFiles/runs/$run)" }
+    elseif ($missing.Count -gt 0) { Write-Output "PULL INCOMPLETE: $($missing -join ', ') missing in $PullTo\$run (the record stays on the device: $deviceFiles/runs/$run)" }
+    else {
+        $pulled = $true
+        Write-Output "pulled to $PullTo\$run"
+        Get-Content -LiteralPath "$PullTo\$run\skin-bake-probe.md" | Select-Object -First 3
+    }
 }
-if ($done) { exit 0 } else { exit 2 }
+if ($done -and $pulled) { exit 0 } elseif ($done) { exit 3 } else { exit 2 }
