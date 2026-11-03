@@ -575,7 +575,7 @@ namespace Zantetsu.Quest
 
             Debug.Log(LogPrefix + "ready to warm the drawing at frame " + Time.frameCount + " (asked from frame " + askedFrame + "): the world, the display's materials and "
                 + crowds.Length + " crowd(s)");
-            _prewarm = new QuestDrawPrewarm(_camera, world, _drawing, _config.mode == "vp3c-native", _config.appSw, false);
+            _prewarm = new QuestDrawPrewarm(_camera, world, _drawing, _config.mode == "vp3c-native", _config.appSw, false, QuestDrawPrewarm.DefaultTimeoutSeconds, FirstPreparedSkinModel);
             yield return _prewarm.Run();
             _phase = "Play";
             foreach (string line in _prewarm.Report) Debug.Log(LogPrefix + "prewarm: " + line);
@@ -588,6 +588,16 @@ namespace Zantetsu.Quest
                 Debug.LogError(LogPrefix + "prewarm FAILED: " + _prewarm.Failure);
                 EndPlayPreparation("the drawing was NOT warmed (failed: " + _prewarm.Failure + ")");
             }
+        }
+
+        /// <summary>A prepared character's skin model for the GPU bake's start-up warm (SKIN-GPU-FIRST-STARTUP-1); null when none is prepared yet.</summary>
+        private static Zantetsu.Rendering.VpSkinModel FirstPreparedSkinModel()
+        {
+            foreach (var npc in UnityEngine.Object.FindObjectsByType<SandboxNpcCharacter>(FindObjectsSortMode.None))
+            {
+                if (npc != null && npc.Handle != null && npc.Handle.SkinModelForWarm != null) return npc.Handle.SkinModelForWarm;
+            }
+            return null;
         }
 
         /// <summary>What play's preparation still waits for before the drawing is warmed; null when nothing.</summary>

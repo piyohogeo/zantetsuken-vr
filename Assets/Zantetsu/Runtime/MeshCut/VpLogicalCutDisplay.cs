@@ -3177,6 +3177,133 @@ namespace Zantetsu.MeshCut
         /// <summary>Diagnosis only (a lifetime test or drill): the GPU copy's current vertex buffer, to see whether it is still valid after the display gave it up.</summary>
         public GraphicsBuffer GpuVertexBufferForDiagnosis => _buffers.VertexBuffer;
 
+        /// <summary>
+        /// Diagnosis only (SKIN-LINES-1): every shown entry (its fragment, geometry range, placement, split and clip state,
+        /// commands) and every render fragment of the adopted snapshot (registration, root, pending side, planes, caps,
+        /// placement), with -- per entry -- how many of its range's vertices carry the cap UV marker in the storage's
+        /// committed vertices and in the display's vertex buffer (a synchronous readback: never in a measured frame).
+        /// </summary>
+        public string DescribeShownForDiagnosis()
+        {
+            var t = new System.Text.StringBuilder();
+            string V(Vector4 v) => "(" + v.x.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + ", " + v.y.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + ", " + v.z.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + ")";
+            string R(Matrix4x4 m)
+            {
+                Vector3 e = m.rotation.eulerAngles;
+                return "(" + e.x.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + ", " + e.y.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + ", " + e.z.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + ")";
+            }
+            t.Append("shown ").Append(_shown.Count).Append(", render fragments ").Append(RenderFragmentCount).Append(", commands ").Append(_commandEnd);
+            for (int g = 0; g < _shown.Count; g++)
+            {
+                Shown e = _shown[g];
+                int cpuMarked = -1, gpuMarked = -1;
+                if (e.geometry.vertexCount > 0 && _storage.TryGetCommittedVertices(e.geometry.vertexStart, e.geometry.vertexCount, out NativeArray<VpRenderVertex> cpu))
+                {
+                    cpuMarked = 0;
+                    for (int i = 0; i < cpu.Length; i++) if (cpu[i].u == 247 && cpu[i].v == 247) cpuMarked++;
+                }
+                if (e.geometry.vertexCount > 0 && _buffers.VertexBuffer != null && e.geometry.vertexStart + e.geometry.vertexCount <= _buffers.VertexBuffer.count && SystemInfo.supportsAsyncGPUReadback)
+                {
+                    UnityEngine.Rendering.AsyncGPUReadbackRequest request = UnityEngine.Rendering.AsyncGPUReadback.Request(_buffers.VertexBuffer, e.geometry.vertexCount * VpRenderVertex.Stride, e.geometry.vertexStart * VpRenderVertex.Stride);
+                    request.WaitForCompletion();
+                    if (!request.hasError)
+                    {
+                        NativeArray<VpRenderVertex> gpu = request.GetData<VpRenderVertex>();
+                        gpuMarked = 0;
+                        for (int i = 0; i < gpu.Length; i++) if (gpu[i].u == 247 && gpu[i].v == 247) gpuMarked++;
+                    }
+                }
+                t.Append(" | entry ").Append(g).Append(" fragment ").Append(e.fragment.value).Append(" geometry v").Append(e.geometry.vertexStart).Append('+').Append(e.geometry.vertexCount)
+                    .Append(" capMarked storage ").Append(cpuMarked).Append(" gpu ").Append(gpuMarked)
+                    .Append(" objectToWorld t ").Append(V(e.objectToWorld.GetColumn(3))).Append(" r ").Append(R(e.objectToWorld))
+                    .Append(" split ").Append(e.split).Append(" clipped ").Append(e.clipped).Append(" rf ").Append(e.renderFragments).Append(" from ").Append(e.firstRenderFragment).Append(" rfShown ").Append(e.renderFragmentsShown)
+                    .Append(" dropping ").Append(e.dropping).Append(" awaiting ").Append(e.awaiting).Append(" commands ").Append(e.commands != null ? e.commands.Length : 0).Append(" ranges ").Append(e.ranges != null ? e.ranges.Length : 0);
+                if (e.ranges != null) for (int i = 0; i < e.ranges.Length; i++) t.Append(" range").Append(i).Append(" v").Append(e.ranges[i].vertexStart).Append('+').Append(e.ranges[i].vertexCount).Append(" i").Append(e.ranges[i].indexStart).Append('+').Append(e.ranges[i].indexCount);
+                if (e.commands != null) for (int i = 0; i < e.commands.Length; i++) t.Append(" command").Append(i).Append(" v").Append(e.commands[i].range.vertexStart).Append('+').Append(e.commands[i].range.vertexCount).Append(" i").Append(e.commands[i].range.indexStart).Append('+').Append(e.commands[i].range.indexCount).Append(" instances ").Append(e.commands[i].instanceCount).Append(" clipRoute ").Append(e.commands[i].clipRoute)
+                    .Append(" material ").Append(e.commandMaterials != null && i < e.commandMaterials.Length && e.commandMaterials[i] != null ? e.commandMaterials[i].name + "/" + (e.commandMaterials[i].shader != null ? e.commandMaterials[i].shader.name : "?") : "none");
+            }
+
+            for (int r = 0; r < RenderFragmentCount; r++)
+            {
+                if (!TryGetRenderFragment(r, out VpMultiCutRenderFragment rf)) continue;
+                t.Append(" | rf ").Append(r).Append(" registration ").Append(rf.registration).Append(" root ").Append(rf.root.value).Append(" pendingSide ").Append(rf.rootPendingSide).Append(" aggregated ").Append(rf.aggregated)
+                    .Append(" planes ").Append(rf.clip.PlaneCount).Append(" caps ").Append(rf.capCount).Append(" branches ").Append(rf.branchCount)
+                    .Append(" world t ").Append(V(rf.geometryLocalToWorld.GetColumn(3))).Append(" r ").Append(R(rf.geometryLocalToWorld))
+                    .Append(" commands ").Append(_rfCommandStart != null && r < _rfCommandStart.Length ? _rfCommandStart[r] : -1).Append('+').Append(_rfCommandCount != null && r < _rfCommandCount.Length ? _rfCommandCount[r] : -1)
+                    .Append(" rfTransform t ").Append(_rfTransform != null && r < _rfTransform.Length ? V(_rfTransform[r].GetColumn(3)) : "-");
+            }
+
+            // Every command slot up to the end, and which render fragment's span holds it; a slot held by none is drawn by nobody's entry.
+            for (int c = 0; c < _commandEnd; c++)
+            {
+                int owner = -1;
+                if (_rfCommandStart != null && _rfCommandCount != null)
+                {
+                    for (int r = 0; r < RenderFragmentCount && r < _rfCommandStart.Length; r++)
+                    {
+                        if (c >= _rfCommandStart[r] && c < _rfCommandStart[r] + _rfCommandCount[r]) { owner = r; break; }
+                    }
+                }
+
+                Material m = _commandMaterials != null && c < _commandMaterials.Length ? _commandMaterials[c] : null;
+                t.Append(" | command ").Append(c).Append(" material ").Append(m != null ? m.name : "null").Append(" provisional ").Append(_commandProvisional != null && c < _commandProvisional.Length ? _commandProvisional[c].ToString() : "?")
+                    .Append(" root ").Append(_roots != null && c < _roots.Length ? _roots[c].value.ToString() : "?");
+                if (_commands != null && c < _commands.Length)
+                {
+                    VpIndirectCommand cmd = _commands[c];
+                    t.Append(" v").Append(cmd.range.vertexStart).Append('+').Append(cmd.range.vertexCount).Append(" i").Append(cmd.range.indexStart).Append('+').Append(cmd.range.indexCount).Append(" instances ").Append(cmd.instanceCount).Append(" clipRoute ").Append(cmd.clipRoute).Append(" bounds c ").Append(V(cmd.localBounds.center));
+                    // The indices read back: which vertices this command references (the entry's own geometry range = the cut's new block).
+                    if (m != null && cmd.range.indexCount > 0 && cmd.range.vertexCount > 0 && _buffers.IndexBuffer != null && _buffers.VertexBuffer != null && SystemInfo.supportsAsyncGPUReadback
+                        && cmd.range.indexStart + cmd.range.indexCount <= _buffers.IndexBuffer.count && cmd.range.vertexStart + cmd.range.vertexCount <= _buffers.VertexBuffer.count)
+                    {
+                        UnityEngine.Rendering.AsyncGPUReadbackRequest ir = UnityEngine.Rendering.AsyncGPUReadback.Request(_buffers.IndexBuffer, cmd.range.indexCount * VpGpuIndexedGeometryBuffers.IndexStride, cmd.range.indexStart * VpGpuIndexedGeometryBuffers.IndexStride);
+                        UnityEngine.Rendering.AsyncGPUReadbackRequest vr = UnityEngine.Rendering.AsyncGPUReadback.Request(_buffers.VertexBuffer, cmd.range.vertexCount * VpRenderVertex.Stride, cmd.range.vertexStart * VpRenderVertex.Stride);
+                        ir.WaitForCompletion(); vr.WaitForCompletion();
+                        if (!ir.hasError && !vr.hasError)
+                        {
+                            NativeArray<uint> indices = ir.GetData<uint>();
+                            NativeArray<VpRenderVertex> vertices = vr.GetData<VpRenderVertex>();
+                            Shown own = null;
+                            for (int g = 0; g < _shown.Count; g++) if (_shown[g].fragment.value == (_roots != null && c < _roots.Length ? _roots[c].value : -1)) { own = _shown[g]; break; }
+                            var seen = new HashSet<uint>();
+                            int inOwn = 0, outside = 0, marked = 0, outOfRange = 0; uint lo = uint.MaxValue, hi = 0;
+                            Vector3 min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity), max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+                            for (int i = 0; i < indices.Length; i++)
+                            {
+                                uint vi = indices[i];
+                                if (!seen.Add(vi)) continue;
+                                lo = Math.Min(lo, vi); hi = Math.Max(hi, vi);
+                                if (own != null && vi >= (uint)own.geometry.vertexStart && vi < (uint)(own.geometry.vertexStart + own.geometry.vertexCount)) inOwn++; else outside++;
+                                long local = (long)vi - cmd.range.vertexStart;
+                                if (local < 0 || local >= vertices.Length) { outOfRange++; continue; }
+                                VpRenderVertex v = vertices[(int)local];
+                                if (v.u == 247 && v.v == 247) marked++;
+                                min = Vector3.Min(min, v.position); max = Vector3.Max(max, v.position);
+                            }
+
+                            t.Append(" refs ").Append(seen.Count).Append(" [").Append(lo).Append("..").Append(hi).Append("] inOwnGeometry ").Append(inOwn).Append(" outside ").Append(outside).Append(" capMarked ").Append(marked).Append(" outOfRange ").Append(outOfRange)
+                                .Append(" localBox ").Append(V(min)).Append("..").Append(V(max));
+                        }
+                    }
+                }
+
+                t.Append(" rf ").Append(owner);
+            }
+
+            for (int i = 0; i < _instanceEnd && _transforms != null && i < _transforms.Length; i++)
+            {
+                t.Append(" | instance ").Append(i).Append(" t ").Append(V(_transforms[i].GetColumn(3))).Append(" r ").Append(R(_transforms[i])).Append(" planes ").Append(_clips != null && i < _clips.Length ? _clips[i].PlaneCount : -1);
+            }
+
+            return t.ToString();
+        }
+
+        /// <summary>Diagnosis only (the bake probe, SKIN-BAKE-PROBE-2): a CPU write of a region of the GPU copy's vertex buffer through its owner, which raises the vertex generation the plugin's route re-takes its native pointer at; false outside the capacity.</summary>
+        public bool TryWriteGpuVerticesForDiagnosis(NativeArray<VpRenderVertex> data, int start, int count) => _buffers.TryWriteVertices(data, start, count);
+
+        /// <summary>Diagnosis only: the GPU copy's vertex-buffer CPU-write generation.</summary>
+        public uint GpuVertexGenerationForDiagnosis => _buffers.VertexGeneration;
+
         /// <summary>The GPU copy's current capacities and how often it has grown, for observation.</summary>
         public int GpuVertexCapacity => _buffers.VertexCapacity;
 
@@ -3283,7 +3410,7 @@ namespace Zantetsu.MeshCut
 
             if (!vertices || _regrowRuns.Count == 0)
             {
-                return true;
+                return vertices ? RebakeGpuRegions() : true;
             }
 
             // Blocks shared between geometries are transferred once: sorted, and runs that overlap or touch merged --
@@ -3312,7 +3439,9 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            return true;
+            // The regions whose vertices are the GPU bake's, not the storage's: baked again into the replaced buffer, after
+            // the re-transfer above (which wrote what the storage holds of them) and before anything is drawn (DESIGN 4.5.15).
+            return RebakeGpuRegions();
         }
 
         private void FailGpuBacking(string failure)
@@ -3474,8 +3603,12 @@ namespace Zantetsu.MeshCut
             int indices;
             try
             {
-                if (!VpStoredGeometryTransfer.TryUploadCommittedVertices(
-                        _storage, _buffers.VertexBuffer, geometry.vertexStart, geometry.vertexCount, out vertices)
+                // A deferred geometry's vertices are written by the GPU bake in this same update (DESIGN 4.5.15): the
+                // storage holds nothing of them yet, so none are transferred; its indices are the storage's and go across.
+                bool deferred = _showingDeferred && _storage.IsDeferredPending(geometry);
+                vertices = 0;
+                if ((!deferred && !VpStoredGeometryTransfer.TryUploadCommittedVertices(
+                        _storage, _buffers.VertexBuffer, geometry.vertexStart, geometry.vertexCount, out vertices))
                     || !VpStoredGeometryTransfer.TryUploadPublishedIndices(
                         _storage, _buffers.IndexBuffer, geometry.indexRange, out indices))
                 {
@@ -4445,6 +4578,14 @@ namespace Zantetsu.MeshCut
         /// registered and prepared in this frame for the adopted snapshot, and the display must not have stopped;
         /// otherwise this throws before registering anything.
         /// </summary>
+        /// <summary>
+        /// Diagnosis only (SKIN-LINES-1): true withholds every shadow caster a display would issue -- the ordinary
+        /// commands', the clip list's and the direct clip draws' (the Vulkan route), by Unity's call or the plugin's -- so that a picture says whether a defect is of
+        /// the casters; the bodies are drawn as before. Off by default; nothing of the product sets it (the skin bake
+        /// probe's -zantetsuSkinBakeProbeShadows nocast does, and clears it when it ends).
+        /// </summary>
+        public static bool CastersOffForDiagnosis;
+
         public void Render(int layer, Camera camera)
         {
             _buffers.ReleaseRetired(_giveUpBuffer);
@@ -4589,7 +4730,7 @@ namespace Zantetsu.MeshCut
 
             // The casters, grouped by which side of DESIGN 5.4's division a command falls on, over the same commands,
             // transforms, clip records and offsets as the surfaces above; free slots are passed over the same way.
-            if (_shadowMaterial != null)
+            if (_shadowMaterial != null && !CastersOffForDiagnosis)
             {
                 start = 0;
                 while (start < _commandEnd)
@@ -4663,7 +4804,7 @@ namespace Zantetsu.MeshCut
                     Bounds worldBounds = VpDirectDraw.WorldBounds(command.localBounds, objectToWorld);
                     clipSink.AddClipBody(camera, _buffers, _commandMaterials[record.command], command.range,
                         objectToWorld, clip, worldBounds, layer, clipSelection, i);
-                    if (_shadowMaterial != null)
+                    if (_shadowMaterial != null && !CastersOffForDiagnosis)
                     {
                         clipSink.AddClipCasters(camera, _buffers,
                             _commandProvisional[record.command] ? _provisionalShadowMaterial : _shadowMaterial,
@@ -4865,7 +5006,7 @@ namespace Zantetsu.MeshCut
                 first += run;
             }
 
-            if (_shadowMaterial == null)
+            if (_shadowMaterial == null || CastersOffForDiagnosis)
             {
                 return;
             }
@@ -8770,6 +8911,9 @@ namespace Zantetsu.MeshCut
             entry.instances.Clear();
             entry.takenThisPass = 0;
             _table.TryRetireGeometry(entry.reference);
+            // A region the GPU bake owned goes with its geometry: nothing is baked again into a range that is no longer this
+            // geometry's (DESIGN 4.5.15; its producer learns of it by asking HasGpuRegion).
+            if (_gpuRegions.Count > 0 && RemoveGpuRegion(entry.geometry)) GpuRegionsRetired++;
         }
 
         /// <summary>

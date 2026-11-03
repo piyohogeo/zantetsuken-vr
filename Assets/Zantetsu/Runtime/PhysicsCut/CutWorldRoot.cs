@@ -680,6 +680,7 @@ namespace Zantetsu.PhysicsCut
 
             // The skin draw beside the display (DESIGN 4.5.12), where the launch and the body route allow it.
             MakeSkinDisplay(materialsBySourceIndex);
+            MakeSkinBake();
 
             Func<WorkDestination, IWorkExecutor> destinations = executors ?? nextWorldExecutors;
             nextWorldExecutors = null;
@@ -701,6 +702,7 @@ namespace Zantetsu.PhysicsCut
             Cook = new PhysicsCutCook(Dispatcher, profile.ConcurrentCookReservations);
             Frame = new SharedWorkFrame(Dispatcher);
             Frame.Add(Cook);
+            MakeSkinBakePending();
 
             _fault = new TerminatingGeometryFault(this);
 
@@ -924,6 +926,9 @@ namespace Zantetsu.PhysicsCut
             _ending = true;
             IsReady = false;
             Driver?.EndEveryCut();
+            // The deferred skin bakes (DESIGN 4.5.15) adopt nothing from here: held ones give their snapshot back, waiting
+            // ones leave the dispatcher, running ones are collected by the drain below and give theirs back then.
+            SkinBakePending?.EndAll();
             if (Driver != null)
             {
                 Driver.enabled = false;
@@ -1043,6 +1048,7 @@ namespace Zantetsu.PhysicsCut
             ReleaseRest();
             Owners?.Dispose();
             ReleaseSkinDisplay();
+            ReleaseSkinBake();
             Display?.Dispose();
             CutInputConnectivity.Clear();
             if (_ownsPaletteBinding)

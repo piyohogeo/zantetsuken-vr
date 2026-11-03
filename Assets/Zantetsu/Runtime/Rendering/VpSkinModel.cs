@@ -306,6 +306,48 @@ namespace Zantetsu.Rendering
         /// <summary>How many readers hold the model now.</summary>
         public int HoldCount => _holds;
 
+        // ----- the shared input of the GPU-first route (DESIGN 4.5.15) ----------------------------------------------------
+        private VpSharedSkinInput _sharedInput;
+        private string _sharedInputRefusal;
+        private bool _sharedInputTried;
+
+        /// <summary>
+        /// The mesh's shared input for the GPU bake and the deferred CPU bake, made once by <see cref="TryPrepareSharedInput"/>;
+        /// null while not made or refused. Freed with the model.
+        /// </summary>
+        public VpSharedSkinInput SharedInput => _sharedInput;
+
+        /// <summary>Why the shared input was refused, when it was; null otherwise.</summary>
+        public string SharedInputRefusal => _sharedInputRefusal;
+
+        /// <summary>
+        /// Prepares the shared input once (cold: the model's making, never a hit): true when it is there; false, with the
+        /// reason kept, when the mesh is outside the accepted conditions (<see cref="VpSharedSkinInput.TryPrepare"/>), and
+        /// the same answer is given again without trying again.
+        /// </summary>
+        public bool TryPrepareSharedInput(out string refusal)
+        {
+            ThrowIfDisposed();
+            if (_sharedInput != null) { refusal = null; return true; }
+            if (_sharedInputTried) { refusal = _sharedInputRefusal; return false; }
+            _sharedInputTried = true;
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            bool prepared = VpSharedSkinInput.TryPrepare(SourceMesh, out _sharedInput, out refusal);
+            VpSkinBakeMarks.Note("shared-input", began);
+            if (prepared)
+            {
+                if (_sharedInput.VertexCount != VertexCount || _sharedInput.IndexCount != IndexCount)
+                {
+                    refusal = "the shared input counts " + _sharedInput.VertexCount + " vertices and " + _sharedInput.IndexCount + " indices, the model " + VertexCount + " and " + IndexCount;
+                    _sharedInput.Dispose();
+                    _sharedInput = null;
+                }
+            }
+
+            _sharedInputRefusal = refusal;
+            return _sharedInput != null;
+        }
+
         /// <summary>The owner's end: freed now, or when the last holder releases it.</summary>
         public void Dispose()
         {
@@ -323,6 +365,8 @@ namespace Zantetsu.Rendering
             if (_indices.IsCreated) _indices.Dispose();
             if (_topology.IsCreated) _topology.Dispose();
             if (_boneBoxes.IsCreated) _boneBoxes.Dispose();
+            _sharedInput?.Dispose();
+            _sharedInput = null;
         }
 
         private void ThrowIfDisposed()

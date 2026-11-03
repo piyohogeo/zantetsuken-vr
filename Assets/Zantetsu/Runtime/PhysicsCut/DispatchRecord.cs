@@ -298,7 +298,7 @@ namespace Zantetsu.PhysicsCut
                 .Append("; works logged ").Append(works.Length).Append(" (not kept ").Append(d.WorkLogNotKept).Append(")")
                 .Append("; Background works only (moved in from another destination, not logged: ").Append(d.WorkLogMovedIn).Append(")")
                 .Append("; dispatch opportunities while logging ").Append(d.WorkLogOpportunities).Append('\n');
-            for (int p = 0; p <= (int)WorkPurpose.MobPlanning; p++)
+            for (int p = 0; p < WorkPurposes.Count; p++)
             {
                 var purpose = (WorkPurpose)p;
                 int n = 0, refusedWorks = 0;

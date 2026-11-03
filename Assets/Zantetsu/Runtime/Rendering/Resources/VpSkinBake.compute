@@ -1,0 +1,124 @@
+// The GPU bake of a skinned individual's fixed pose (DESIGN 4.5.15, skin-gpu-first): the 16-byte render vertices from
+// the drawn mesh's own GPU buffers -- its vertex streams (raw) and its FourBones bone weights (raw, or 32-byte structured
+// elements where the buffer has no Raw target: Vulkan) -- and one fixed renderer-local palette, written into a region
+// of the display's 16-byte vertex buffer. Nothing here reads a vertex layout it was not told: the attribute positions
+// and the strides come from the mesh. The arithmetic is the float kernel's (VpSkinFloatKernel): position = sum of
+// w (M p), normal = sum of w (M3 n), the normal L1-normalised and oct-encoded to two signed bytes, the UV to two bytes;
+// a non-finite result, a zero normal, a bone outside the palette or an unsupported UV marks the vertex invalid (-128, -128).
+// No verification count is taken (the probe's PROBE_NO_COUNTS variant is the product).
+#pragma kernel Bake16
+#pragma multi_compile_local __ WEIGHTS_S32
+
+// The vertex streams that hold an attribute (an unused slot is bound to a small dummy).
+ByteAddressBuffer _Stream0;
+ByteAddressBuffer _Stream1;
+ByteAddressBuffer _Stream2;
+ByteAddressBuffer _Stream3;
+// x = stream, y = byte offset in the vertex, z = 0 (Float32 only here), w = dimension.
+int4 _Position;
+int4 _Normal;
+int4 _Uv;           // w = 0: the mesh has no UV0 (the centre 0.5, 0.5 is written)
+int4 _Strides;      // bytes a vertex, a stream
+
+// The FourBones weights: 4 floats then 4 ints, 32 bytes a vertex.
+#if defined(WEIGHTS_S32)
+struct WeightEntry32 { uint4 a; uint4 b; };
+StructuredBuffer<WeightEntry32> _WeightsS32;
+uint WeightWord(uint at) { WeightEntry32 e = _WeightsS32[at >> 5]; uint w = (at >> 2) & 7u; uint4 h = w < 4u ? e.a : e.b; w &= 3u; return w == 0 ? h.x : w == 1 ? h.y : w == 2 ? h.z : h.w; }
+#else
+ByteAddressBuffer _Weights;
+uint WeightWord(uint at) { return _Weights.Load(at); }
+#endif
+
+StructuredBuffer<float4x4> _Palette;
+int _BoneCount;
+RWStructuredBuffer<uint4> _Output;   // VpRenderVertex: position xyz as float bits, then (normalX | normalY << 8 | u << 16 | v << 24)
+uint _OutputStart;
+uint _Count;
+
+float ReadFloat(int stream, uint address, int component)
+{
+    uint at32 = address + (uint)(component * 4);
+    uint bytes;
+    if (stream == 0) bytes = _Stream0.Load(at32);
+    else if (stream == 1) bytes = _Stream1.Load(at32);
+    else if (stream == 2) bytes = _Stream2.Load(at32);
+    else bytes = _Stream3.Load(at32);
+    return asfloat(bytes);
+}
+
+float3 ReadFloat3(int4 attribute, uint vertex)
+{
+    uint address = vertex * (uint)_Strides[attribute.x] + (uint)attribute.y;
+    return float3(ReadFloat(attribute.x, address, 0), ReadFloat(attribute.x, address, 1), ReadFloat(attribute.x, address, 2));
+}
+
+float2 ReadFloat2(int4 attribute, uint vertex)
+{
+    uint address = vertex * (uint)_Strides[attribute.x] + (uint)attribute.y;
+    return float2(ReadFloat(attribute.x, address, 0), ReadFloat(attribute.x, address, 1));
+}
+
+// One weight of a vertex: the weights first, the bones after them.
+void Weight(uint vertex, uint k, out float weight, out int bone)
+{
+    uint at = vertex * 32u;
+    weight = asfloat(WeightWord(at + k * 4u));
+    bone = asint(WeightWord(at + 16u + k * 4u));
+}
+
+uint PackSignedByte(int v) { return (uint)(v & 0xFF); }
+
+[numthreads(64, 1, 1)]
+void Bake16(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _Count) return;
+    float4 p = float4(ReadFloat3(_Position, i), 1.0);
+    float3 n = ReadFloat3(_Normal, i);
+    float3 position = 0;
+    float3 normal = 0;
+    bool bonesKnown = true;
+    for (uint k = 0; k < 4; k++)
+    {
+        float w;
+        int bone;
+        Weight(i, k, w, bone);
+        // The layout pads a vertex's unused slots with weight 0 (and bone 0): they add nothing.
+        if (w == 0.0) continue;
+        if (bone < 0 || bone >= _BoneCount) { bonesKnown = false; break; }
+        float4x4 m = _Palette[bone];
+        position += mul(m, p).xyz * w;
+        normal += mul((float3x3)m, n) * w;
+    }
+
+    float sum = abs(normal.x) + abs(normal.y) + abs(normal.z);
+    bool finite = bonesKnown && all(isfinite(position)) && all(isfinite(normal)) && isfinite(sum) && sum > 0.0;
+    uint packed;
+    if (!finite)
+    {
+        packed = 0x80u | (0x80u << 8);
+    }
+    else
+    {
+        float2 e = normal.xy / sum;
+        float2 folded = (1.0 - abs(e.yx)) * (e >= 0.0 ? float2(1.0, 1.0) : float2(-1.0, -1.0));
+        e = normal.z >= 0.0 ? e : folded;
+        int2 oct = (int2)round(clamp(e, -1.0, 1.0) * 127.0);
+        float2 uv = _Uv.w != 0 ? ReadFloat2(_Uv, i) : float2(0.5, 0.5);
+        const float tolerance = 2.3841858e-7;
+        bool uvOk = all(isfinite(uv)) && uv.x >= -tolerance && uv.x <= 1.0 + tolerance && uv.y >= -tolerance && uv.y <= 1.0 + tolerance;
+        if (!uvOk)
+        {
+            packed = 0x80u | (0x80u << 8);
+        }
+        else
+        {
+            uint u = (uint)clamp(round(uv.x * 256.0 - 0.5), 0.0, 255.0);
+            uint v = (uint)clamp(round(uv.y * 256.0 - 0.5), 0.0, 255.0);
+            packed = PackSignedByte(oct.x) | (PackSignedByte(oct.y) << 8) | (u << 16) | (v << 24);
+        }
+    }
+
+    _Output[_OutputStart + i] = uint4(asuint(position.x), asuint(position.y), asuint(position.z), packed);
+}

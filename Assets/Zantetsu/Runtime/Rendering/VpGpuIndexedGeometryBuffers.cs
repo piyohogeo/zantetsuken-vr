@@ -286,6 +286,32 @@ namespace Zantetsu.Rendering
             }
         }
 
+        /// <summary>
+        /// Writes <paramref name="count"/> vertices of <paramref name="data"/> (from its start) into the vertex buffer at
+        /// element <paramref name="start"/> and raises the vertex generation: a CPU write through this owner, as every CPU
+        /// write of the buffer has to be (the plugin's route keeps a native pointer only while the generation stands,
+        /// DESIGN 4.5.8). For a producer that fills a region it was given (the bake probe's synchronous CPU bake,
+        /// SKIN-BAKE-PROBE-2). False, writing and raising nothing, when the region lies outside the capacity or the data
+        /// holds fewer than count. A count of zero succeeds without writing.
+        /// </summary>
+        public bool TryWriteVertices(NativeArray<VpRenderVertex> data, int start, int count)
+        {
+            ThrowIfDisposed();
+            if (!data.IsCreated || count < 0 || start < 0 || data.Length < count || (long)start + count > VertexCapacity)
+            {
+                return false;
+            }
+
+            if (count == 0)
+            {
+                return true;
+            }
+
+            _vertexBuffer.SetData(data, 0, start, count, "VpGpuIndexedGeometryBuffers.cs:TryWriteVertices");
+            VertexGeneration++;
+            return true;
+        }
+
         /// <summary>The copy's room, in words. Log text only.</summary>
         public string DescribeRoom()
             => "gpu vertices " + VertexCapacity + " of limit " + MaxVertexCapacity + ", gpu indices " + IndexCapacity + " of limit " + MaxIndexCapacity

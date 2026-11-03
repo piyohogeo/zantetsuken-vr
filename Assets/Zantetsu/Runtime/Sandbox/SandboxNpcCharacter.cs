@@ -89,6 +89,9 @@ namespace Zantetsu.Sandbox
         /// <summary>The prepared cut, once made; null if it could not be.</summary>
         public VpPreparedCharacterCut Handle { get; private set; }
 
+        /// <summary>Why the mesh's shared skin input (the GPU-first route's) was refused at the preparation; null when made or not asked.</summary>
+        public string SharedSkinInputRefusal { get; private set; }
+
         /// <summary>The renderer the character is drawn and cut with: the fixed-scale copy sharing the model's bones.</summary>
         public SkinnedMeshRenderer Renderer => _fixedInput != null ? _fixedInput.Renderer : null;
 
@@ -441,6 +444,14 @@ namespace Zantetsu.Sandbox
 
         /// <summary>The character's model family in its intake (observation; the crowd's share key is built from it).</summary>
         public string Family => family;
+
+        /// <summary>Diagnosis only (the bake probe, SKIN-BAKE-PROBE-3): the cut intake's topology map and count of this slot's model, as the product's direct skin input is made with; false before the slot is prepared.</summary>
+        public bool TryGetTopologyForDiagnosis(out int[] topologyMap, out int topologyCount)
+        {
+            topologyMap = _entry != null ? _entry.topologyMap : null;
+            topologyCount = _entry != null ? _entry.topologyCount : 0;
+            return topologyMap != null;
+        }
 
         /// <summary>Makes this character a slot of a crowd. Before its Start only.</summary>
         public void PrepareAsSlot(SlotShare share)
@@ -1151,6 +1162,8 @@ namespace Zantetsu.Sandbox
 
             Handle = handle;
             handle.SetDrawingStopped(UnregisterSkin);
+            // The GPU-first/float routes' shared input of the mesh (DESIGN 4.5.15): made cold, here, once a mesh, never at a hit.
+            if (VpSkinBakeSetup.Mode != VpSkinBakeMode.Cpu && !handle.TryPrepareSharedSkinInput(out string sharedWhy)) SharedSkinInputRefusal = sharedWhy;
 
             // Its withdrawal at the first cut: the renderer and the Pose Table's update, if the hierarchy is confirmed to
             // hold nothing else live; the whole root otherwise.

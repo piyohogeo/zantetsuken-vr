@@ -321,6 +321,13 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Raised once per failed cut, when its record takes the ended cut in (never again for the same cut).</summary>
         public event Action<CutFailure> CutFailed;
 
+        /// <summary>
+        /// Diagnosis only (MOTION-CAPTURE-1 review 2, 2026-11-02): called with the operation and the frame when its provisional
+        /// pair was published, so that a probe that observes once a frame can record a publication whose transaction was
+        /// completed and removed between two of its observations. Null in the product; nothing of the cut reads it.
+        /// </summary>
+        public static Action<CutOperationId, int> PublishedForDiagnosis;
+
         /// <summary>Cuts that came back without products and were aborted, and of those the kernel failures.</summary>
         public int FailedCutCount { get; private set; }
 
@@ -848,6 +855,7 @@ namespace Zantetsu.PhysicsCut
             {
                 return established;
             }
+            PublishedForDiagnosis?.Invoke(transaction.Operation, CurrentFrame);
 
             // The final cut is submitted **after** the pair is in the scene, and its hold on the input taken with it.
             // Taking a reservation, running and baking are the frame's business from here, not the publication's.
@@ -996,7 +1004,7 @@ namespace Zantetsu.PhysicsCut
 
             _taken.Clear();
 
-            // Requests held before acceptance come first: they were made before this update's asks.
+            // Requests held before acceptance were made before this update's asks.
             ResumeHeldCharacterCuts();
             for (int i = 0; i < _asked.Count; i++)
             {

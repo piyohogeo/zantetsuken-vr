@@ -281,6 +281,10 @@ namespace Zantetsu.PhysicsCut
             ProvisionalCutDriver.PreparedCutLease lease=null;
             PhysicsOwnerShape taken=null;
             bool registered=false;
+            long runBegan=System.Diagnostics.Stopwatch.GetTimestamp();
+            string route="cpu";
+            // The GPU-first route's pieces (DESIGN 4.5.15): the geometry shown from the GPU bake and the world's bake work.
+            bool gpuFirst=false; VpStoredGeometry gpuGeometry=default; VpSkinBakePending.Work gpuWork=null;
             try
             {
                 Matrix4x4 inverse=renderer.transform.worldToLocalMatrix;
@@ -320,8 +324,27 @@ namespace Zantetsu.PhysicsCut
                 }
                 if(eligible!=ProvisionalCutDriver.FreshCutEligibility.Ready){LastFailure="fresh cut eligibility: "+eligible;return Result(VpCharacterCutOutcome.Failed);}
                 var displayScope=s_displayInput.Auto();
+                // The GPU-first route (DESIGN 4.5.15): a hit under -zantetsuSkinBake gpu shows the pose by the GPU bake in this
+                // frame and leaves the CPU geometry to the world's bake work; the acceptance below runs now, as the CPU route's
+                // does. What it cannot take (its inputs, its room) goes on down the synchronous route.
+                if(fromHit && VpSkinBakeSetup.Mode==VpSkinBakeMode.Gpu)
+                {
+                    GpuFirstBegin began=TryBeginGpuFirst(out gpuGeometry,out gpuWork,out string why);
+                    if(began==GpuFirstBegin.Failed){displayScope.Dispose();LastFailure="gpu-first: "+why;return Result(VpCharacterCutOutcome.Failed);}
+                    if(began==GpuFirstBegin.Begun){gpuFirst=true;route="gpu";}
+                    else {DeferredFallbackReason=why;VpSkinBakeStats.NoteFallback(why);}
+                }
                 int refusalsBefore=world.Storage.RoomRefusalCount;
-                bool appended=direct.TryAppendCapturedForDisplay(world.Storage,out var output);
+                VpDirectSkinOutput output=default; VpStoredGeometry floatGeometry=default; bool floatRoute=false; string floatWhy=null;
+                bool appended;
+                if(gpuFirst)appended=true;
+                else if(fromHit && VpSkinBakeSetup.Mode==VpSkinBakeMode.Float && TryAppendFloatSync(out floatGeometry,out floatWhy)){appended=true;floatRoute=true;route="float";}
+                else
+                {
+                    if(fromHit && VpSkinBakeSetup.Mode==VpSkinBakeMode.Float && world.Storage.RoomRefusalCount==refusalsBefore)VpSkinBakeStats.NoteFallback("float: "+floatWhy);
+                    appended=direct.TryAppendCapturedForDisplay(world.Storage,out output);
+                }
+                VpStoredGeometry shownGeometry=gpuFirst?gpuGeometry:floatRoute?floatGeometry:output.Geometry;
                 displayScope.Dispose();
                 if(!appended)
                 {
@@ -363,12 +386,16 @@ namespace Zantetsu.PhysicsCut
                 actorBody.linearVelocity=rootVelocity+Vector3.Cross(rootAngularVelocity,centre-rootPosition);actorBody.angularVelocity=rootAngularVelocity;
                 // Issued here unless a hit already identified this character; either way the cut names that fragment.
                 if(!Source.IsSet)Source=world.Ledger.AddFragment();
-                if(!world.Display.TryShowPreparedRoot(slot,output,Source,renderer.transform.localToWorldMatrix,Matrix4x4.identity))
+                // The GPU-first route showed its root already (TryBeginGpuFirst, this same call).
+                bool shownOk=gpuFirst ? true : floatRoute
+                    ? world.Display.TryShowPreparedRootGeometry(slot,floatGeometry,Source,renderer.transform.localToWorldMatrix)
+                    : world.Display.TryShowPreparedRoot(slot,output,Source,renderer.transform.localToWorldMatrix,Matrix4x4.identity);
+                if(!shownOk)
                 {
                     // A refused show took nothing in: the display registers a geometry only as its last step, and every
                     // refusal comes before it. The appended root is still this request's, so its range is retired here,
                     // once, and the lineage's vertex room goes back through the ordinary reclamation (DESIGN 4.5.3).
-                    world.Storage.TryRetireIndices(output.Geometry.indexRange);
+                    world.Storage.TryRetireIndices(shownGeometry.indexRange);
                     LastFailure="show prepared root"; return Result(VpCharacterCutOutcome.Failed);
                 }
                 // The pieces this character's cuts leave are the lifetime's (DESIGN 7.10); the character itself never is.
@@ -384,7 +411,10 @@ namespace Zantetsu.PhysicsCut
                     registered=world.Owners.TryGet(Source,out var found)&&ReferenceEquals(found.Shape,taken);
                     actorTransferred=registered;
                 }
-                world.Geometry.RegisterBaseGeometry(Source,output.Geometry,Matrix4x4.identity);
+                // The cut's geometry: the base geometry of this lineage, or -- the GPU-first route -- the geometry its CPU bake will
+                // complete, which every cut below waits for in the DAG (CutDag.PendingBasis.cs); no kernel reads it before.
+                if(gpuFirst)world.Geometry.RegisterPendingBaseGeometry(Source,shownGeometry,Matrix4x4.identity);
+                else world.Geometry.RegisterBaseGeometry(Source,shownGeometry,Matrix4x4.identity);
                 owner.PreparedSourceWithdrawal=withdrawal;
                 }
                 finally { actorScope.Dispose(); }
@@ -397,6 +427,12 @@ namespace Zantetsu.PhysicsCut
                     using(s_request.Auto()) accepted=world.Driver.RequestPreparedCut(ask,lease,out transaction,out _);
                     if(transaction!=null)Operation=transaction.Operation;
                     if(accepted==ProvisionalCutAcceptance.Pending)withdrawal.BeginCutDisplay();
+                    if(fromHit)
+                    {
+                        double hitSeconds=(System.Diagnostics.Stopwatch.GetTimestamp()-runBegan)/(double)System.Diagnostics.Stopwatch.Frequency;
+                        if(gpuFirst)VpSkinBakeStats.NoteGpuHit(gpuWork.RequestId,direct.VertexCount,direct.Model.BoneCount,Time.frameCount,hitSeconds,gpuWork.Snapshot!=null?gpuWork.Snapshot.Dispatches:0,accepted);
+                        else VpSkinBakeStats.NoteSync(route,direct.VertexCount,hitSeconds,0,accepted);
+                    }
                     return Result(VpCharacterCutOutcome.Requested,accepted);
                 }
                 finally { if(transaction!=null)Operation=transaction.Operation; }
@@ -413,6 +449,9 @@ namespace Zantetsu.PhysicsCut
                         if(!registered)
                         {
                             taken?.Dispose();
+                            // A GPU-first display whose hit failed before its registration: its bake adopts nothing (the body leaves
+                            // with the fragment below, and the display retires the geometry with it).
+                            if(gpuFirst){world.SkinBakePending?.Withdraw(gpuWork);world.Storage.TryAbandonDeferredSkin(gpuGeometry,false);}
                             if(terminal&&Source.IsSet&&world.Ledger.IsCurrentTarget(Source))world.Ledger.Retire(Source);
                         }
                     }

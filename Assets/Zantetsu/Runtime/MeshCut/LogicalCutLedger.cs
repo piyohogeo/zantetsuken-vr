@@ -668,6 +668,13 @@ namespace Zantetsu.MeshCut
         /// <see cref="LogicalCutResultOutcome.AnchorsNotPrepared"/> if its distribution was never prepared — the last
         /// of these changes nothing at all, so an unprepared cut can still be prepared and published afterwards.
         /// </summary>
+        /// <summary>
+        /// A diagnosis hook (SKIN-GPU-FIRST-EVAL-1, 2026-11-02): called once for each operation this ledger publishes, after its two
+        /// children are issued and the source replaced, with the operation's id. Null in the product; nothing of the cut reads it, and
+        /// an exception it throws never leaves the publication.
+        /// </summary>
+        public static Action<CutOperationId> PublishedForDiagnosis;
+
         public LogicalCutResultOutcome Publish(CutOperationId id, out LogicalFragmentId positive, out LogicalFragmentId negative)
         {
             positive = default;
@@ -711,6 +718,13 @@ namespace Zantetsu.MeshCut
             NoLongerLive(ref source);
             _fragments[sourceIndex] = source;
             Changed(operation.source);
+
+            Action<CutOperationId> published = PublishedForDiagnosis;
+            if (published != null)
+            {
+                try { published(id); }
+                catch (Exception) { }
+            }
 
             return LogicalCutResultOutcome.Applied;
         }

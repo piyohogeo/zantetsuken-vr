@@ -240,7 +240,7 @@ namespace Zantetsu.PhysicsCut
             if (dispatcher != null)
             {
                 text.Append("; dispatcher submitted/collected by purpose:");
-                for (int p = 0; p <= (int)WorkPurpose.MobPlanning; p++)
+                for (int p = 0; p < WorkPurposes.Count; p++)
                 {
                     int sub = dispatcher.SubmittedByPurpose((WorkPurpose)p), col = dispatcher.CollectedByPurpose((WorkPurpose)p);
                     if (sub > 0 || col > 0) text.Append(' ').Append((WorkPurpose)p).Append(' ').Append(sub).Append('/').Append(col);

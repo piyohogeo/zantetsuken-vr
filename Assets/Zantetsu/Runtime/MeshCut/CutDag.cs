@@ -187,7 +187,7 @@ namespace Zantetsu.MeshCut
     /// waiting for its basis, running, or holding its result — rather than being carried on for the record.
     /// </para>
     /// </summary>
-    public sealed class CutDag : IDisposable, IMainThreadPump
+    public sealed partial class CutDag : IDisposable, IMainThreadPump
     {
         private readonly LogicalCutLedger _ledger;
         private readonly ICutGeometryCommit _commit;
@@ -265,6 +265,13 @@ namespace Zantetsu.MeshCut
             if (!fragment.IsSet)
             {
                 throw new ArgumentException("not a fragment", nameof(fragment));
+            }
+
+            // A deferred geometry whose CPU vertices are still to come (DESIGN 4.5.15) is no cut input: it is registered as a
+            // pending basis (RegisterPendingBaseGeometry) and comes here through TryCompletePendingBaseGeometry, never directly.
+            if (_storage.IsDeferredPending(geometry))
+            {
+                throw new InvalidOperationException("the geometry's deferred CPU bake has not completed: it is not a cut input yet");
             }
 
             _geometryOf[fragment] = geometry;
@@ -355,6 +362,13 @@ namespace Zantetsu.MeshCut
         public int VertexGroupsWaiting => _vertexGroupsToLook.Count;
 
         /// <summary>
+        /// A diagnosis hook (SKIN-GPU-FIRST-EVAL-1, 2026-11-02): called once for each operation whose geometry this DAG commits, after
+        /// the children's geometry is settled and the ledger told, with the operation's id. Null in the product; an exception it
+        /// throws never leaves the commit.
+        /// </summary>
+        public static Action<CutOperationId> CommittedForDiagnosis;
+
+        /// <summary>
         /// Forgets what a retired fragment would be cut from next (DESIGN 7.10): its geometry, its frame and its
         /// being without geometry. Nothing is given back here -- the geometry belongs to the display's references, which
         /// let it go at their own collection -- and a fragment that is not retired is left as it is.
@@ -369,6 +383,7 @@ namespace Zantetsu.MeshCut
             _geometryOf.Remove(fragment);
             _frameOf.Remove(fragment);
             _withoutGeometry.Remove(fragment);
+            _pendingBasisOf.Remove(fragment);
         }
 
         /// <summary>
@@ -641,6 +656,7 @@ namespace Zantetsu.MeshCut
                 }
             }
 
+            _pendingBasisOf.Clear();
             _cuts.Dispose();
         }
 
@@ -719,6 +735,13 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private bool TryStart(Node node)
         {
+            // A source whose base geometry is still to come (its deferred CPU bake, CutDag.PendingBasis.cs) waits here as a
+            // child waits for its parent's commit, or fails as that bake did. Nothing of it is offered to a kernel.
+            if (WaitsForPendingBasis(node, out bool movedByBasis))
+            {
+                return movedByBasis;
+            }
+
             // Declared up front because a source settled as empty never looks one up, and the two paths join below.
             VpStoredGeometry basis = default;
             bool empty = _withoutGeometry.Contains(node.source);
@@ -787,6 +810,7 @@ namespace Zantetsu.MeshCut
             node.cut = result;
             node.holdsProduced = true;
             node.stage = CutGeometryStage.CpuPublished;
+            _kernelSecondsOf[node.operation] = request.KernelSeconds;
             return true;
         }
 
@@ -838,6 +862,13 @@ namespace Zantetsu.MeshCut
 
             // The one notice the ledger takes, once: this operation's geometry duty is done.
             _ledger.CompleteGeometry(node.operation);
+            Action<CutOperationId> committedHook = CommittedForDiagnosis;
+            if (committedHook != null)
+            {
+                try { committedHook(node.operation); }
+                catch (Exception) { }
+            }
+
             return true;
         }
 

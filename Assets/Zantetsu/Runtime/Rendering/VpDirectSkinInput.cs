@@ -100,6 +100,9 @@ namespace Zantetsu.Rendering
         /// <summary>Whether a pose is taken and not yet appended.</summary>
         public bool HasCapturedPose => captured;
 
+        /// <summary>The pose <see cref="TryCapturePose"/> took (one matrix a palette bone), for the GPU-first snapshot (DESIGN 4.5.15); valid while a pose is taken.</summary>
+        internal float4x4* CapturedMatrices => matrices;
+
         /// <summary>How many inputs were made in this process (measurement and tests).</summary>
         public static int CreatedCount { get; private set; }
 
@@ -295,6 +298,33 @@ namespace Zantetsu.Rendering
         }
 
         public bool IsDisposed => disposed;
+
+        /// <summary>
+        /// Measurement only (SKIN-BAKE-PROBE-3): the pose <see cref="TryCapturePose"/> took, baked by the product's kernel
+        /// into the caller's arrays -- the 16-byte vertices and every vertex's topology, the kernel's own bounds in min/max
+        /// -- without appending to a storage; the pose stays taken for another call. The kernel's verdict (every vertex
+        /// finite, the bounds finite and ordered) in the return. Nothing of the bake is rewritten here: it is the call
+        /// <see cref="Write"/> makes, without the index copy (<see cref="TryCopyIndices"/> makes that one).
+        /// </summary>
+        public bool TryBakeCaptured(NativeArray<VpRenderVertex> output, NativeArray<int> outputTopology, out float3 min, out float3 max)
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(VpDirectSkinInput));
+            min = default; max = default;
+            if (!captured || !output.IsCreated || !outputTopology.IsCreated || output.Length < VertexCount || outputTopology.Length < VertexCount) return false;
+            VpDirectSkinKernel.Skin(model.VertexPointer, matrices, model.TopologyPointer, VertexCount,
+                (VpRenderVertex*)output.GetUnsafePtr(), (int*)outputTopology.GetUnsafePtr(), bounds, valid);
+            min = bounds[0]; max = bounds[1];
+            return valid[0] != 0 && math.all(math.isfinite(min)) && math.all(math.isfinite(max)) && math.all(min <= max);
+        }
+
+        /// <summary>Measurement only (SKIN-BAKE-PROBE-3): the model's indices copied with <paramref name="baseVertex"/> added, by the product's kernel; false when the output is too short.</summary>
+        public bool TryCopyIndices(NativeArray<uint> outputIndices, int baseVertex)
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(VpDirectSkinInput));
+            if (!outputIndices.IsCreated || outputIndices.Length < IndexCount) return false;
+            VpDirectSkinKernel.CopyIndices(model.IndexPointer, (uint*)outputIndices.GetUnsafePtr(), IndexCount, (uint)baseVertex);
+            return true;
+        }
 
         /// <summary>Same synchronous output, with an unforgeable producer/storage receipt for cold display preparation.</summary>
         public bool TryAppendForDisplay(VpCpuGeometryStorage storage, out VpDirectSkinOutput output)

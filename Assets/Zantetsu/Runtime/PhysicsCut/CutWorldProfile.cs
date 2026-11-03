@@ -85,6 +85,8 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private int skinBoneBoxCapacity = 2048;
 
         [Tooltip("The skin draw's 24-byte geometry buffers: the first capacities and the limits, in vertices and indices.")]
+        // The GPU-first skin bake (DESIGN 4.5.15): how many requests may be pending at once (snapshots, each with its palette buffer).
+        [SerializeField] private int skinBakeSnapshotCapacity = 8;
         [SerializeField] private int skinGpuVertexInitialCapacity = 262144;
         [SerializeField] private int skinGpuIndexInitialCapacity = 1048576;
         [SerializeField] private int skinGpuVertexCapacityLimit = 4194304;
@@ -435,6 +437,9 @@ namespace Zantetsu.PhysicsCut
         public int SkinPaletteCapacity => skinPaletteCapacity;
         public int SkinBoneBoxCapacity => skinBoneBoxCapacity;
         public int SkinGpuVertexInitialCapacity => skinGpuVertexInitialCapacity;
+
+        /// <summary>How many GPU-first skin bake requests may be pending at once (DESIGN 4.5.15).</summary>
+        public int SkinBakeSnapshotCapacity => skinBakeSnapshotCapacity;
         public int SkinGpuIndexInitialCapacity => skinGpuIndexInitialCapacity;
         public int SkinGpuVertexCapacityLimit => skinGpuVertexCapacityLimit;
         public int SkinGpuIndexCapacityLimit => skinGpuIndexCapacityLimit;

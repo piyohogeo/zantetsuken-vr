@@ -52,15 +52,25 @@ namespace Zantetsu.MeshCut
         Maintenance = 4,
 
         MobPlanning = 5,
+
+        /// <summary>
+        /// The preparation a hit's acceptance waits for (DESIGN 4.5.15): the deferred CPU bake of a GPU-first character
+        /// cut's display input. Admitted-geometry class work on the Geometry Pool: it gates a cut that is already shown,
+        /// but it is not physics safety and takes no Unity Job room.
+        /// </summary>
+        HitPreparation = 6,
     }
 
     /// <summary>Which destination a purpose names, and which purposes are urgent (DESIGN 4.3).</summary>
     public static class WorkPurposes
     {
         /// <summary>Whether this is one of the defined purposes.</summary>
+        /// <summary>How many purposes there are (the size of an array indexed by purpose).</summary>
+        public const int Count = (int)WorkPurpose.HitPreparation + 1;
+
         public static bool IsDefined(WorkPurpose purpose)
         {
-            return purpose >= WorkPurpose.CurrentStatePhysicsSafety && purpose <= WorkPurpose.MobPlanning;
+            return purpose >= WorkPurpose.CurrentStatePhysicsSafety && purpose <= WorkPurpose.HitPreparation;
         }
 
         /// <summary>
@@ -75,6 +85,7 @@ namespace Zantetsu.MeshCut
                 case WorkPurpose.AdmittedPhysics:
                     return WorkDestination.UnityJob;
                 case WorkPurpose.AdmittedGeometry:
+                case WorkPurpose.HitPreparation:
                     return WorkDestination.GeometryPool;
                 case WorkPurpose.MobPlanning:
                     return WorkDestination.PlanningPool;
@@ -453,8 +464,8 @@ namespace Zantetsu.MeshCut
         // Counts for the observation (GRAPH-CONNECT-14 §2; development builds, and only while DispatchObservation.Enabled): submissions
         // and collections by purpose, and the dispatch opportunities at which waiting work for a destination could not be submitted for
         // want of its room. Nothing of them in a Release Player; off, nothing is counted or scanned for them.
-        private readonly int[] _submittedByPurpose = new int[(int)WorkPurpose.MobPlanning + 1];
-        private readonly int[] _collectedByPurpose = new int[(int)WorkPurpose.MobPlanning + 1];
+        private readonly int[] _submittedByPurpose = new int[WorkPurposes.Count];
+        private readonly int[] _collectedByPurpose = new int[WorkPurposes.Count];
         private readonly int[] _capacityBlocked = new int[4];
 
         // GRAPH-CONNECT-17 §3-E4: every Background work's own way while DispatchObservation.WorkLog is on (a record a work, kept to

@@ -73,6 +73,9 @@ namespace Zantetsu.MeshCut
         /// <summary>The thread each part ran on, kept for the tests that check where the work really happened.</summary>
         internal int cutThreadId, collectThreadId;
 
+        /// <summary>The worker seconds the kernel took (0 until it ran), for the benches.</summary>
+        public double KernelSeconds { get; internal set; }
+
         internal VpStorageCutRequest(VpStorageCutInput input, float4 plane, in VpStorageCutOptions options)
         {
             this.input = input;
@@ -728,9 +731,11 @@ namespace Zantetsu.MeshCut
             public void Begin()
             {
                 _request.cutThreadId = Thread.CurrentThread.ManagedThreadId;
+                long began = System.Diagnostics.Stopwatch.GetTimestamp();
                 MeshCutResult kernel = default;
                 MeshCutKernel.Execute(in _request.kernelInput, in _request.output, ref kernel);
                 _request.kernelResult = kernel;
+                _request.KernelSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
             }
 
             public bool IsComplete => true;

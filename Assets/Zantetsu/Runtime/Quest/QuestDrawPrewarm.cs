@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using Zantetsu.PhysicsCut;
+using Zantetsu.Rendering;
 using Zantetsu.Rendering.Urp;
 using Zantetsu.Sandbox;
 
@@ -40,11 +41,17 @@ namespace Zantetsu.Quest
         private readonly CutWorldCameraDrawing _drawing;
         private readonly bool _native, _motion, _holdWhilePaused;
         private readonly double _timeoutSeconds;
+        private readonly Func<VpSkinModel> _skinModelForBake;
         private QuestNpcUnityPrewarm _unity;
         private bool _retireFailureLogged;
 
+        /// <param name="skinModelForBake">
+        /// SKIN-GPU-FIRST-STARTUP-1: a prepared character's skin model for the GPU bake's warm (<see cref="VpSkinBakeWarm"/>), asked
+        /// once after the drawing's warm when the world's skin bake route has a GPU bake; null, or a provider answering null, skips
+        /// it (reported). The first Bake16 dispatch otherwise costs the first hit's frame about 40 ms on the Quest.
+        /// </param>
         public QuestDrawPrewarm(Camera camera, CutWorldRoot world, CutWorldCameraDrawing drawing, bool native, bool motion, bool holdWhilePaused,
-            double timeoutSeconds = DefaultTimeoutSeconds)
+            double timeoutSeconds = DefaultTimeoutSeconds, Func<VpSkinModel> skinModelForBake = null)
         {
             _camera = camera;
             _world = world;
@@ -53,7 +60,11 @@ namespace Zantetsu.Quest
             _motion = motion;
             _holdWhilePaused = holdWhilePaused;
             _timeoutSeconds = timeoutSeconds;
+            _skinModelForBake = skinModelForBake;
         }
+
+        /// <summary>The bake warm's own report and outcome, when it ran (null otherwise).</summary>
+        public VpSkinBakeWarm BakeWarm { get; private set; }
 
         /// <summary>Null while it goes on and after a completion; the first thing that went wrong otherwise.</summary>
         public string Failure { get; private set; }
@@ -186,6 +197,26 @@ namespace Zantetsu.Quest
                 Report.Add(nativeRoute.DescribePrewarm(_camera));
             }
 
+            // The GPU bake's warm (SKIN-GPU-FIRST-STARTUP-1): only where the world bakes on the GPU and a prepared model is given.
+            if (Failure == null && !Finished && _world != null)
+            {
+                if (_world.SkinBake == null || _world.SkinBake.Bake == null) Report.Add("skin bake warm: not applicable (skin bake route " + _world.SkinBakeRoute + ": no GPU bake)");
+                else
+                {
+                    VpSkinModel model = null;
+                    try { model = _skinModelForBake != null ? _skinModelForBake() : null; } catch (Exception e) { Failure = "skin model for the bake warm: " + e.Message; }
+                    if (Failure == null && model == null) Report.Add("skin bake warm: SKIPPED (no prepared skin model was given): the first GPU bake stays cold");
+                    else if (Failure == null)
+                    {
+                        BakeWarm = new VpSkinBakeWarm(_world.SkinBake, model);
+                        yield return BakeWarm.Run();
+                        if (Finished) yield break;
+                        Report.AddRange(BakeWarm.Report);
+                        if (!BakeWarm.Completed) Failure = BakeWarm.Failure ?? "skin bake warm did not complete";
+                    }
+                }
+            }
+
             Report.Add("result=" + (Failure ?? "completed"));
             Finished = true;
             FinishedFrame = Time.frameCount;
@@ -198,6 +229,7 @@ namespace Zantetsu.Quest
         public void Abandon(string why)
         {
             RetireUnitySafely();
+            BakeWarm?.Abandon(why);   // its GPU resources stay with its readback (SKIN-GPU-FIRST-STARTUP-1 review)
             if (Finished) return;
             Failure ??= "abandoned: " + why;
             Report.Add("result=" + Failure);
