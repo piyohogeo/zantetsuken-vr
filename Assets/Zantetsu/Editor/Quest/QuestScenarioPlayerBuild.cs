@@ -20,6 +20,19 @@ namespace Zantetsu.EditorTools.Quest
 
         public static void BuildApk() => Build(true);
 
+        private static string PackageSuffixFromCommandLine()
+        {
+            string[] args = System.Environment.GetCommandLineArgs();
+            for (int i = 0; i + 1 < args.Length; i++)
+            {
+                if (args[i] != "-zantetsuQuestPackageSuffix") continue;
+                string v = args[i + 1].Trim().ToLowerInvariant();
+                foreach (char c in v) if (!(char.IsLetterOrDigit(c))) throw new System.ArgumentException("-zantetsuQuestPackageSuffix takes letters and digits only, not '" + args[i + 1] + "'");
+                return v.Length > 0 ? v : null;
+            }
+            return null;
+        }
+
         /// <summary>
         /// The build itself. In batch mode a failure exits the Editor at once when <paramref name="exitOnFailure"/>
         /// (the plain entry); the distribution build passes false, puts its settings back, and exits itself.
@@ -33,7 +46,12 @@ namespace Zantetsu.EditorTools.Quest
                 QuestStaticDemoBuild.ConfigureCommon(new System.Collections.Generic.List<string>());
                 UnityEditor.AssetDatabase.SaveAssets();
             }
-            PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, demo ? ApplicationIdentifier + ".bunnydemo" : ApplicationIdentifier);
+            // A check build beside an installed release (SKIN-GPU-FIRST-STARTUP-1): -zantetsuQuestPackageSuffix <suffix> names the package
+            // com.zantetsuken.quest.<suffix>, so that the device's play (another version, another key) stays untouched. Not for a distribution.
+            string suffix = PackageSuffixFromCommandLine();
+            string identifier = demo ? ApplicationIdentifier + ".bunnydemo" : suffix != null ? ApplicationIdentifier + "." + suffix : ApplicationIdentifier;
+            PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, identifier);
+            if (suffix != null) UnityEngine.Debug.Log("Quest scenarios build: package " + identifier + " (check build, -zantetsuQuestPackageSuffix)");
             using (DemoBuildPolicy.Scope(demo, scenes)) QuestStaticDemoBuild.BuildApkForScenes(scenes, exitOnFailure);
         }
     }

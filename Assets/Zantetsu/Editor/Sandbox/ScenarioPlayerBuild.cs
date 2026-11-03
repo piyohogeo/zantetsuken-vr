@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -24,6 +25,8 @@ namespace Zantetsu.EditorTools.Sandbox
         public const string NpcScenePath = "Assets/Licensed/MultiNpc/MultiNpcCity.unity";
         /// <summary>The NPC skin benchmark's scene (npc-skin-bench), carried when it has been made (NpcSkinBenchSceneBuild).</summary>
         public const string SkinBenchScenePath = NpcSkinBenchSceneBuild.PcScenePath;
+        /// <summary>The GPU bake probe's scene (skin-bake-probe, DESIGN 4.5.14), carried when it has been made (SkinBakeProbeSceneBuild).</summary>
+        public const string SkinBakeProbeScenePath = SkinBakeProbeSceneBuild.PcScenePath;
 
         private const string OutArgument = "-zantetsuPlayerOut";
 
@@ -155,8 +158,12 @@ namespace Zantetsu.EditorTools.Sandbox
                 Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats " + before + " -> true for this build; kind "
                     + (statsVerifyDevelopment ? "Development with " + StatsVerifySymbol + " (" + StatsVerifyDevelopmentArgument + "): the statistics' VERIFICATION build for the allocation check, not for distribution"
                         : development ? "Development" : statsVerify ? "Release with " + StatsVerifySymbol + " (" + StatsVerifyArgument + "): the statistics' VERIFICATION build, not for distribution" : "Release (" + ReleaseArgument + ")"));
-                string[] privateScenes = File.Exists(SkinBenchScenePath) ? new[] { CityScenePath, NpcScenePath, SkinBenchScenePath } : new[] { CityScenePath, NpcScenePath };
-                Debug.Log("SCENARIO PLAYER BUILD: scenes " + string.Join(", ", privateScenes) + (File.Exists(SkinBenchScenePath) ? "" : " (no NPC skin bench scene: npc-skin-bench is not in this Player)"));
+                var privateList = new List<string> { CityScenePath, NpcScenePath };
+                if (File.Exists(SkinBenchScenePath)) privateList.Add(SkinBenchScenePath);
+                if (File.Exists(SkinBakeProbeScenePath)) privateList.Add(SkinBakeProbeScenePath);
+                string[] privateScenes = privateList.ToArray();
+                Debug.Log("SCENARIO PLAYER BUILD: scenes " + string.Join(", ", privateScenes) + (File.Exists(SkinBenchScenePath) ? "" : " (no NPC skin bench scene: npc-skin-bench is not in this Player)")
+                    + (File.Exists(SkinBakeProbeScenePath) ? "" : " (no skin bake probe scene: skin-bake-probe is not in this Player)"));
                 var scenes = DemoBuildPolicy.SelectScenes(privateScenes, out bool demo);
                 using (DemoBuildPolicy.Scope(demo, scenes))
                     built = !string.IsNullOrEmpty(directory) && CutWorldSandboxPlayerBuild.Build(directory, scenes, statsVerify ? new[] { StatsVerifySymbol } : null, development);

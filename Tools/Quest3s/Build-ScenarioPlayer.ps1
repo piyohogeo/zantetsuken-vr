@@ -8,6 +8,7 @@ param(
     [switch]$Development,
     [ValidateSet('Auto','Demo','Commercial')][string]$BuildMode = 'Auto',
     [string]$Output,
+    [ValidatePattern('^[a-z0-9]*$')][string]$PackageSuffix = '',   # a check build beside an installed release: com.zantetsuken.quest.<suffix> (SKIN-GPU-FIRST-STARTUP-1)
     [string]$Unity = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Unity.exe'
 )
 $ErrorActionPreference = 'Stop'
@@ -17,7 +18,7 @@ $Output = [IO.Path]::GetFullPath($Output)
 $logs = Join-Path $project 'Logs/quest-scenarios'
 [IO.Directory]::CreateDirectory($logs) | Out-Null
 $log = Join-Path $logs 'build.log'
-$arguments = '-batchmode -quit -force-d3d11 -projectPath "' + $project + '" -buildTarget Android -executeMethod Zantetsu.EditorTools.Quest.QuestScenarioPlayerBuild.BuildApk -logFile "' + $log + '" -zantetsuQuestOut "' + $Output + '"'
+$arguments = '-batchmode -quit -force-d3d11 -projectPath "' + $project + '" -buildTarget Android -executeMethod Zantetsu.EditorTools.Quest.QuestScenarioPlayerBuild.BuildApk -logFile "' + $log + '" -zantetsuQuestOut "' + $Output + '"' + $(if ($PackageSuffix) { ' -zantetsuQuestPackageSuffix ' + $PackageSuffix } else { '' })
 $arguments += ' -zantetsuBuildMode ' + $BuildMode.ToLowerInvariant()
 if ($Development) { $arguments += ' -zantetsuQuestDev' }
 $process = Start-Process -FilePath $Unity -ArgumentList $arguments -WorkingDirectory $project -WindowStyle Hidden -PassThru

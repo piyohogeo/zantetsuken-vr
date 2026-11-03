@@ -16,6 +16,211 @@ using Zantetsu.Rendering;
 namespace Zantetsu.Rendering.Urp
 {
     /// <summary>
+    /// Diagnosis only (PLANE-1): the AppSW motion output of a frame, both eyes, read back after the native route's motion
+    /// pass drew it. <see cref="WantsFrame"/> says which frames (null: none); for such a frame the motion pass copies the XR
+    /// motion vector target's slices into a texture of the same description (no MSAA) and asks one readback a slice, and
+    /// <see cref="Captured"/> receives each. The motion target itself is not touched; a frame nobody asks for costs nothing.
+    /// The skin bake probe's -zantetsuSkinBakeProbeMotionCapture sets this and clears it when it ends.
+    /// </summary>
+    public static class VpAppSwMotionCapture
+    {
+        public readonly struct Result
+        {
+            public readonly int frame, eye, width, height;
+            public readonly GraphicsFormat format;
+            public readonly byte[] data;
+            public readonly string failure;
+            public Result(int frame, int eye, int width, int height, GraphicsFormat format, byte[] data, string failure) { this.frame = frame; this.eye = eye; this.width = width; this.height = height; this.format = format; this.data = data; this.failure = failure; }
+        }
+
+        public static Func<int, bool> WantsFrame;
+        public static Action<Result> Captured;
+        public static int Requested { get; private set; }
+        public static int EndOfFrameRequested { get; private set; }
+
+        /// <summary>
+        /// Diagnosis (MOTION-CAPTURE-1): what the native route's motion pass used for one captured frame, bound at the issue --
+        /// the camera, the viewport and target, the view-projection the pass computed per eye, the GPU-assembled constant
+        /// blocks (binding, offset, size) of the frame's last motion issue, and that block read back in the same command
+        /// buffer and decoded by the variant's binary layout: the previous and the current (no-jitter) stereo
+        /// view-projections and the SpaceWarp NDC modifier the vertex stage read. Nothing here is overwritten by a later
+        /// frame: each frame's issue is its own object, handed to <see cref="Issued"/> once its constants are back.
+        /// </summary>
+        public sealed class Issue
+        {
+            public int frame;
+            public string camera, variant, copyPoint;
+            public Rect viewport;
+            public bool stereo, grouped;
+            public int width, height, slices;
+            public GraphicsFormat format;
+            public readonly Matrix4x4[] passVP = new Matrix4x4[2], passV = new Matrix4x4[2], passP = new Matrix4x4[2];
+            public int issues;
+            public readonly List<(string stage, string name, int offset, int size)> blocks = new List<(string, string, int, int)>();
+            public VpNativeShaderBinary.ConstantBuffer globalsLayout;
+            public readonly List<(VpNativeShaderBinary.ConstantBuffer layout, int offset, int size)> layouts = new List<(VpNativeShaderBinary.ConstantBuffer, int, int)>();
+            public int constantsOffset, constantsSize;
+            public byte[] constants;
+            public string constantsFailure;
+            public readonly Matrix4x4[] previousVP = new Matrix4x4[2], currentVP = new Matrix4x4[2];
+            public float ndcModifier = float.NaN;
+            public bool decoded;
+            public string decodeFailure;
+        }
+
+        public static Action<Issue> Issued;
+        public static int IssuesReported { get; private set; }
+        /// <summary>The issues whose report was begun (at once, or after a constants readback): complete when equal to <see cref="IssuesReported"/> (review 3).</summary>
+        public static int IssuesRequested { get; private set; }
+
+        internal static Issue NewIssue(int frame, Camera camera, string variant, Rect viewport, bool stereo, RenderTextureDescriptor target, Matrix4x4[] vp, Matrix4x4[] v, Matrix4x4[] p)
+        {
+            var issue = new Issue { frame = frame, camera = camera != null ? camera.name : "?", variant = variant, viewport = viewport, stereo = stereo, width = target.width, height = target.height, slices = Mathf.Max(1, target.volumeDepth), format = target.graphicsFormat, copyPoint = "in-pass after the plugin events; end-of-frame copy as eyes 10/11" };
+            for (int eye = 0; eye < 2; eye++) { issue.passVP[eye] = vp[eye]; issue.passV[eye] = v[eye]; issue.passP[eye] = p[eye]; }
+            return issue;
+        }
+
+        /// <summary>The frame's constants read back (the block that holds the stereo motion matrices) and the issue reported.</summary>
+        internal static void FinishIssue(CommandBuffer commands, GraphicsBuffer gpuConstants, Issue issue)
+        {
+            Action<Issue> sink = Issued;
+            if (sink == null) return;
+            IssuesRequested++;
+            if (issue.issues == 0 || issue.constantsSize <= 0 || gpuConstants == null)
+            {
+                issue.constantsFailure = issue.issues == 0 ? "no motion issue this frame" : "no constant block to read back";
+                IssuesReported++;
+                sink(issue);
+                return;
+            }
+
+            int offset = issue.constantsOffset, size = issue.constantsSize;
+            if (offset + size > gpuConstants.count * gpuConstants.stride) { issue.constantsFailure = "the block lies outside the constants buffer"; IssuesReported++; sink(issue); return; }
+            commands.RequestAsyncReadback(gpuConstants, size, offset, request =>
+            {
+                if (request.hasError) issue.constantsFailure = "the constants readback reported an error";
+                else { issue.constants = request.GetData<byte>().ToArray(); TryDecode(issue); }
+                IssuesReported++;
+                sink(issue);
+            });
+        }
+
+        // Each constant found in whichever block's layout holds it (the stereo matrices are the vertex stage's globals, the
+        // SpaceWarp modifier the pixel stage's: mc1-check, 2026-11-02); the offsets are absolute in the span read back.
+        private static bool TryDecode(Issue issue)
+        {
+            issue.decoded = false;
+            if (issue.constants == null || issue.layouts.Count == 0) { issue.decodeFailure = "no constants or no layout"; return false; }
+            int previousAt = -1, currentAt = -1, modifierAt = -1;
+            foreach ((VpNativeShaderBinary.ConstantBuffer layout, int offset, int size) block in issue.layouts)
+            {
+                if (block.layout == null) continue;
+                foreach (VpNativeShaderBinary.Constant constant in block.layout.Constants)
+                {
+                    int at = block.offset - issue.constantsOffset + constant.Offset;
+                    if (constant.Name == "_PrevViewProjMatrixStereo" && previousAt < 0) previousAt = at;
+                    else if (constant.Name == "_NonJitteredViewProjMatrixStereo" && currentAt < 0) currentAt = at;
+                    else if (constant.Name == "_SpaceWarpNDCModifier" && modifierAt < 0) modifierAt = at;
+                }
+            }
+
+            if (previousAt < 0 || currentAt < 0 || modifierAt < 0) { issue.decodeFailure = "no block's layout holds a stereo motion constant (prev " + (previousAt >= 0) + ", current " + (currentAt >= 0) + ", modifier " + (modifierAt >= 0) + ")"; return false; }
+            if (previousAt + 128 > issue.constants.Length || currentAt + 128 > issue.constants.Length || modifierAt + 4 > issue.constants.Length) { issue.decodeFailure = "a constant lies outside the span read back"; return false; }
+            for (int eye = 0; eye < 2; eye++)
+            {
+                issue.previousVP[eye] = ReadMatrix(issue.constants, previousAt + eye * 64);
+                issue.currentVP[eye] = ReadMatrix(issue.constants, currentAt + eye * 64);
+            }
+
+            issue.ndcModifier = BitConverter.ToSingle(issue.constants, modifierAt);
+            issue.decoded = true;
+            return true;
+        }
+
+        // Column-major, as the compute lays a float4x4 out (VpNativeConstantCopy.compute).
+        private static Matrix4x4 ReadMatrix(byte[] bytes, int at)
+        {
+            var m = Matrix4x4.identity;
+            for (int c = 0; c < 4; c++)
+            {
+                m.SetColumn(c, new Vector4(BitConverter.ToSingle(bytes, at + c * 16), BitConverter.ToSingle(bytes, at + c * 16 + 4), BitConverter.ToSingle(bytes, at + c * 16 + 8), BitConverter.ToSingle(bytes, at + c * 16 + 12)));
+            }
+
+            return m;
+        }
+        public static string LastRefusal { get; private set; }
+        private static RenderTexture s_copy;
+        private static RenderTextureDescriptor s_copyDescriptor;
+        // The end-of-frame copy: what the motion pass noted of its target this frame, copied after every pass of the frame rendered.
+        private static bool s_endOfFrameHooked, s_endOfFrameWanted;
+        private static RenderTargetIdentifier s_endOfFrameSource;
+        private static RenderTextureDescriptor s_endOfFrameDescription;
+        private static int s_endOfFrameFrame;
+        private static CommandBuffer s_endOfFrameCommands;
+
+        /// <summary>The eye the result came from: 0/1 for the in-pass copy, 10/11 for the end-of-frame copy (eye + 10).</summary>
+        public const int EndOfFrameEyeOffset = 10;
+
+        internal static void NoteForEndOfFrame(RenderTargetIdentifier source, RenderTextureDescriptor description, int frame)
+        {
+            if (WantsFrame == null || Captured == null || !WantsFrame(frame)) return;
+            s_endOfFrameSource = source; s_endOfFrameDescription = description; s_endOfFrameFrame = frame; s_endOfFrameWanted = true;
+            if (!s_endOfFrameHooked) { RenderPipelineManager.endContextRendering += EndOfFrame; s_endOfFrameHooked = true; }
+        }
+
+        private static void EndOfFrame(ScriptableRenderContext context, List<Camera> cameras)
+        {
+            if (!s_endOfFrameWanted) return;
+            s_endOfFrameWanted = false;
+            if (s_endOfFrameCommands == null) s_endOfFrameCommands = new CommandBuffer { name = "VP AppSW motion capture (end of frame)" };
+            s_endOfFrameCommands.Clear();
+            Request(s_endOfFrameCommands, s_endOfFrameSource, s_endOfFrameDescription, s_endOfFrameFrame, EndOfFrameEyeOffset);
+            Graphics.ExecuteCommandBuffer(s_endOfFrameCommands);
+            EndOfFrameRequested++;
+        }
+
+        internal static void Request(CommandBuffer commands, RenderTargetIdentifier source, RenderTextureDescriptor description, int frame, int eyeOffset = 0)
+        {
+            if (WantsFrame == null || Captured == null || !WantsFrame(frame)) return;
+            int slices = Mathf.Max(1, description.volumeDepth);
+            if (description.width <= 0 || description.height <= 0) { LastRefusal = "the motion target has no size"; return; }
+            if (description.msaaSamples > 1) { LastRefusal = "the motion target is multisampled (" + description.msaaSamples + "): CopyTexture cannot read it"; Captured(new Result(frame, -1, description.width, description.height, description.graphicsFormat, null, LastRefusal)); return; }
+            if (s_copy == null || s_copyDescriptor.width != description.width || s_copyDescriptor.height != description.height || s_copyDescriptor.volumeDepth != description.volumeDepth || s_copyDescriptor.graphicsFormat != description.graphicsFormat || s_copyDescriptor.dimension != description.dimension)
+            {
+                if (s_copy != null) { s_copy.Release(); UnityEngine.Object.Destroy(s_copy); }
+                RenderTextureDescriptor copy = description;
+                copy.msaaSamples = 1; copy.depthBufferBits = 0; copy.useMipMap = false; copy.bindMS = false; copy.enableRandomWrite = false;
+                s_copy = new RenderTexture(copy) { name = "VP AppSW motion capture" };
+                if (!s_copy.Create()) { LastRefusal = "the copy texture could not be created (" + description.graphicsFormat + ", " + description.dimension + ")"; Captured(new Result(frame, -1, description.width, description.height, description.graphicsFormat, null, LastRefusal)); s_copy = null; return; }
+                s_copyDescriptor = copy;
+            }
+
+            for (int slice = 0; slice < slices; slice++)
+            {
+                commands.CopyTexture(source, slice, 0, s_copy, slice, 0);
+                int capturedFrame = frame, capturedEye = slice + eyeOffset, w = description.width, h = description.height;
+                GraphicsFormat format = description.graphicsFormat;
+                commands.RequestAsyncReadback(s_copy, 0, 0, w, 0, h, slice, 1, request =>
+                {
+                    Action<Result> sink = Captured;
+                    if (sink == null) return;
+                    if (request.hasError) { sink(new Result(capturedFrame, capturedEye, w, h, format, null, "the readback reported an error")); return; }
+                    sink(new Result(capturedFrame, capturedEye, w, h, format, request.GetData<byte>().ToArray(), null));
+                });
+                Requested++;
+            }
+        }
+
+        public static void Release()
+        {
+            WantsFrame = null; Captured = null; Issued = null; s_endOfFrameWanted = false;
+            if (s_endOfFrameHooked) { RenderPipelineManager.endContextRendering -= EndOfFrame; s_endOfFrameHooked = false; }
+            if (s_endOfFrameCommands != null) { s_endOfFrameCommands.Release(); s_endOfFrameCommands = null; }
+            if (s_copy != null) { s_copy.Release(); UnityEngine.Object.Destroy(s_copy); s_copy = null; }
+        }
+    }
+
+    /// <summary>
     /// Draws a display's bodies and casters through the Direct3D 12 plugin inside URP's frame for a camera
     /// (DESIGN 4.5.8): the display hands this sink its runs of commands (<see cref="IVpNativeDrawSink"/>) while the
     /// camera begins to render, and two passes enqueued for that camera issue each run as plugin events -- one
@@ -2417,7 +2622,10 @@ namespace Zantetsu.Rendering.Urp
                 else _route.Recorded++;
                 _route.CollectResults(_passes.frame);
                 if (!_motion) _route.LastFrameIssues = 0;
-                if (Bodies.Count == 0 && Clips.Count == 0 && !NeedsPrewarm)
+                // Diagnosis (MOTION-CAPTURE-1 review, 2026-11-02): a frame whose motion output is wanted runs the pass with no body,
+                // so that the frame before any native body (the uncut renderer's) is captured too, with the pass's matrices and no issue.
+                bool captureWanted = _motion && VpAppSwMotionCapture.WantsFrame != null && VpAppSwMotionCapture.Captured != null && VpAppSwMotionCapture.WantsFrame(_passes.frame);
+                if (Bodies.Count == 0 && Clips.Count == 0 && !NeedsPrewarm && !captureWanted)
                 {
                     return;
                 }
@@ -2578,6 +2786,10 @@ namespace Zantetsu.Rendering.Urp
                     _gpuConstantsUsed = 0;
                     _route._copiedGpuBlocks.Clear();
                 }
+
+                // Diagnosis (MOTION-CAPTURE-1): the frame's motion issue, bound to what this pass computed and will issue.
+                VpAppSwMotionCapture.Issue motionIssue = _motion && VpAppSwMotionCapture.Issued != null && VpAppSwMotionCapture.WantsFrame != null && VpAppSwMotionCapture.WantsFrame(_passes.frame) && data.cameraData.xr != null
+                    ? VpAppSwMotionCapture.NewIssue(_passes.frame, _passes.camera, data.variant, data.viewport, data.stereo, data.cameraData.xr.motionVectorRenderTargetDesc, _route._stereoVP, _route._stereoV, _route._stereoP) : null;
 
                 if (NeedsPrewarm)
                 {
@@ -2772,6 +2984,26 @@ namespace Zantetsu.Rendering.Urp
                             {
                                 _route.LastBodyGpuBlocks.Add((entry.pipeline.Bindings[entry.gpuBlocks[b].binding], _route._gpuOffsets[b], entry.gpuBlocks[b].size));
                             }
+
+                            if (motionIssue != null)
+                            {
+                                // Bound at THIS issue: the blocks and, of them, the one whose layout holds the stereo motion matrices.
+                                motionIssue.issues++;
+                                motionIssue.grouped = false;
+                                motionIssue.blocks.Clear();
+                                motionIssue.globalsLayout = null; motionIssue.constantsSize = 0; motionIssue.layouts.Clear();
+                                int spanStart = int.MaxValue, spanEnd = 0;
+                                for (int b = 0; b < entry.gpuBlocks.Count; b++)
+                                {
+                                    VpNativePipeline.BindingInfo binding = entry.pipeline.Bindings[entry.gpuBlocks[b].binding];
+                                    motionIssue.blocks.Add((binding.Stage.ToString(), binding.Name, _route._gpuOffsets[b], entry.gpuBlocks[b].size));
+                                    motionIssue.layouts.Add((binding.Layout, _route._gpuOffsets[b], entry.gpuBlocks[b].size));
+                                    if (motionIssue.globalsLayout == null && binding.Layout != null && binding.Layout.Find("_PrevViewProjMatrixStereo") != null) motionIssue.globalsLayout = binding.Layout;
+                                    spanStart = Math.Min(spanStart, _route._gpuOffsets[b]); spanEnd = Math.Max(spanEnd, _route._gpuOffsets[b] + entry.gpuBlocks[b].size);
+                                }
+                                // The span of every block of the issue is read back: the matrices and the modifier lie in different stages' blocks.
+                                if (entry.gpuBlocks.Count > 0) { motionIssue.constantsOffset = spanStart; motionIssue.constantsSize = spanEnd - spanStart; }
+                            }
                         }
                     }
                 }
@@ -2814,6 +3046,14 @@ namespace Zantetsu.Rendering.Urp
                     if (!grouped) _route._drawData.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.PrepareEventId);
                 }
                 else _route.IssuePendingEvents(commands, firstBlock, grouped);
+                // Diagnosis (PLANE-1): the motion output of this frame read back AFTER the plugin's draw events were issued into
+                // this command buffer (a copy recorded before them captured the target before the bodies were drawn: p1, 2026-11-02).
+                if (_motion && _motionColour != null && VpAppSwMotionCapture.WantsFrame != null)
+                {
+                    VpAppSwMotionCapture.Request(commands, _motionColour.nameID, data.cameraData.xr.motionVectorRenderTargetDesc, _passes.frame);
+                    VpAppSwMotionCapture.NoteForEndOfFrame(_motionColour.nameID, data.cameraData.xr.motionVectorRenderTargetDesc, _passes.frame);
+                }
+                if (motionIssue != null) { motionIssue.grouped = grouped; VpAppSwMotionCapture.FinishIssue(commands, gpuConstants, motionIssue); }
             }
         }
 

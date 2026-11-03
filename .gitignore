@@ -62,6 +62,8 @@ Tools/StanfordBunny/**/__pycache__/
 Tools/StanfordBunny/**/*.pyc
 Tools/AndroidFlat/**/__pycache__/
 Tools/AndroidFlat/**/*.pyc
+Tools/SkinBakeProbe/**/__pycache__/
+Tools/SkinBakeProbe/**/*.pyc
 
 # Private build staging must never be committed.
 .bunny-demo-content-staging/

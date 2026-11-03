@@ -850,6 +850,13 @@ namespace Zantetsu.Rendering
         /// camera.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// Diagnosis only (SKIN-LINES-1): true registers no stencil draw at all -- no init, no volume, no cap -- so that a
+        /// picture says whether something seen is this pass's. Off by default; nothing of the product sets it (the skin bake
+        /// probe's -zantetsuSkinBakeProbeCapsOff does, and clears it when it ends).
+        /// </summary>
+        public static bool CapsOffForDiagnosis;
+
         public void Render(
             VpStencilCapMaterials materials,
             VpGpuIndexedGeometryBuffers buffers,
@@ -861,6 +868,11 @@ namespace Zantetsu.Rendering
             if (materials == null || buffers == null)
             {
                 throw new ArgumentNullException(nameof(materials));
+            }
+
+            if (CapsOffForDiagnosis)
+            {
+                return;
             }
 
             if (materials.ColorCount < _colorCount)

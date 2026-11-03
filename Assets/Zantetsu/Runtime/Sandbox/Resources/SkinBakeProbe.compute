@@ -1,0 +1,210 @@
+// The bake probe's kernels (DESIGN 4.5.14, skin-bake-probe): the 16-byte render vertices of one skinned individual from
+// the drawn mesh's own GPU buffers -- its vertex streams (raw), its bone weights (raw or structured, as the buffer's target allows, in the mesh's own layout) and one
+// fixed renderer-local palette -- written into a region of a 16-byte vertex buffer; and the mesh's indices copied with a
+// base vertex added. Nothing here reads a vertex layout it was not told: the attribute positions, formats and the
+// strides come from the mesh. The arithmetic mirrors the CPU reference (SkinBakeProbeCpuBake): position = sum of
+// w (M p), normal = sum of w (M3 n), the normal L1-normalised and oct-encoded to two signed bytes, the UV to two bytes;
+// a non-finite result, a zero normal or an unsupported UV marks the vertex invalid (-128, -128) and is counted.
+#pragma kernel Bake16
+#pragma kernel CopyIndices
+// The bone weight buffer is read as Raw (ByteAddressBuffer) where the mesh's buffer has that target (Direct3D 12), else
+// as a structured buffer whose element is the buffer's own stride (Vulkan gives the weights Vertex|Structured, no Raw):
+// the C# side chooses the variant from the recorded target and stride, never assuming either.
+#pragma multi_compile_local __ WEIGHTS_S8 WEIGHTS_S16 WEIGHTS_S32
+// PROBE_NO_COUNTS: the verification atomics (processed, invalid, bones outside the palette) left out, for the
+// performance measurement; the arithmetic, the packing and the invalid marking stay as they are.
+#pragma multi_compile_local __ PROBE_NO_COUNTS
+
+// The vertex streams that hold an attribute (an unused slot is bound to a small dummy).
+ByteAddressBuffer _Stream0;
+ByteAddressBuffer _Stream1;
+ByteAddressBuffer _Stream2;
+ByteAddressBuffer _Stream3;
+// x = stream, y = byte offset in the vertex, z = format (0 Float32, 1 Float16), w = dimension.
+int4 _Position;
+int4 _Normal;
+int4 _Uv;           // w = 0: the mesh has no UV0 (the centre 0.5, 0.5 is written)
+int4 _Strides;      // bytes a vertex, a stream
+
+// The weights: _WeightLayout 1 (OneBone: float weight, int bone; 8 bytes), 2 (TwoBones: 2 floats, 2 ints; 16),
+// 4 (FourBones: 4 floats, 4 ints; 32), 0 (Unlimited: entries of float weight, int bone; _WeightRanges gives each vertex's start and count).
+#if defined(WEIGHTS_S8)
+StructuredBuffer<uint2> _WeightsS8;        // elements of 8 bytes (OneBone, or Unlimited entries)
+uint WeightWord(uint at) { uint2 e = _WeightsS8[at >> 3]; return (at & 4u) != 0 ? e.y : e.x; }
+#elif defined(WEIGHTS_S16)
+StructuredBuffer<uint4> _WeightsS16;       // elements of 16 bytes (TwoBones)
+uint WeightWord(uint at) { uint4 e = _WeightsS16[at >> 4]; uint w = (at >> 2) & 3u; return w == 0 ? e.x : w == 1 ? e.y : w == 2 ? e.z : e.w; }
+#elif defined(WEIGHTS_S32)
+struct WeightEntry32 { uint4 a; uint4 b; };
+StructuredBuffer<WeightEntry32> _WeightsS32;   // elements of 32 bytes (FourBones)
+uint WeightWord(uint at) { WeightEntry32 e = _WeightsS32[at >> 5]; uint w = (at >> 2) & 7u; uint4 h = w < 4u ? e.a : e.b; w &= 3u; return w == 0 ? h.x : w == 1 ? h.y : w == 2 ? h.z : h.w; }
+#else
+ByteAddressBuffer _Weights;                // the buffer has the Raw target
+uint WeightWord(uint at) { return _Weights.Load(at); }
+#endif
+int _WeightLayout;
+StructuredBuffer<uint2> _WeightRanges;
+
+StructuredBuffer<float4x4> _Palette;
+int _BoneCount;
+RWStructuredBuffer<uint4> _Output;   // VpRenderVertex: position xyz as float bits, then (normalX | normalY << 8 | u << 16 | v << 24)
+uint _OutputStart;
+uint _Count;
+RWStructuredBuffer<uint> _Flags;     // [0] vertices processed, [1] vertices written invalid, [2] vertices with a bone outside the palette
+
+float ReadFloat(int stream, uint address, int format, int component)
+{
+    uint bytes;
+    if (format == 1)
+    {
+        // Float16: two components a uint; the component's half in the low or high 16 bits.
+        uint at = address + (uint)(component * 2);
+        uint aligned = at & ~3u;
+        uint word;
+        if (stream == 0) word = _Stream0.Load(aligned);
+        else if (stream == 1) word = _Stream1.Load(aligned);
+        else if (stream == 2) word = _Stream2.Load(aligned);
+        else word = _Stream3.Load(aligned);
+        bytes = (at & 2u) != 0 ? (word >> 16) : (word & 0xFFFFu);
+        return f16tof32(bytes);
+    }
+
+    uint at32 = address + (uint)(component * 4);
+    if (stream == 0) bytes = _Stream0.Load(at32);
+    else if (stream == 1) bytes = _Stream1.Load(at32);
+    else if (stream == 2) bytes = _Stream2.Load(at32);
+    else bytes = _Stream3.Load(at32);
+    return asfloat(bytes);
+}
+
+float3 ReadFloat3(int4 attribute, uint vertex)
+{
+    uint address = vertex * (uint)_Strides[attribute.x] + (uint)attribute.y;
+    return float3(ReadFloat(attribute.x, address, attribute.z, 0), ReadFloat(attribute.x, address, attribute.z, 1), ReadFloat(attribute.x, address, attribute.z, 2));
+}
+
+float2 ReadFloat2(int4 attribute, uint vertex)
+{
+    uint address = vertex * (uint)_Strides[attribute.x] + (uint)attribute.y;
+    return float2(ReadFloat(attribute.x, address, attribute.z, 0), ReadFloat(attribute.x, address, attribute.z, 1));
+}
+
+// One weight of a vertex: fixed layouts put the weights first and the bones after them.
+void Weight(uint vertex, uint k, out float weight, out int bone)
+{
+    if (_WeightLayout == 0)
+    {
+        uint2 range = _WeightRanges[vertex];
+        uint at = (range.x + k) * 8u;
+        weight = asfloat(WeightWord(at));
+        bone = asint(WeightWord(at + 4u));
+    }
+    else
+    {
+        uint stride = (uint)_WeightLayout * 8u;
+        uint at = vertex * stride;
+        weight = asfloat(WeightWord(at + k * 4u));
+        bone = asint(WeightWord(at + (uint)_WeightLayout * 4u + k * 4u));
+    }
+}
+
+uint WeightCount(uint vertex)
+{
+    if (_WeightLayout == 0) return _WeightRanges[vertex].y;
+    return (uint)_WeightLayout;
+}
+
+uint PackSignedByte(int v) { return (uint)(v & 0xFF); }
+
+[numthreads(64, 1, 1)]
+void Bake16(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _Count) return;
+    float4 p = float4(ReadFloat3(_Position, i), 1.0);
+    float3 n = ReadFloat3(_Normal, i);
+    float3 position = 0;
+    float3 normal = 0;
+    bool bonesKnown = true;
+    uint count = WeightCount(i);
+    for (uint k = 0; k < count; k++)
+    {
+        float w;
+        int bone;
+        Weight(i, k, w, bone);
+        // A fixed layout pads a vertex's unused slots with weight 0 (and bone 0): they add nothing.
+        if (w == 0.0) continue;
+        if (bone < 0 || bone >= _BoneCount) { bonesKnown = false; break; }
+        float4x4 m = _Palette[bone];
+        position += mul(m, p).xyz * w;
+        normal += mul((float3x3)m, n) * w;
+    }
+
+    float sum = abs(normal.x) + abs(normal.y) + abs(normal.z);
+    bool finite = bonesKnown && all(isfinite(position)) && all(isfinite(normal)) && isfinite(sum) && sum > 0.0;
+    uint packed;
+    if (!finite)
+    {
+        packed = 0x80u | (0x80u << 8);
+#if !defined(PROBE_NO_COUNTS)
+        InterlockedAdd(_Flags[1], 1u);
+        if (!bonesKnown) InterlockedAdd(_Flags[2], 1u);
+#endif
+    }
+    else
+    {
+        float2 e = normal.xy / sum;
+        float2 folded = (1.0 - abs(e.yx)) * (e >= 0.0 ? float2(1.0, 1.0) : float2(-1.0, -1.0));
+        e = normal.z >= 0.0 ? e : folded;
+        int2 oct = (int2)round(clamp(e, -1.0, 1.0) * 127.0);
+        float2 uv = _Uv.w != 0 ? ReadFloat2(_Uv, i) : float2(0.5, 0.5);
+        const float tolerance = 2.3841858e-7;
+        bool uvOk = all(isfinite(uv)) && uv.x >= -tolerance && uv.x <= 1.0 + tolerance && uv.y >= -tolerance && uv.y <= 1.0 + tolerance;
+        if (!uvOk)
+        {
+            packed = 0x80u | (0x80u << 8);
+#if !defined(PROBE_NO_COUNTS)
+            InterlockedAdd(_Flags[1], 1u);
+#endif
+        }
+        else
+        {
+            uint u = (uint)clamp(round(uv.x * 256.0 - 0.5), 0.0, 255.0);
+            uint v = (uint)clamp(round(uv.y * 256.0 - 0.5), 0.0, 255.0);
+            packed = PackSignedByte(oct.x) | (PackSignedByte(oct.y) << 8) | (u << 16) | (v << 24);
+        }
+    }
+
+    _Output[_OutputStart + i] = uint4(asuint(position.x), asuint(position.y), asuint(position.z), packed);
+#if !defined(PROBE_NO_COUNTS)
+    InterlockedAdd(_Flags[0], 1u);
+#endif
+}
+
+// The mesh's indices, 16- or 32-bit, into a uint buffer with the base vertex added.
+ByteAddressBuffer _Indices;
+int _IndexFormat16;
+uint _IndexCount;
+uint _BaseVertex;
+RWStructuredBuffer<uint> _OutputIndices;
+uint _OutputIndexStart;
+
+[numthreads(64, 1, 1)]
+void CopyIndices(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _IndexCount) return;
+    uint value;
+    if (_IndexFormat16 != 0)
+    {
+        uint at = i * 2u;
+        uint word = _Indices.Load(at & ~3u);
+        value = (at & 2u) != 0 ? (word >> 16) : (word & 0xFFFFu);
+    }
+    else
+    {
+        value = _Indices.Load(i * 4u);
+    }
+
+    _OutputIndices[_OutputIndexStart + i] = value + _BaseVertex;
+}

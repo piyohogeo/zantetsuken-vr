@@ -26,6 +26,9 @@ namespace Zantetsu.Sandbox
 
         /// <summary>The NPC skin benchmark: a crowd of uncut skinned individuals drawn by one skin route, measured; no cut, no crowd plan.</summary>
         NpcSkinBench = 5,
+
+        /// <summary>The GPU bake probe (DESIGN 4.5.14): a drawn mesh's own GPU buffers baked to 16-byte vertices by the probe's kernel, compared with the CPU reference, drawn through the display; no cut, no crowd plan.</summary>
+        SkinBakeProbe = 6,
     }
 
     /// <summary>The scenario a launch chose, where it was read from, and what is wrong with the launch if anything is.</summary>
@@ -96,7 +99,7 @@ namespace Zantetsu.Sandbox
         /// <summary>The Player's exit code when the launch's scenario cannot be run as asked.</summary>
         public const int FailureExitCode = 22;
 
-        private static readonly string[] k_names = { "play", "static-wait", "city-walk", "npc-slash", "empty-xr", "npc-skin-bench" };
+        private static readonly string[] k_names = { "play", "static-wait", "city-walk", "npc-slash", "empty-xr", "npc-skin-bench", "skin-bake-probe" };
 
         /// <summary>
         /// The development checks that start by themselves on their own argument: the sandbox scene's walk, the
@@ -138,6 +141,7 @@ namespace Zantetsu.Sandbox
                 case SandboxScenarioKind.NpcSlash: return new[] { "MultiNpcCity", "QuestNpcSlash10" };
                 case SandboxScenarioKind.EmptyXr: return new[] { "QuestEmptyXr" };
                 case SandboxScenarioKind.NpcSkinBench: return new[] { "NpcSkinBench", "QuestNpcSkinBench" };
+                case SandboxScenarioKind.SkinBakeProbe: return new[] { "SkinBakeProbe", "QuestSkinBakeProbe" };
                 default: return new[] { "WalkCity", "QuestCityWalk" };
             }
         }
@@ -229,9 +233,18 @@ namespace Zantetsu.Sandbox
             bool cityWalk = Has(SandboxPropSlashPlayerCheck.CityWalkArgument);
             bool drawCompare = Has(SandboxDrawComparePlayerCheck.Argument);
             bool skinBench = Has(NpcSkinBenchSettings.Argument);
+            bool bakeProbe = Has(SkinBakeProbeSettings.Argument);
             switch (kind)
             {
+                case SandboxScenarioKind.SkinBakeProbe:
+                    // The bake probe (DESIGN 4.5.14): its own argument with the record's directory; nothing else scripted beside it.
+                    if (propSlash) return Name(kind) + " does not run " + SandboxPropSlashPlayerCheck.Argument;
+                    if (drawCompare) return Name(kind) + " does not run " + SandboxDrawComparePlayerCheck.Argument;
+                    if (skinBench) return Name(kind) + " does not run " + NpcSkinBenchSettings.Argument;
+                    if (!bakeProbe) return Name(kind) + " needs " + SkinBakeProbeSettings.Argument + " <directory>";
+                    return null;
                 case SandboxScenarioKind.Play:
+                    if (bakeProbe) return "the launch names no scenario, which is play, and carries " + SkinBakeProbeSettings.Argument + ": name its scenario with " + Argument + " " + Name(SandboxScenarioKind.SkinBakeProbe);
                     if (propSlash || drawCompare || skinBench)
                     {
                         return "the launch names no scenario, which is play, and carries " + (propSlash ? SandboxPropSlashPlayerCheck.Argument : drawCompare ? SandboxDrawComparePlayerCheck.Argument : NpcSkinBenchSettings.Argument)
@@ -245,11 +258,13 @@ namespace Zantetsu.Sandbox
                 case SandboxScenarioKind.StaticWait:
                     if (propSlash) return Name(kind) + " does not run " + SandboxPropSlashPlayerCheck.Argument;
                     if (skinBench) return Name(kind) + " does not run " + NpcSkinBenchSettings.Argument;
+                    if (bakeProbe) return Name(kind) + " does not run " + SkinBakeProbeSettings.Argument;
                     if (!drawCompare) return Name(kind) + " needs " + SandboxDrawComparePlayerCheck.Argument + " <directory> and its arguments";
                     return null;
                 case SandboxScenarioKind.CityWalk:
                     if (drawCompare) return Name(kind) + " does not run " + SandboxDrawComparePlayerCheck.Argument;
                     if (skinBench) return Name(kind) + " does not run " + NpcSkinBenchSettings.Argument;
+                    if (bakeProbe) return Name(kind) + " does not run " + SkinBakeProbeSettings.Argument;
                     if (!propSlash) return Name(kind) + " needs " + SandboxPropSlashPlayerCheck.Argument + " <directory> and its arguments";
                     if (!cityWalk) return Name(kind) + " needs " + SandboxPropSlashPlayerCheck.CityWalkArgument + " (without it the Prop Slash entry is " + Name(SandboxScenarioKind.NpcSlash) + ")";
                     return null;
@@ -257,11 +272,13 @@ namespace Zantetsu.Sandbox
                     // The benchmark (DESIGN 3.4): its own argument with the results' directory; no cut, no draw comparison beside it.
                     if (propSlash) return Name(kind) + " does not run " + SandboxPropSlashPlayerCheck.Argument;
                     if (drawCompare) return Name(kind) + " does not run " + SandboxDrawComparePlayerCheck.Argument;
+                    if (bakeProbe) return Name(kind) + " does not run " + SkinBakeProbeSettings.Argument;
                     if (!skinBench) return Name(kind) + " needs " + NpcSkinBenchSettings.Argument + " <directory> and its arguments";
                     return null;
                 default:
                     if (drawCompare) return Name(kind) + " does not run " + SandboxDrawComparePlayerCheck.Argument;
                     if (skinBench) return Name(kind) + " does not run " + NpcSkinBenchSettings.Argument;
+                    if (bakeProbe) return Name(kind) + " does not run " + SkinBakeProbeSettings.Argument;
                     if (!propSlash) return Name(kind) + " needs " + SandboxPropSlashPlayerCheck.Argument + " <directory> and its arguments";
                     if (cityWalk) return Name(kind) + " does not run " + SandboxPropSlashPlayerCheck.CityWalkArgument + " (that is " + Name(SandboxScenarioKind.CityWalk) + ")";
                     return null;
@@ -480,6 +497,10 @@ namespace Zantetsu.Sandbox
             else if (kind == SandboxScenarioKind.NpcSkinBench)
             {
                 failure = NpcSkinBenchRunner.StartForScenario(scene);
+            }
+            else if (kind == SandboxScenarioKind.SkinBakeProbe)
+            {
+                failure = SkinBakeProbeRunner.StartForScenario(scene);
             }
             else
             {
