@@ -193,6 +193,12 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Where the display geometry of an accepted cut is carried to its commit.</summary>
         public CutDag Geometry { get; private set; }
 
+        /// <summary>
+        /// Which fragments are an NPC's and what the bone-aware split reads of each (NPC-BONE-SPLIT-1): the DAG's side data,
+        /// made with it and given back after the split.
+        /// </summary>
+        public NpcBoneSplitRegistry NpcBones { get; private set; }
+
         /// <summary>The one caller of the cut path. It is on this object and drives itself from Unity's update.</summary>
         public ProvisionalCutDriver Driver { get; private set; }
 
@@ -265,6 +271,7 @@ namespace Zantetsu.PhysicsCut
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeBent(), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeConvexCut(), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeGraph(), this);
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeBone(), this);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 // The timeline (GRAPH-CONNECT-14): a 5th line in development builds, and the attempts' rows where a file was named.
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeTimeline(), this);
@@ -710,6 +717,8 @@ namespace Zantetsu.PhysicsCut
             // unpublished product is not committed any more, which is a refusal and changes nothing.
             Geometry = new CutDag(
                 Storage, Ledger, Dispatcher, new LatchedCommit(new VpDisplayGeometryCommit(Display), this), _fault);
+            NpcBones = new NpcBoneSplitRegistry(Ledger);
+            Geometry.SideData = NpcBones;
 
             // The one driver, on this object, bound to everything above. It adds the DAG to the frame itself, so the
             // work left over by a driver that goes away is still carried by the frame this owns.
@@ -1042,6 +1051,9 @@ namespace Zantetsu.PhysicsCut
             }
 
             ReleaseSpatialSplit();
+            // After the split, whose attempts held lineages until they were freed (NPC-BONE-SPLIT-1).
+            NpcBones?.Dispose();
+            NpcBones = null;
             ReleaseEmptyOwners();
             ReleaseHulls();
             ReleaseFusion();

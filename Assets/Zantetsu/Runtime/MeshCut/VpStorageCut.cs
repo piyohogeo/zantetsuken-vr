@@ -105,6 +105,14 @@ namespace Zantetsu.MeshCut
 
         /// <summary>Optional, caller-owned: each intersection node's parameter from its edge's lo endpoint.</summary>
         public NativeArray<float> nodeParams;
+
+        /// <summary>
+        /// The asynchronous route only (NPC-BONE-SPLIT-1): ask the kernel where each new render vertex came from
+        /// (<see cref="MeshCutOutput.newVertexOrigins"/>), into an array the request makes for its reservation and hands to
+        /// the caller with a successful result (<see cref="VpStorageCutRequest.TryTakeVertexOrigins"/>). Off, the ordinary
+        /// case: nothing is made and nothing is written.
+        /// </summary>
+        public bool wantVertexOrigins;
     }
 
     /// <summary>The outcome of one cut, with the kernel's own figures for diagnostics.</summary>

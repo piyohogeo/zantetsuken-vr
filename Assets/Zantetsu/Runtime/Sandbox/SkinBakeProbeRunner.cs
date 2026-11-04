@@ -161,6 +161,15 @@ namespace Zantetsu.Sandbox
                 yield break;
             }
 
+            // ---- the comparison's data set in place of the cut bench (NPC-BONE-EVAL-1)
+            if (_settings.IsCutBench && _settings.cutDataset)
+            {
+                yield return CutDataset();
+                if (Current == Phase.Failed) yield break;
+                yield return End();
+                yield break;
+            }
+
             // ---- the cut bench in place of the cases (SKIN-GPU-FIRST-1): the product's prepared cuts under the launch's skin bake route
             if (_settings.IsCutBench)
             {
@@ -1291,6 +1300,146 @@ namespace Zantetsu.Sandbox
 
             t.Append(" || display: ").Append(world.Display.DescribeShownForDiagnosis());
             _record.Fact("scene listing " + when, t.ToString());
+        }
+
+        // ---- NPC-BONE-EVAL-1: the comparison's data set. The cut bench's bodies (the scene's NPC model, posed apart by the table at fixed
+        // phases), each cut once by the product's prepared cut through the world's horizontal plane through its renderer's local bounds
+        // centre; the bodies of the second half then cut again by the world's own ask: the lower piece by the world's horizontal plane a
+        // quarter of the renderer's world height lower, the upper piece by the renderer's local +y plane through the centre (the legacy
+        // plane: front/back of this project's Z-up meshes) -- every plane fixed by the body's own placement at its request, in the pieces'
+        // frame. The additional split is held (off) until every cut committed, then switched back and left to run until it is idle; the
+        // launch's capture (-zantetsuSplitCapture with -zantetsuSplitCaptureBone) keeps what its attempts were issued with. Nothing here
+        // depends on what a split decides.
+        private IEnumerator CutDataset()
+        {
+            int n = _settings.cutBodies;
+            if (templates == null || templates.Length == 0 || assets == null || assets.initialPose == null) { Fail("cut dataset: the scene gives no NPC template or no pose table"); yield break; }
+            if (world == null || !world.IsReady || world.SpatialSplit == null) { Fail("cut dataset: no ready cut world with a spatial split in the scene"); yield break; }
+            CutSpatialSplit split = world.SpatialSplit;
+            CutSpatialSplitSettings asBefore = split.Settings;
+            CutSpatialSplitSettings held = asBefore;
+            held.enabled = false;
+            split.Settings = held;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            string capture = SpatialSplitCaptureSession.Sink != null ? "on, session " + SpatialSplitCaptureSession.Sink.sessionId + (SpatialSplitCaptureSession.CaptureBones ? ", with the bones" : ", WITHOUT the bones") : "OFF";
+#else
+            string capture = "none (a Release build has no capture)";
+#endif
+            _record.Fact("cut dataset", "bodies " + n + " (the cut bench's, round 0 phases); first cut: horizontal through the local bounds centre (TryCut); re-cut bodies " + (n / 2) + ".." + (n - 1)
+                + ": the lower piece by the horizontal plane 0.25 x the renderer's world height lower, the upper piece by the local +y plane through the centre (world.TryAsk); the split held off until every cut committed (it was "
+                + (asBefore.enabled ? "on" : "OFF") + "), then as before; capture " + capture);
+            var npcs = new List<SandboxNpcCharacter>();
+            yield return MakeCutBodies(n, 0, npcs);
+            if (npcs.Count < n) { Fail("cut dataset: " + npcs.Count + " of " + n + " bodies were made (see the 'cut bench bodies' fact)"); split.Settings = asBefore; yield break; }
+
+            var operations = new CutOperationId[n];
+            var placements = new Matrix4x4[n];
+            var centres = new Vector3[n];
+            var heights = new float[n];
+            for (int b = 0; b < n; b++)
+            {
+                SkinnedMeshRenderer renderer = npcs[b].Renderer;
+                if (renderer == null || npcs[b].Handle == null || !npcs[b].Handle.IsReady) { Fail("cut dataset: body " + b + " has no ready handle"); split.Settings = asBefore; yield break; }
+                placements[b] = renderer.transform.localToWorldMatrix;
+                centres[b] = renderer.localBounds.center;
+                heights[b] = renderer.bounds.size.y;
+                if (!SkinBakeProbeCutPlane.TryMake(SkinBakeProbeCutPlane.Horizontal, placements[b], centres[b], out float4 plane, out float4 worldPlane, out float3 anchor, out string failure))
+                {
+                    Fail("cut dataset: body " + b + "'s first plane: " + failure); split.Settings = asBefore; yield break;
+                }
+
+                VpCharacterCutResult result = npcs[b].Handle.TryCut(plane, anchor);
+                operations[b] = result.Operation;
+                _record.Fact("cut dataset first cut " + b, npcs[b].Family + ": outcome " + result.Outcome + ", acceptance " + result.Acceptance + ", operation " + (result.Operation.IsSet ? result.Operation.value.ToString(Inv) : "none")
+                    + "; local plane " + SkinBakeProbeCutPlane.Plane(plane) + ", world " + SkinBakeProbeCutPlane.Plane(worldPlane) + ", world height " + heights[b].ToString("F4", Inv));
+                if (result.Outcome != VpCharacterCutOutcome.Requested || !result.Operation.IsSet) { Fail("cut dataset: body " + b + "'s first cut was not requested (" + result.Outcome + ")"); split.Settings = asBefore; yield break; }
+            }
+
+            var children = new LogicalCutOperation[n];
+            for (int b = 0; b < n; b++)
+            {
+                LogicalCutOperation record = default;
+                bool ready = false;
+                float by = Time.realtimeSinceStartup + 60f;
+                while (Time.realtimeSinceStartup < by)
+                {
+                    ready = world.Geometry.StageOf(operations[b]) == CutGeometryStage.Committed && world.Ledger.TryGetOperation(operations[b], out record)
+                        && world.Owners.TryGet(record.positive, out _) && world.Owners.TryGet(record.negative, out _);
+                    if (ready) break;
+                    yield return null;
+                }
+
+                if (!ready) { Fail("cut dataset: body " + b + "'s first cut did not commit with both owners in 60 s"); split.Settings = asBefore; yield break; }
+                children[b] = record;
+            }
+
+            _record.Fact("cut dataset first cuts committed", "frame " + Time.frameCount + ": " + string.Join(", ", children.Select(c => c.source.value + " -> +" + c.positive.value + " / -" + c.negative.value)));
+            var recuts = new List<CutOperationId>();
+            for (int b = n / 2; b < n; b++)
+            {
+                Matrix4x4 m = placements[b];
+                Vector3 worldCentre = m.MultiplyPoint3x4(centres[b]);
+                var lowerPoint = (float3)(worldCentre - new Vector3(0f, 0.25f * heights[b], 0f));
+                var up = new float3(0f, 1f, 0f);
+                var lowerWorld = new float4(up, -math.dot(up, lowerPoint));
+                if (!VpCutPlane.TryWorldToGeometryLocal(lowerWorld, m, out float4 lowerLocal)) { Fail("cut dataset: body " + b + "'s lower re-cut plane was refused by VpCutPlane.TryWorldToGeometryLocal"); split.Settings = asBefore; yield break; }
+                var upperLocal = new float4(0f, 1f, 0f, -centres[b].y);
+                foreach ((LogicalFragmentId source, float4 plane, string which) in new[] { (children[b].negative, lowerLocal, "lower"), (children[b].positive, upperLocal, "upper") })
+                {
+                    var ask = new ProvisionalCutAsk { source = source, plane = plane, positiveSeparationImpulse = 0f, negativeSeparationImpulse = 0f, renderAnchor = (float3)worldCentre };
+                    bool asked = world.TryAsk(in ask);
+                    CutOperationId admitted = default;
+                    for (int position = 0; world.Ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation op); position++)
+                    {
+                        if (op.source == source) { admitted = op.id; break; }
+                    }
+
+                    _record.Fact("cut dataset re-cut " + b + " " + which, "source " + source.value + ", local plane " + SkinBakeProbeCutPlane.Plane(plane) + "; asked " + asked + ", operation " + (admitted.IsSet ? admitted.value.ToString(Inv) : "none at the ask"));
+                    if (!asked) { Fail("cut dataset: body " + b + "'s " + which + " re-cut was not asked (TryAsk false)"); split.Settings = asBefore; yield break; }
+                    recuts.Add(default);
+                    int slot = recuts.Count - 1;
+                    yield return null;   // the admission is the driver's (a Step after the ask)
+                    for (int position = 0; world.Ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation op); position++)
+                    {
+                        if (op.source == source) { recuts[slot] = op.id; break; }
+                    }
+
+                    if (!recuts[slot].IsSet) { Fail("cut dataset: body " + b + "'s " + which + " re-cut was not admitted"); split.Settings = asBefore; yield break; }
+                }
+            }
+
+            foreach (CutOperationId operation in recuts)
+            {
+                bool ready = false;
+                float by = Time.realtimeSinceStartup + 60f;
+                while (Time.realtimeSinceStartup < by)
+                {
+                    ready = world.Geometry.StageOf(operation) == CutGeometryStage.Committed && world.Ledger.TryGetOperation(operation, out LogicalCutOperation record)
+                        && world.Owners.TryGet(record.positive, out _) && world.Owners.TryGet(record.negative, out _);
+                    if (ready) break;
+                    yield return null;
+                }
+
+                if (!ready) { Fail("cut dataset: re-cut operation " + operation.value + " did not commit with both owners in 60 s"); split.Settings = asBefore; yield break; }
+            }
+
+            _record.Fact("cut dataset re-cuts committed", "frame " + Time.frameCount + ": " + recuts.Count + " operations (" + string.Join(", ", recuts.Select(o => o.value.ToString(Inv))) + ")");
+
+            // The split as before, left to run until it is idle: no attempt out for 120 frames in a row (at most 300 s).
+            int released = Time.frameCount;
+            split.Settings = asBefore;
+            int quiet = 0;
+            float until = Time.realtimeSinceStartup + 300f;
+            while (Time.realtimeSinceStartup < until && (quiet < 120 || Time.frameCount - released < 30))
+            {
+                quiet = split.HasAttempt ? 0 : quiet + 1;
+                yield return null;
+            }
+
+            _record.Fact("cut dataset split", (quiet >= 120 ? "idle" : "NOT IDLE after 300 s") + " at frame " + Time.frameCount + " (released at " + released + "); issued " + split.Issued + ", bone-aware issued " + split.BoneIssued
+                + ", decided " + split.BoneSearches + " (apart " + split.BoneSeparable + ", connected " + split.BoneNotSeparable + ", not known " + split.BoneInsufficient + ", over the limits " + split.BoneOverTheLimits
+                + "), published by the bones " + split.PublishedBone + "; " + split.DescribeBone());
+            if (quiet < 120) Fail("cut dataset: the split did not become idle in 300 s");
         }
 
         // The bodies of one round: fresh NPC slots as the load NPCs are made, in a row 3 m ahead of the fixed eye, facing it, posed apart by the table.

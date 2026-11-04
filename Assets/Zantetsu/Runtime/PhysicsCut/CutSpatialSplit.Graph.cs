@@ -240,8 +240,9 @@ namespace Zantetsu.PhysicsCut
             }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if (effective && Capture != null)
+            if (effective && Capture != null && !SpatialSplitCaptureSession.CaptureNpcOnly)
             {
+                // (NPC-BONE-LINK-1: the NPC-only capture copies the NPCs' bone-aware attempts alone, so the graph stage runs for the rest.)
                 // The capture records the plane search's result and distribution in its current form (SpatialSplitCapture);
                 // a graph-led attempt has no such result. Until the capture has a graph section (unit 4), the two do not run together.
                 effective = false;

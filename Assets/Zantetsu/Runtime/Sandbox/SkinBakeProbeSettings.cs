@@ -57,6 +57,8 @@ namespace Zantetsu.Sandbox
         public const string CapsOffArgument = "-zantetsuSkinBakeProbeCapsOff";
         /// <summary>The cut bench's plane (PLANE-1): <c>legacy</c> (the default: <c>float4(0, 1, 0, -localBounds.center.y)</c> in the renderer's frame, which splits this project's Z-up NPC meshes front/back) or <c>horizontal</c> (the world's horizontal plane through the same centre taken to world, the world's up the positive side, converted to the renderer's frame by <see cref="VpCutPlane.TryWorldToGeometryLocal"/>; a refusal is a verification failure, nothing is substituted).</summary>
         public const string CutPlaneArgument = "-zantetsuSkinBakeProbeCutPlane";
+        /// <summary>NPC-BONE-EVAL-1: the cut bench's bodies cut for the comparison's data set (fixed first cuts and re-cuts, the split held until they commit), in place of the bench.</summary>
+        public const string CutDatasetArgument = "-zantetsuSkinBakeProbeCutDataset";
         /// <summary>Diagnosis (PLANE-1): the gpu route's CPU bake is kept out of the dispatcher this many frames after its hit, so that the geometry wait is long enough to picture; the acceptance, the physics and the display run as before. Such a run is excluded from the performance summaries.</summary>
         public const string HoldCpuReadyArgument = "-zantetsuSkinBakeProbeHoldCpuReady";
         /// <summary>Diagnosis (PLANE-1): the AppSW motion output (both eyes) read back for every pictured frame of the cut bench and written beside the pictures (Quest: the native route's motion pass; nothing on a platform without it).</summary>
@@ -153,6 +155,8 @@ namespace Zantetsu.Sandbox
         public string cutPlane = SkinBakeProbeCutPlane.Legacy;
         public int holdCpuReady;
         public bool IsCutBench => cutBodies > 0;
+        /// <summary>NPC-BONE-EVAL-1: the data set in place of the cut bench (<see cref="CutDatasetArgument"/>).</summary>
+        public bool cutDataset;
         public bool IsBench => benchSeries != null && benchSeries.Count > 0;
         public string SeriesText => benchSeries == null ? "" : string.Join(",", benchSeries.ConvertAll(c => c.Name));
         public float edgeRight = DefaultEdgeRight;
@@ -300,6 +304,7 @@ namespace Zantetsu.Sandbox
                     if (string.Equals(a, MotionCheckFramesArgument, StringComparison.Ordinal)) s.motionCheckFrames = n; else s.motionCheckHold = n;
                 }
                 else if (string.Equals(a, CapsOffArgument, StringComparison.Ordinal)) s.capsOff = true;
+                else if (string.Equals(a, CutDatasetArgument, StringComparison.Ordinal)) s.cutDataset = true;
                 else if (string.Equals(a, NoDrawArgument, StringComparison.Ordinal)) s.draw = false;
                 else if (string.Equals(a, NoPictureArgument, StringComparison.Ordinal)) s.picture = false;
                 else if (string.Equals(a, KeepOpenArgument, StringComparison.Ordinal)) s.keepOpen = true;
@@ -309,6 +314,7 @@ namespace Zantetsu.Sandbox
             if (s.bench != null && s.benchSeries != null) { failure = BenchArgument + " and " + BenchSeriesArgument + " are two ways of asking for the bench: give one"; return false; }
             if (s.cutBodies > 0 && (s.bench != null || s.benchSeries != null)) { failure = CutBenchArgument + " and the bake bench are two different benches: give one"; return false; }
             if (s.motionCheck && (s.cutBodies > 0 || s.bench != null || s.benchSeries != null)) { failure = MotionCheckArgument + " runs alone: no cut bench and no bake bench with it"; return false; }
+            if (s.cutDataset && s.cutBodies < 2) { failure = CutDatasetArgument + " needs " + CutBenchArgument + " 2 or more (half the bodies are cut again)"; return false; }
             if (s.motionView && s.cutBodies == 0) { failure = MotionViewArgument + " belongs to the cut bench (" + CutBenchArgument + ")"; return false; }
             if (s.motionView && !s.motionCapture) { failure = MotionViewArgument + " needs " + MotionCaptureArgument + " (the moved view is for the motion output read back)"; return false; }
             // The view sequence starts in the last warmup frame of the frame window (TL review P3, 2026-11-02): a setting without the window is refused, not silently still.
@@ -325,6 +331,7 @@ namespace Zantetsu.Sandbox
                + (IsMotionCheck ? "; MOTION CHECK: step " + motionCheckStepCm.ToString("F2", CultureInfo.InvariantCulture) + " cm a frame, " + motionCheckFrames + " frames a move, " + motionCheckHold + " frames a hold" : "")
                + (motionView ? "; MOTION VIEW: the cut bench's eye follows the check's sequence from the first request (step " + motionCheckStepCm.ToString("F2", CultureInfo.InvariantCulture) + " cm a frame, " + motionCheckFrames + " frames a move, " + motionCheckHold + " frames a hold)" : "")
                + (warm != "none" ? "; WARM before the bench: " + warm : "")
+               + (cutDataset ? "; CUT DATASET in place of the cut bench (NPC-BONE-EVAL-1)" : "")
                + (IsCutBench ? "; CUT BENCH " + cutBodies + " bodies, stagger " + cutStagger + " frames, " + cutRounds + " rounds (" + benchFrames + " frames after the requests, " + benchWarmup + " warmup; load " + benchLoad + " NPCs" + (cutNoVerify ? "; PERFORMANCE RUN: no picture, no readback" : "; verification: pictures and readback" + (cutPictureFrames > 0 ? ", a picture of every frame pre..+" + cutPictureFrames : "")) + "; shadows " + shadows + "; cut plane " + cutPlane + (holdCpuReady > 0 ? "; HOLD cpu ready " + holdCpuReady + " frames (diagnosis)" : "") + (cutSurfaceDebug ? "; cut surface DEBUG colours" : "") + (capsOff ? "; stencil caps WITHHELD" : "") + (motionCapture ? "; MOTION capture of the pictured frames" : "") + ")" : "");
     }
 

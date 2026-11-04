@@ -274,6 +274,19 @@ namespace Zantetsu.PhysicsCut
             Dispose();
         }
 
+        /// <summary>The root of this character's bone lineage in the world's records (NPC-BONE-SPLIT-1).</summary>
+        void RegisterBoneLineage(VpStoredGeometry geometry, float3[] joints, string why)
+        {
+            NpcBoneSplitRegistry records=world.NpcBones;
+            if(records==null)return;
+            if(why==null && joints==null)why="no joints";
+            if(why==null && geometry.vertexCount!=boneRig.Vertices.VertexCount)why="the base geometry has "+geometry.vertexCount+" vertices, the model "+boneRig.Vertices.VertexCount;
+            NpcBoneLineage lineage=why==null
+                ? new NpcBoneLineage(boneRig.NodeCount,boneRig.Parent,boneRig.Present,joints,boneRig.Vertices,(uint)geometry.vertexStart,geometry.vertexCount,null)
+                : new NpcBoneLineage(0,System.Array.Empty<int>(),System.Array.Empty<bool>(),System.Array.Empty<float3>(),null,(uint)geometry.vertexStart,geometry.vertexCount,why);
+            records.RegisterRoot(Source,lineage);
+        }
+
         VpCharacterCutResult Run(float4 plane, float3 renderAnchor, float positiveSeparationImpulse, float negativeSeparationImpulse,
             bool fromHit)
         {
@@ -306,6 +319,10 @@ namespace Zantetsu.PhysicsCut
                     if(!direct.TryCapturePose()){LastFailure="capture pose";poseScope.Dispose();return Result(VpCharacterCutOutcome.Failed);}
                 }
                 bool posed=physics.TryPose(boneToOwner,out _);
+                // The joints of this pose for the pieces' bone-aware split (NPC-BONE-SPLIT-1): the convexes' bone matrices just
+                // read and the skin palette the hit captured (a held resume: the kept ones). No Transform is read for them.
+                float3[] joints=null; string boneWhy=boneRig==null?"no bone rig: "+(boneRigRefusal??"not made"):null;
+                if(boneRig!=null && !boneRig.TryJoints(direct,boneToOwner,out joints,out boneWhy))joints=null;
                 poseScope.Dispose();
                 ProvisionalCutDriver.FreshCutEligibility eligible;
                 using(s_prepare.Auto())
@@ -439,6 +456,10 @@ namespace Zantetsu.PhysicsCut
                 // complete, which every cut below waits for in the DAG (CutDag.PendingBasis.cs); no kernel reads it before.
                 if(gpuFirst)world.Geometry.RegisterPendingBaseGeometry(Source,shownGeometry,Matrix4x4.identity);
                 else world.Geometry.RegisterBaseGeometry(Source,shownGeometry,Matrix4x4.identity);
+                // The lineage's bone record (NPC-BONE-SPLIT-1), before the cut is requested: its base vertices are the model's, one
+                // to one, in the base geometry's coordinates the joints are in. Not decidable (no rig, no pose): recorded so, and
+                // the pieces are not split -- they never go to another search.
+                RegisterBoneLineage(shownGeometry,joints,boneWhy);
                 owner.PreparedSourceWithdrawal=withdrawal;
                 }
                 finally { actorScope.Dispose(); }

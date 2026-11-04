@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
 using Zantetsu.Rendering;
@@ -99,6 +100,33 @@ namespace Zantetsu.MeshCut
         /// established and nothing changed; the same commit is offered again later, so this must not half-publish.
         /// </summary>
         bool TryCommit(in CutGeometryCommit commit, out CutGeometryCommitted committed);
+    }
+
+    /// <summary>
+    /// What a lineage keeps beside its geometry, outside the DAG (NPC-BONE-SPLIT-1: an NPC's bones and where its cut vertices
+    /// came from): told, on the main thread, of every change of which fragment has which geometry -- a commit, a split no cut
+    /// made, a retired fragment forgotten -- so that its records follow the geometry and nothing else. The DAG asks it, at the
+    /// moment a cut is offered, whether that cut is to record its new vertices' origins; nothing else of the DAG depends on it.
+    /// </summary>
+    public interface ICutGeometrySideData
+    {
+        /// <summary>Whether the cut of <paramref name="source"/>'s geometry about to be offered is to record its new vertices' origins.</summary>
+        bool WantsVertexOrigins(LogicalFragmentId source);
+
+        /// <summary>
+        /// One cut's geometry was committed: the source's record goes to its two sides. <paramref name="geometryPlane"/> is the
+        /// plane in the basis geometry's own coordinates (what the kernel cut at). <paramref name="origins"/> holds one pair a
+        /// new vertex from <paramref name="originsBase"/> on (<paramref name="originCount"/> of them), or is not created when
+        /// none were asked for or written; it is the callee's from here, to keep or dispose. Called before the sides are settled
+        /// in the DAG, so a side already retired is forgotten right after. Must not throw.
+        /// </summary>
+        void Committed(in CutGeometryCommit commit, float4 geometryPlane, NativeArray<uint2> origins, uint originsBase, int originCount);
+
+        /// <summary>A split no cut made handed the source's geometry to its two fragments (<see cref="CutDag.TrySplitGeometry"/>).</summary>
+        void Split(LogicalFragmentId source, LogicalFragmentId positive, LogicalFragmentId negative);
+
+        /// <summary>A retired fragment was forgotten (<see cref="CutDag.Forget"/>): nothing will be cut from it again.</summary>
+        void Forgotten(LogicalFragmentId fragment);
     }
 
     /// <summary>One cut's geometry ending in a way that is not an ordinary outcome.</summary>
@@ -209,6 +237,12 @@ namespace Zantetsu.MeshCut
         private readonly Dictionary<CutOperationId, VpStorageCutStatus> _faults =
             new Dictionary<CutOperationId, VpStorageCutStatus>();
         private bool _closed;
+
+        /// <summary>
+        /// The records kept beside the geometry (NPC-BONE-SPLIT-1), told of every commit, split and forgotten fragment; null
+        /// for none (then no cut records its vertices' origins). Set once, by the world, before any cut is admitted.
+        /// </summary>
+        public ICutGeometrySideData SideData { get; set; }
 
         /// <summary>
         /// Takes the storage the geometry lives in, the ledger that owns the logical state, the dispatcher the work
@@ -384,6 +418,7 @@ namespace Zantetsu.MeshCut
             _frameOf.Remove(fragment);
             _withoutGeometry.Remove(fragment);
             _pendingBasisOf.Remove(fragment);
+            SideData?.Forgotten(fragment);
         }
 
         /// <summary>
@@ -418,6 +453,7 @@ namespace Zantetsu.MeshCut
             _geometryOf[negative] = negativeGeometry;
             _frameOf[negative] = frame;
             GeometrySplits++;
+            SideData?.Split(source, positive, negative);
             return true;
         }
 
@@ -780,7 +816,10 @@ namespace Zantetsu.MeshCut
 
             node.basis = basis;
             node.kernelPlane = kernelPlane;
-            node.request = _cuts.Submit(input, kernelPlane, default);
+            // The new vertices' origins only where the side data asks for this source's (an NPC's lineage); none otherwise.
+            var options = default(VpStorageCutOptions);
+            options.wantVertexOrigins = SideData != null && SideData.WantsVertexOrigins(node.source);
+            node.request = _cuts.Submit(input, kernelPlane, options);
             node.stage = CutGeometryStage.Running;
             return true;
         }
@@ -809,6 +848,13 @@ namespace Zantetsu.MeshCut
 
             node.cut = result;
             node.holdsProduced = true;
+            if (request.TryTakeVertexOrigins(out NativeArray<uint2> origins, out uint originsBase, out int originCount))
+            {
+                node.origins = origins;
+                node.originsBase = originsBase;
+                node.originCount = originCount;
+            }
+
             node.stage = CutGeometryStage.CpuPublished;
             _kernelSecondsOf[node.operation] = request.KernelSeconds;
             return true;
@@ -855,6 +901,7 @@ namespace Zantetsu.MeshCut
             _geometryOf.Remove(node.source);
             _frameOf.Remove(node.source);
             _withoutGeometry.Remove(node.source);
+            TellSideData(node, in commit);
             Settle(record.positive, node.cut.positive, committed.positive, node.basisFrame);
             Settle(record.negative, node.cut.negative, committed.negative, node.basisFrame);
             node.stage = CutGeometryStage.Committed;
@@ -870,6 +917,32 @@ namespace Zantetsu.MeshCut
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// The side data's notice of a commit (NPC-BONE-SPLIT-1), before the two sides are settled: the origins go with it (the
+        /// side data's to keep or dispose), or are given back here when there is none to take them. Its exception never leaves
+        /// the commit, which has been established already.
+        /// </summary>
+        private void TellSideData(Node node, in CutGeometryCommit commit)
+        {
+            NativeArray<uint2> origins = node.origins;
+            node.origins = default;
+            ICutGeometrySideData side = SideData;
+            if (side == null)
+            {
+                if (origins.IsCreated) origins.Dispose();
+                return;
+            }
+
+            try
+            {
+                side.Committed(in commit, node.kernelPlane, origins, node.originsBase, node.originCount);
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
         }
 
         /// <summary>
@@ -1008,8 +1081,13 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private void TakeResultBack(Node node)
         {
+            // Origins taken from a result that is not committed go back with it (NPC-BONE-SPLIT-1).
+            if (node.origins.IsCreated) node.origins.Dispose();
+            node.origins = default;
             if (node.request != null)
             {
+                // Only a request that is over: a running one's worker still writes them, and its abandonment gives them back.
+                if (node.request.IsOver) node.request.DisposeVertexOrigins();
                 if (node.request.IsOver
                     && node.request.Stage == VpStorageCutStage.Finished
                     && node.request.Result.status == VpStorageCutStatus.Ok)
@@ -1102,6 +1180,11 @@ namespace Zantetsu.MeshCut
 
             /// <summary>Whether the two sides in <see cref="cut"/> are still this cut's to give back.</summary>
             internal bool holdsProduced;
+
+            /// <summary>The new vertices' origins taken with the result (NPC-BONE-SPLIT-1), held until the commit hands them on.</summary>
+            internal NativeArray<uint2> origins;
+            internal uint originsBase;
+            internal int originCount;
 
             internal CutGeometryStage stage = CutGeometryStage.WaitingForBasis;
             internal bool terminateWhenPublished;

@@ -73,6 +73,44 @@ namespace Zantetsu.MeshCut
         /// <summary>The thread each part ran on, kept for the tests that check where the work really happened.</summary>
         internal int cutThreadId, collectThreadId;
 
+        // The vertex origins asked for by the options (NPC-BONE-SPLIT-1): the request's own array, as long as its reservation's
+        // new-vertex room, and -- after a successful run that wrote them -- where the new vertices start and how many there are.
+        internal NativeArray<uint2> vertexOrigins;
+        internal uint vertexOriginsBase;
+        internal int vertexOriginsCount;
+        internal bool vertexOriginsWritten;
+
+        /// <summary>
+        /// Hands over the vertex origins of a successful cut that asked for them (<see cref="VpStorageCutOptions.wantVertexOrigins"/>):
+        /// one pair a new vertex from <paramref name="baseVertex"/> on, <paramref name="count"/> of them (the array may be longer).
+        /// The caller owns the array from here and disposes it. False, handing nothing, when none were written; once given, false.
+        /// </summary>
+        public bool TryTakeVertexOrigins(out NativeArray<uint2> origins, out uint baseVertex, out int count)
+        {
+            origins = default;
+            baseVertex = 0;
+            count = 0;
+            if (Stage != VpStorageCutStage.Finished || Result.status != VpStorageCutStatus.Ok || !vertexOriginsWritten || !vertexOrigins.IsCreated)
+            {
+                return false;
+            }
+
+            origins = vertexOrigins;
+            baseVertex = vertexOriginsBase;
+            count = vertexOriginsCount;
+            vertexOrigins = default;
+            vertexOriginsWritten = false;
+            return true;
+        }
+
+        /// <summary>Gives back vertex origins nobody took (a result the caller gave up). Main thread; nothing when there are none.</summary>
+        public void DisposeVertexOrigins()
+        {
+            if (vertexOrigins.IsCreated) vertexOrigins.Dispose();
+            vertexOrigins = default;
+            vertexOriginsWritten = false;
+        }
+
         /// <summary>The worker seconds the kernel took (0 until it ran), for the benches.</summary>
         public double KernelSeconds { get; internal set; }
 
@@ -541,6 +579,21 @@ namespace Zantetsu.MeshCut
             }
 
             VpStorageCut.PointAtReservation(ref output, request.reservation);
+            if (request.options.wantVertexOrigins && request.reservation != null)
+            {
+                // The origins of the new vertices (NPC-BONE-SPLIT-1), as long as the reservation's room: a retry with a larger
+                // reservation makes a larger array, the shorter one given back first.
+                int room = Math.Max(1, request.reservation.NewVertexCapacity);
+                if (!request.vertexOrigins.IsCreated || request.vertexOrigins.Length < room)
+                {
+                    request.DisposeVertexOrigins();
+                    request.vertexOrigins = new NativeArray<uint2>(room, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                }
+
+                output.newVertexOrigins = (uint2*)request.vertexOrigins.GetUnsafePtr();
+                output.newVertexOriginCapacity = request.vertexOrigins.Length;
+            }
+
             request.output = output;
             return true;
         }
@@ -577,6 +630,14 @@ namespace Zantetsu.MeshCut
                     request.Result = result;
                     Finish(request, VpStorageCutStatus.InternalError);
                     return;
+                }
+
+                // Where the new vertices start, read while the reservation is still this cut's: the origins are about them.
+                if (kernel.vertexOriginsWritten != 0 && request.vertexOrigins.IsCreated && request.reservation != null)
+                {
+                    request.vertexOriginsBase = request.reservation.NewVertexBase;
+                    request.vertexOriginsCount = kernel.newVertexCount;
+                    request.vertexOriginsWritten = true;
                 }
 
                 // The one place a side is described and published, shared with the synchronous entry: the reservation
@@ -674,6 +735,12 @@ namespace Zantetsu.MeshCut
         {
             ReleaseReservation(request);
             GiveBackScratch(ref request.scratch);
+
+            // The vertex origins stay only with a successful result that wrote them, for the caller to take.
+            if (stage != VpStorageCutStage.Finished || request.Result.status != VpStorageCutStatus.Ok || !request.vertexOriginsWritten)
+            {
+                request.DisposeVertexOrigins();
+            }
 
             if (request.outputRanges.IsCreated)
             {

@@ -530,6 +530,8 @@ namespace Zantetsu.Sandbox
             // transition and for a short window after it; reads only, one log line a record; only when the Player
             // argument asks for it (a normal launch creates nothing).
             HeadHeightDiagnosis.InstallIfAsked();
+            // The piece probe (NPC-BONE-PROBE-1, diagnosis only): the left X button logs the piece the view rests on; only when asked for.
+            PieceProbe.InstallIfAsked();
             // The engine's own GPU memory accounting (unit 8-B), one line in 10 s and one a session change; only when
             // the Player argument asks for it.
             GpuMemoryReadout.InstallIfAsked();

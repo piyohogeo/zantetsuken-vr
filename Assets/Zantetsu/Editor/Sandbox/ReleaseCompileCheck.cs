@@ -112,7 +112,7 @@ namespace Zantetsu.Editor.Sandbox
         private static readonly string[] DevelopmentOnlyTypeNames =
         {
             "SpatialSplitCaptureSink", "SpatialSplitCaptureSession", "SpatialSplitCaptureSample", "SpatialSplitReplay", "SpatialSplitSample",
-            "SpatialSplitReplayPlayer",
+            "SpatialSplitReplayPlayer", "SpatialSplitBoneSample", "SpatialSplitMethodEval", "SpatialSplitMethodEvalPlayer",   // NPC-BONE-EVAL-1
         };
 
         private static string FindTypes(string output, string[] names, string what, out bool present)

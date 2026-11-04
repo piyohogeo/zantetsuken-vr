@@ -955,6 +955,12 @@ namespace Zantetsu.PhysicsCut
         public long Accepted { get; private set; }
         public long Returned { get; private set; }
 
+        /// <summary>Attempts issued that the NPC-only filter left out (NPC-BONE-LINK-1); 0 without the filter.</summary>
+        public long Filtered { get; private set; }
+
+        /// <summary>An attempt was issued that the NPC-only filter leaves out (Main): counted, nothing copied.</summary>
+        internal void NoteFiltered() => Filtered++;
+
         /// <summary>Issued attempts whose input was not captured, by reason.</summary>
         public long NotCaptured(SpatialSplitCaptureRefusal why) => _notCaptured[(int)why];
 
@@ -1208,6 +1214,12 @@ namespace Zantetsu.PhysicsCut
                 .Append(" ms in all, most ").Append(MostWriteMs.ToString("F1", CultureInfo.InvariantCulture)).Append(" ms; ")
                 .Append(StopReason == SpatialSplitCaptureRefusal.None ? "not stopped" : "STOPPED: " + StopReason + " (" + StopDetail + ")")
                 .Append(Settled ? "; writer ended" : "; writer running");
+            if (Filtered > 0) text.Append("; left out by the NPC-only filter ").Append(Filtered);
+            if (Interlocked.Read(ref _bonesWritten) + Interlocked.Read(ref _bonesLost) > 0)
+            {
+                text.Append("; bones' items written ").Append(Interlocked.Read(ref _bonesWritten)).Append(", lost ").Append(Interlocked.Read(ref _bonesLost));
+            }
+
             return text.ToString();
         }
 
@@ -1269,6 +1281,11 @@ namespace Zantetsu.PhysicsCut
                 Interlocked.Increment(ref _resultsLost);
                 result.Discard();
             }
+            else if (item is SpatialSplitBoneItem bone)
+            {
+                Interlocked.Increment(ref _bonesLost);
+                Unreserve(bone.bytes);
+            }
         }
 
         private void Fail(string why)
@@ -1318,10 +1335,15 @@ namespace Zantetsu.PhysicsCut
                 {
                     WriteResult(result);
                 }
+                else if (item is SpatialSplitBoneItem bone)
+                {
+                    WriteBone(bone);
+                }
             }
             catch (Exception e)
             {
                 if (item is SpatialSplitCaptureSample) Interlocked.Increment(ref _lost);
+                else if (item is SpatialSplitBoneItem) Interlocked.Increment(ref _bonesLost);
                 else Interlocked.Increment(ref _resultsLost);
                 Fail(e.GetType().Name + ": " + e.Message);
             }
@@ -1336,7 +1358,42 @@ namespace Zantetsu.PhysicsCut
                 {
                     result.Discard();
                 }
+                else if (item is SpatialSplitBoneItem bone)
+                {
+                    Unreserve(bone.bytes);
+                }
             }
+        }
+
+        // NPC-BONE-EVAL-1 review 1: the bones' sidecar (written whole under a temporary name, then moved; nothing overwritten) and its
+        // line, or a line alone, appended without a byte order mark. The writer's: the folder is open by now.
+        private long _bonesWritten, _bonesLost;
+
+        /// <summary>A bones' item (a sidecar with its line, or a line) for the writer (Main): its room was reserved by the caller.</summary>
+        internal void HandBone(SpatialSplitBoneItem item) => Hand(item);
+
+        private void WriteBone(SpatialSplitBoneItem item)
+        {
+            if (item.file != null)
+            {
+                string final = Path.Combine(directory, item.file);
+                string temporary = final + "." + Guid.NewGuid().ToString("N") + ".partial";
+                using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    file.Write(item.content, 0, item.content.Length);
+                }
+
+                File.Move(temporary, final);
+                Interlocked.Add(ref _diskBytes, item.content.Length);
+            }
+
+            byte[] line = new UTF8Encoding(false).GetBytes(item.line + "\n");
+            using (var index = new FileStream(Path.Combine(directory, item.index), FileMode.Append, FileAccess.Write, FileShare.Read))
+            {
+                index.Write(line, 0, line.Length);
+            }
+
+            Interlocked.Increment(ref _bonesWritten);
         }
 
         /// <summary>The file a sample is written to, by its world and attempt.</summary>
@@ -1801,6 +1858,24 @@ namespace Zantetsu.PhysicsCut
         public const string Argument = "-zantetsuSplitCapture";
         public const string CodeArgument = "-zantetsuSplitCaptureCode";
 
+        /// <summary>
+        /// NPC-BONE-EVAL-1: the NPCs' bone-aware attempts captured too, each with its bones in a sidecar (<see cref="SpatialSplitBoneSample"/>);
+        /// without it they are left out, as before (the capture replays the geometric searches only).
+        /// </summary>
+        public const string BoneArgument = "-zantetsuSplitCaptureBone";
+
+        /// <summary>Whether the launch's capture takes the bone-aware attempts (read with the capture's own argument).</summary>
+        internal static bool CaptureBones { get; private set; }
+
+        /// <summary>
+        /// NPC-BONE-LINK-1: only the attempts of an NPC's lineage are captured -- a fragment whose ledger family root the prepared
+        /// character's cut marked (<see cref="CutFragmentLifetime.IsMarkedLineage"/>), whatever its bones; implies
+        /// <see cref="BoneArgument"/>. Every other attempt is counted as left out by the filter, never as a refusal.
+        /// </summary>
+        public const string NpcOnlyArgument = "-zantetsuSplitCaptureNpcOnly";
+
+        internal static bool CaptureNpcOnly { get; private set; }
+
         private static bool s_read;
         private static SpatialSplitCaptureSink s_sink;
         private static long s_worlds;
@@ -1812,6 +1887,8 @@ namespace Zantetsu.PhysicsCut
             s_sink?.Close(0.0);
             s_sink = null;
             s_read = false;
+            CaptureBones = false;
+            CaptureNpcOnly = false;
         }
 
         /// <summary>The launch's capture, or null.</summary>
@@ -1851,6 +1928,8 @@ namespace Zantetsu.PhysicsCut
                 return null;
             }
 
+            CaptureNpcOnly = System.Array.FindIndex(arguments, a => string.Equals(a, NpcOnlyArgument, StringComparison.OrdinalIgnoreCase)) >= 0;
+            CaptureBones = CaptureNpcOnly || System.Array.FindIndex(arguments, a => string.Equals(a, BoneArgument, StringComparison.OrdinalIgnoreCase)) >= 0;
             int codeAt = System.Array.FindIndex(arguments, a => string.Equals(a, CodeArgument, StringComparison.OrdinalIgnoreCase));
             string code = codeAt >= 0 && codeAt + 1 < arguments.Length ? arguments[codeAt + 1] : "(not given)";
 #if ENABLE_IL2CPP
@@ -1873,7 +1952,9 @@ namespace Zantetsu.PhysicsCut
             string folder = Path.Combine(arguments[at + 1], "split-capture-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)
                 + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             var sink = new SpatialSplitCaptureSink(folder, SpatialSplitCaptureLimits.Default, version, notes.ToArray());
-            UnityEngine.Debug.Log("SPLIT CAPTURE: on, session " + sink.sessionId + " into a new folder " + Path.GetFileName(folder) + "; " + version);
+            UnityEngine.Debug.Log("SPLIT CAPTURE: on, session " + sink.sessionId + " into a new folder " + Path.GetFileName(folder) + "; " + version
+                + (CaptureBones ? "; the NPCs' bone-aware attempts too, with their bones (" + BoneArgument + ")" : "")
+                + (CaptureNpcOnly ? "; ONLY the attempts of an NPC's lineage (" + NpcOnlyArgument + ")" : ""));
             return sink;
         }
 

@@ -159,6 +159,9 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
+        /// <summary>Whether <paramref name="root"/> was marked (a character's lineage root: <see cref="MarkLineage"/>). Reads only.</summary>
+        public bool IsMarkedLineage(LogicalFragmentId root) => root.IsSet && _lineageRoots.Contains(root);
+
         /// <summary>
         /// Whether this fragment is a target: produced by a cut, and of a marked lineage. Reads the ledger's origins
         /// only, changing nothing.

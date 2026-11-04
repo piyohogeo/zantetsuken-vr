@@ -214,6 +214,13 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private int[] _inputConvexOf = Array.Empty<int>();
 
+        /// <summary>
+        /// Per table entry, the bone the convex belongs to (NPC-BONE-SPLIT-1: an index of the NPC's bone rig), or null when the
+        /// shape has none (anything that is not an NPC's). Never written after the shape is shared: a view shares its source's
+        /// table, a cut's or a split's side has its own, each part's entry its input convex's.
+        /// </summary>
+        private int[] _boneOf;
+
         // A Provisional side selects immutable descriptor entries from its source's tables. The tables are
         // shared by reference; the native banks and meshes still have this side's own, direct holds below.
         // Nested selections are flattened, so a disposed intermediate shape is never a read dependency.
@@ -254,7 +261,32 @@ namespace Zantetsu.PhysicsCut
                 _convexLo = viewOf._convexLo;
                 _convexHi = viewOf._convexHi;
                 _meshFrames = viewOf._meshFrames;
+                _boneOf = viewOf._boneOf;
             }
+        }
+
+        /// <summary>
+        /// The bone convex <paramref name="index"/> belongs to (NPC-BONE-SPLIT-1), or -1 when the shape carries no bones: an
+        /// index of the NPC's bone rig, set on its prepared shape and carried to every side made from it by the input convex
+        /// each part came from -- a part a cut produced from a convex is that convex's bone's still.
+        /// </summary>
+        public int ConvexBone(int index)
+        {
+            return _boneOf == null ? -1 : _boneOf[TableIndex(index)];
+        }
+
+        /// <summary>Whether this shape carries the bones of its convexes (NPC-BONE-SPLIT-1).</summary>
+        public bool HasConvexBones => _boneOf != null;
+
+        /// <summary>
+        /// Sets the bone of every convex (NPC-BONE-SPLIT-1), on a shape of its own -- not a view -- before it is given to an owner
+        /// or read by any work: one entry a convex, in convex order, copied. The prepared character shape is the one caller.
+        /// </summary>
+        internal void SetConvexBones(int[] bones)
+        {
+            if (_viewConvexOf != null) throw new InvalidOperationException("a view shares its source's bones");
+            if (bones == null || bones.Length != _convexes.Length) throw new ArgumentException("one bone a convex", nameof(bones));
+            _boneOf = (int[])bones.Clone();
         }
 
         /// <summary>From the numerical local frame these convexes are in to the owner's frame.</summary>
@@ -596,9 +628,12 @@ namespace Zantetsu.PhysicsCut
             try
             {
                 shape.BeginBorrowing(count);
+                // The parent's bones (NPC-BONE-SPLIT-1), each part's from the input convex it came from, borrowed or produced.
+                if (parent._boneOf != null) shape._boneOf = new int[count];
                 for (int i = 0; i < count; i++)
                 {
                     PhysicsCutPart part = products.Part(positive, i);
+                    if (shape._boneOf != null) shape._boneOf[i] = parent.ConvexBone(part.inputConvex);
                     if (part.borrowed)
                     {
                         int at = parent.TableIndex(part.inputConvex);

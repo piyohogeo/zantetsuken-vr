@@ -57,6 +57,10 @@ namespace Zantetsu.PhysicsCut
         VpPreparedPhysicsInput physics;
         VpLogicalCutDisplay.PreparedRoot slot;
         VpCharacterHitShape hitShape;
+        // The bones the bone-aware split reads of this character's pieces (NPC-BONE-SPLIT-1), made in the cold preparation; null
+        // with the reason when they could not be (the pieces are then cut as before and not split).
+        NpcBoneRig boneRig;
+        string boneRigRefusal;
         bool disposed;
 
         VpPreparedCharacterCut(CutWorldRoot world, SkinnedMeshRenderer renderer,
@@ -73,6 +77,13 @@ namespace Zantetsu.PhysicsCut
         static readonly Unity.Profiling.ProfilerMarker s_prepareHitShape = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.HitShape");
         static readonly Unity.Profiling.ProfilerMarker s_prepareCold = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.Cold");
         static readonly Unity.Profiling.ProfilerMarker s_prepareFloatInput = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.FloatInput");
+        static readonly Unity.Profiling.ProfilerMarker s_prepareBoneRig = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.BoneRig");
+
+        /// <summary>The bones the bone-aware split reads (NPC-BONE-SPLIT-1); null when they could not be made (<see cref="BoneRigRefusal"/>).</summary>
+        internal NpcBoneRig BoneRig => boneRig;
+
+        /// <summary>Why the bone rig could not be made; null when it was.</summary>
+        public string BoneRigRefusal => boneRigRefusal;
 
         static bool Usable(CutWorldRoot world) => world != null && world.IsReady
             && !world.IsEnding && !world.IsReleased && !world.TerminationRequested;
@@ -136,6 +147,13 @@ namespace Zantetsu.PhysicsCut
                     using (s_prepareFloatInput.Auto()) made.direct.Model.TryPrepareFloatInput(out made.floatSkinInputRefusal);
                 }
 
+                // The bones of the pieces' bone-aware split (NPC-BONE-SPLIT-1): the rig's Transforms read here, once, and never at a cut
+                // or a split; the model's weights by vertex once a model (shared). A refusal is kept: the pieces are then not split.
+                using (s_prepareBoneRig.Auto())
+                {
+                    if (!NpcBoneRig.TryCreate(renderer, made.direct.Model, mapping, out made.boneRig, out made.boneRigRefusal)) made.boneRig = null;
+                }
+
                 // Reserve the cold display allocations before creating/cooking per-instance physics meshes.
                 bool slot;
                 using (s_prepareSlot.Auto()) slot = world.Display.TryPrepareRoot(made.direct, out made.slot);
@@ -144,6 +162,8 @@ namespace Zantetsu.PhysicsCut
                 using (s_preparePhysics.Auto())
                     made.physics = bakedMeshes != null && !bakedMeshes.IsDisposed && bakedMeshes.Matches(bank, convexes)
                         ? new VpPreparedPhysicsInput(bank, convexes, bakedMeshes) : new VpPreparedPhysicsInput(bank, convexes);
+                // Each convex's bone (NPC-BONE-SPLIT-1) on the shape, before any view of it is made: carried by every side made from it.
+                if (made.boneRig != null) made.physics.SetConvexBones(made.boneRig.ConvexNode);
                 // The bone-local copy a hit reads (DESIGN 19.1.7): made here, once, from the same authored bank.
                 using (s_prepareHitShape.Auto()) made.hitShape = new VpCharacterHitShape(bank, convexes);
                 using (s_prepareCold.Auto()) sharedCold.Prepare(made.physics);
@@ -171,6 +191,8 @@ namespace Zantetsu.PhysicsCut
                 world.Ledger.Retire(Source);
             try { hitShape?.Dispose(); }
             finally { hitShape = null; }
+            boneRig?.Dispose();
+            boneRig = null;
             try { slot?.Dispose(); }
             finally
             {

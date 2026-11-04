@@ -163,6 +163,13 @@ namespace Zantetsu.PhysicsCut
             return shape;
         }
 
+        /// <summary>Each convex's bone on the prepared shape (NPC-BONE-SPLIT-1), before it is posed, viewed or taken.</summary>
+        internal void SetConvexBones(int[] bones)
+        {
+            if (disposed || transferred || shape == null) throw new InvalidOperationException("the prepared shape is not this input's");
+            shape.SetConvexBones(bones);
+        }
+
         internal PhysicsShapeSource AcquireColdMeshHold()
         {
             ColdPreparationShape();

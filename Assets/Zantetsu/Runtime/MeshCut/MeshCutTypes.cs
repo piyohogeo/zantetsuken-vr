@@ -104,6 +104,19 @@ namespace Zantetsu.MeshCut
         public long* nodeEdgeKeys;
         public float* nodeParams;
         public int nodeCapacity;
+
+        /// <summary>
+        /// Optional vertex origins (null when not wanted; NPC-BONE-SPLIT-1): per new render vertex, in output order, the two
+        /// input render vertices (global numbers) whose attributes it interpolates -- (a, b) strictly between them, (a, a) where
+        /// it lies on a itself (parameter 0 or 1) -- and (<see cref="NoVertexOrigin"/>, <see cref="NoVertexOrigin"/>) for a cap
+        /// auxiliary vertex, which interpolates nothing. A cap render vertex of a node has its node's edge pair. Written only
+        /// when <see cref="newVertexOriginCapacity"/> covers the new vertex count.
+        /// </summary>
+        public uint2* newVertexOrigins;
+        public int newVertexOriginCapacity;
+
+        /// <summary>The origin pair entry of a vertex that comes from no input vertex (a cap auxiliary vertex).</summary>
+        public const uint NoVertexOrigin = uint.MaxValue;
         public byte* scratch;
         public int scratchBytes;
     }
@@ -149,6 +162,8 @@ namespace Zantetsu.MeshCut
         public int usedScratchBytes;
         /// <summary>1 when the optional node correspondence arrays were written (nodeCapacity covered nodeCount).</summary>
         public byte nodeCorrespondenceWritten;
+        /// <summary>1 when the optional vertex origins were written for every new vertex (their capacity covered newVertexCount).</summary>
+        public byte vertexOriginsWritten;
         /// <summary>1 when the kernel body ran as managed code instead of Burst (test diagnostic; never set under Burst).</summary>
         public byte executedManaged;
     }

@@ -76,9 +76,34 @@ namespace Zantetsu.PhysicsCut
             return on || (arguments != null && Array.IndexOf(arguments, SpatialSplitGraphFirstOffArgument) >= 0);
         }
 
+        /// <summary>
+        /// NPC-BONE-FALLBACK-1: the Player argument that asked for the NPC fallback when it was an evaluation's switch; on by default since
+        /// 2026-11-04 (NPC-BONE-FALLBACK-DEFAULT-1), it is kept for the launches that still give it (on, as the default).
+        /// </summary>
+        public const string NpcBoneFallbackArgument = "-zantetsuNpcBoneFallback";
+
+        /// <summary>
+        /// NPC-BONE-FALLBACK-DEFAULT-1: the Player argument that turns the NPC fallback off for a run -- the bones alone decide an NPC's
+        /// piece, as before 2026-11-04. Given with <see cref="NpcBoneFallbackArgument"/>, off wins.
+        /// </summary>
+        public const string NpcBoneFallbackOffArgument = "-zantetsuNpcBoneFallbackOff";
+
+        /// <summary>The NPC fallback a launch asks for (<see cref="NpcBoneFallbackArgument"/>, <see cref="NpcBoneFallbackOffArgument"/>): on unless the off argument is given; the launch line's words.</summary>
+        internal static bool ReadNpcBoneFallback(string[] arguments, out string asked)
+        {
+            bool on = arguments != null && Array.IndexOf(arguments, NpcBoneFallbackArgument) >= 0;
+            bool off = arguments != null && Array.IndexOf(arguments, NpcBoneFallbackOffArgument) >= 0;
+            asked = off ? "off, asked for by " + NpcBoneFallbackOffArgument + (on ? " (given with " + NpcBoneFallbackArgument + ": off wins)" : "") + ": the bones alone decide an NPC's piece, as before 2026-11-04"
+                : on ? "on, asked for by " + NpcBoneFallbackArgument + " (the default since 2026-11-04 in any case): an NPC's piece its bones connect goes on to the method as before"
+                : "on -- the default since 2026-11-04 (NPC-BONE-FALLBACK-DEFAULT-1): an NPC's piece its bones connect goes on to the method as before; " + NpcBoneFallbackOffArgument + " turns it off";
+            return !off;
+        }
+
         private void MakeSpatialSplit(CutWorldProfile profile)
         {
             SpatialSplit = new CutSpatialSplit(this, SplitSettings(profile));
+            SpatialSplit.BoneFallback = ReadNpcBoneFallback(Environment.GetCommandLineArgs(), out string fallback);
+            UnityEngine.Debug.Log("NPC BONE FALLBACK: " + fallback, this);
             if (TryReadRetryAfter(Environment.GetCommandLineArgs(), out int holds, out double seconds, out string refusal))
             {
                 SpatialSplit.RetryAfterHolds = holds;

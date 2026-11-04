@@ -57,6 +57,13 @@ namespace Zantetsu.PhysicsCut
         public double CaptureResultSeconds { get; private set; }
         public double MaxCaptureResultSeconds { get; private set; }
 
+        // NPC-BONE-LINK-1: the existing NPC identification -- the fragment's ledger family root is one the prepared character's cut
+        // marked for the piece lifetime. Not the bones' records (a fragment of an NPC whose bones are not known is still an NPC's).
+        private bool IsNpcLineage(LogicalFragmentId fragment)
+        {
+            return _world.Lifetime != null && _world.Ledger.TryGetRoot(fragment, out LogicalFragmentId root) && _world.Lifetime.IsMarkedLineage(root);
+        }
+
         // At the issue, with the input complete and leased and the work not yet offered: the copy, or none.
         private SpatialSplitCaptureSample CaptureInput(Attempt attempt)
         {

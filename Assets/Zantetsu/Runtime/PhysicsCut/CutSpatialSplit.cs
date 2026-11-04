@@ -1371,8 +1371,10 @@ namespace Zantetsu.PhysicsCut
 
             PhysicsOwnerShape shape = owner.Shape;
             // One convex is nothing to put on two sides -- unless it may be cut, wrapped as it can be round two
-            // separate parts of the mesh.
-            if (shape == null || shape.IsFreed || shape.ConvexCount < (settings.cutConvexes ? 1 : 2))
+            // separate parts of the mesh. An NPC's fragment is decided by its bones, which cut nothing (NPC-BONE-SPLIT-1): two --
+            // unless the fallback is on (NPC-BONE-FALLBACK-1 review 2), whose method as before may cut it as any owner's.
+            bool npc = _world.NpcBones != null && _world.NpcBones.Knows(fragment);
+            if (shape == null || shape.IsFreed || shape.ConvexCount < (settings.cutConvexes && (!npc || BoneFallback) ? 1 : 2))
             {
                 return SpatialSplitPass.FewConvexes;
             }
@@ -1550,6 +1552,7 @@ namespace Zantetsu.PhysicsCut
                 };
 #if ZANTETSU_OBSERVE
                 SpatialSplitCaptureSample capture = null;
+                bool captureFiltered = false;
 #endif
                 try
                 {
@@ -1579,7 +1582,11 @@ namespace Zantetsu.PhysicsCut
                     _anchorScratch.Clear();
                     _world.Ledger.TryGetAnchors(fragment, _anchorScratch);
                     attempt.anchors = _anchorScratch.Count == 0 ? null : _anchorScratch.ToArray();
-                    if (GraphEffective && attempt.anchors == null && convexCount >= 2)
+                    // An NPC's fragment (NPC-BONE-SPLIT-1): decided by its bones alone; no geometric stage is prepared for it -- unless the
+                    // evaluation's fallback is on (NPC-BONE-FALLBACK-1): then the stages are prepared as for any owner, for a NotSeparable.
+                    bool boneLed = TakeBone(fragment, attempt, shape);
+                    attempt.boneFallback = boneLed && BoneFallback;
+                    if ((!boneLed || attempt.boneFallback) && GraphEffective && attempt.anchors == null && convexCount >= 2)
                     {
                         // The graph stage (GRAPH-CONNECT-4 §3-2, §3-4): wanted, prepared, not refused, an owner without anchors.
                         // Its one allocation on the main thread -- the sides, C + T bytes -- in a boundary of its own: a failure
@@ -1595,8 +1602,9 @@ namespace Zantetsu.PhysicsCut
                         attempt.graphFirst = settings.graphFirst || TestGraphFirst;   // the setting (default off), or the test hook
                         try
                         {
-                            if (TestFailGraphSidesAllocation) throw new InvalidOperationException("the test refused the sides' allocation");
-                            attempt.graphSides = PhysicsCutBlocks.Take<byte>(convexCount + (attempt.indexCount / 3));
+                            // An NPC's fallback has the bones' sides already: the same C + T bytes, which the engine writes over.
+                            if (!boneLed && TestFailGraphSidesAllocation) throw new InvalidOperationException("the test refused the sides' allocation");
+                            if (!boneLed) attempt.graphSides = PhysicsCutBlocks.Take<byte>(convexCount + (attempt.indexCount / 3));
                         }
                         catch (Exception e)
                         {
@@ -1611,7 +1619,15 @@ namespace Zantetsu.PhysicsCut
 #if ZANTETSU_OBSERVE
                     // The capture (development only, off without its argument): the input copied here, complete and
                     // still leased, and handed on only once the work was taken (SpatialSplitCapture).
-                    capture = CaptureInput(attempt);
+                    // The capture replays the geometric searches only; an NPC's attempt is captured, with its bones beside it, only when
+                    // the launch asks for it (NPC-BONE-EVAL-1: the comparison's data set).
+                    // NPC-BONE-LINK-1: with the NPC-only filter, an attempt of another lineage is left out (counted, never copied).
+                    captureFiltered = Capture != null && SpatialSplitCaptureSession.CaptureNpcOnly && !IsNpcLineage(fragment);
+                    capture = captureFiltered || (boneLed && !SpatialSplitCaptureSession.CaptureBones) ? null : CaptureInput(attempt);
+                    if (boneLed && capture != null)
+                    {
+                        attempt.boneCaptured = SpatialSplitBoneSample.Write(Capture, CaptureWorld, attempt, attempt.bonePiece, in settings, SpatialSplitGraph.IsPrepared);
+                    }
                     copySeconds = attempt.captureCopySeconds;
 #endif
 
@@ -1642,7 +1658,7 @@ namespace Zantetsu.PhysicsCut
                 Issued++;
                 if (_deferred.Count != 0) TakeDeferral(fragment, attempt);   // the wait ends with the issue; its count goes on with the attempt
 #if ZANTETSU_OBSERVE
-                Capture?.NoteIssued(capture);
+                if (captureFiltered) Capture?.NoteFiltered(); else Capture?.NoteIssued(capture);
                 attempt.captured = capture != null;
 #endif
             }
@@ -1677,7 +1693,7 @@ namespace Zantetsu.PhysicsCut
                 WorkerSeconds += attempt.workerSeconds;
                 MaxWorkerSeconds = Math.Max(MaxWorkerSeconds, attempt.workerSeconds);
 #endif
-                LastSearch = attempt.search;
+                if (!attempt.BoneRoute) LastSearch = attempt.search;   // an NPC's attempt ran no geometric search (NPC-BONE-SPLIT-1) unless it fell back
                 if (attempt.search.meshLed) MeshLedSearches++;
                 if (attempt.cut) CutAttempts++;
                 if (attempt.search.bent)
@@ -1717,7 +1733,18 @@ namespace Zantetsu.PhysicsCut
             }
 
             mark = true;
-            if (attempt.graph.verdict == SpatialSplitGraphVerdict.Invalid)
+            if (attempt.BoneRoute)
+            {
+                // An NPC's fragment (NPC-BONE-SPLIT-1): its bones decide alone. Connected, or not known: as a search that found
+                // nothing ends -- marked with the input, no other search after it. Over the decision's limits: as an input over
+                // the search's limits.
+                if (attempt.bone.verdict != NpcBoneSplitVerdict.Separable)
+                {
+                    end = attempt.bone.verdict == NpcBoneSplitVerdict.OverTheLimits ? SpatialSplitEnd.OverTheLimits : SpatialSplitEnd.NotFound;
+                    return false;
+                }
+            }
+            else if (attempt.graph.verdict == SpatialSplitGraphVerdict.Invalid)
             {
                 // The graph engine refused the input as malformed (GRAPH-CONNECT-4 §3-2): as an invalid input ends the search,
                 // not as a plane not found -- apart from the not-found counts, and marked.
@@ -1725,10 +1752,10 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            if (attempt.graphLed)
+            if (attempt.graphLed || attempt.BoneRoute)
             {
-                // The graph stage's placement (GRAPH-CONNECT-4 §3-5): the searches found no plane, by design; the distribution,
-                // the classification and the kernel below decide, as for a bent partition.
+                // The graph stage's placement (GRAPH-CONNECT-4 §3-5), or the bones' (NPC-BONE-SPLIT-1): no plane, by design; the
+                // distribution, the classification and the kernel below decide, as for a bent partition.
             }
             else switch (attempt.search.outcome)
             {
@@ -1919,7 +1946,7 @@ namespace Zantetsu.PhysicsCut
 
                     // Where the source is now and how it moves now; no impulse, no offset. Then into the scene. A graph
                     // placement has no plane: the entry without one (no normal is made up for it).
-                    if (attempt.graphLed)
+                    if (attempt.graphLed || attempt.BoneRoute)
                     {
                         candidate.Reposition(placement, in motion);
                     }
@@ -1972,6 +1999,10 @@ namespace Zantetsu.PhysicsCut
                     }
 
                     _publishedAt = placement.position;
+                    // NPC-BONE-ACTIVE-2: the bones' decision put each bone on a side; the records keep each side's bones (in the DAG's split).
+                    // A fallback's publication (NPC-BONE-FALLBACK-1) has no bones' sides: each side's part by its own plane or convexes.
+                    if (attempt.BoneRoute) _world.NpcBones?.NoteSplitSides(source, attempt.boneInput.boneSides);
+                    else if (attempt.boneFellBack) NoteFallbackSplit(source, attempt, positiveShape, negativeShape);
                     if (!dag.TrySplitGeometry(source, positive, positiveGeometry, negative, negativeGeometry))
                     {
                         throw new InvalidOperationException("the cut DAG did not hand a split fragment's geometry on although it was read from it");
@@ -1992,6 +2023,8 @@ namespace Zantetsu.PhysicsCut
 
                     if (IsBentResult(in attempt.search)) PublishedBent++;
                     if (attempt.graphLed) PublishedGraph++;
+                    if (attempt.BoneRoute) PublishedBone++;
+                    if (attempt.boneFellBack) CountFallbackPublished(attempt);
 
                     ActorsAdded += 1;          // two actors where one stood
                     RegistrationsAdded += 1;   // two registrations where one stood (the old one goes at the next adoption)
@@ -2000,6 +2033,9 @@ namespace Zantetsu.PhysicsCut
                     LastSource = source;
                     LastPositive = positive;
                     LastNegative = negative;
+#if ZANTETSU_OBSERVE
+                    NotePieceMade(source, positive, negative, attempt);   // the piece probe's note (NPC-BONE-PROBE-1, diagnosis only)
+#endif
                     _followCollectOf = Time.frameCount + 1;   // this frame's collection follows this turn; its time is read by the next turn
                     _followIsCut = attempt.cut;
                     _followIsRetry = attempt.publishRetried;
@@ -2075,7 +2111,7 @@ namespace Zantetsu.PhysicsCut
         // frame of a publication would be part of what that frame cost.
         private struct SplitEvent
         {
-            internal int frame, source, positive, negative, root, indices, positiveTriangles, negativeTriangles, positiveConvexes, negativeConvexes, convexesCut, bentPieces, graph;
+            internal int frame, source, positive, negative, root, indices, positiveTriangles, negativeTriangles, positiveConvexes, negativeConvexes, convexesCut, bentPieces, graph, bone, fallback;
             internal float3 at, normal;
             internal float gap;
             internal double workerSeconds, turnSeconds;
@@ -2102,14 +2138,17 @@ namespace Zantetsu.PhysicsCut
             {
                 frame = LastPublishedFrame, source = LastSource.value, positive = LastPositive.value, negative = LastNegative.value, root = root.value,
                 indices = attempt.indexCount,
-                positiveTriangles = attempt.graphLed ? attempt.graph.positiveTriangles : attempt.search.positiveTriangles,
-                negativeTriangles = attempt.graphLed ? attempt.graph.negativeTriangles : attempt.search.negativeTriangles,
-                positiveConvexes = attempt.graphLed ? attempt.graph.positiveConvexes : attempt.search.positiveConvexes,
-                negativeConvexes = attempt.graphLed ? attempt.graph.negativeConvexes : attempt.search.negativeConvexes,
+                positiveTriangles = attempt.BoneRoute ? attempt.bone.positiveTriangles : attempt.graphLed ? attempt.graph.positiveTriangles : attempt.search.positiveTriangles,
+                negativeTriangles = attempt.BoneRoute ? attempt.bone.negativeTriangles : attempt.graphLed ? attempt.graph.negativeTriangles : attempt.search.negativeTriangles,
+                positiveConvexes = attempt.BoneRoute ? attempt.bone.positiveConvexes : attempt.graphLed ? attempt.graph.positiveConvexes : attempt.search.positiveConvexes,
+                negativeConvexes = attempt.BoneRoute ? attempt.bone.negativeConvexes : attempt.graphLed ? attempt.graph.negativeConvexes : attempt.search.negativeConvexes,
                 convexesCut = attempt.cut ? attempt.meshCount / 2 : 0,
                 bentPieces = IsBentResult(in attempt.search) ? attempt.search.bentPieces : 0,
                 graph = attempt.graphLed ? 1 : 0,
-                at = _publishedAt, normal = attempt.graphLed ? float3.zero : attempt.search.planeOwner.xyz, gap = attempt.graphLed ? 0f : attempt.search.gap,
+                bone = attempt.BoneRoute ? 1 : 0,
+                fallback = attempt.boneFellBack ? 1 : 0,
+                at = _publishedAt, normal = attempt.graphLed || attempt.BoneRoute ? float3.zero : attempt.search.planeOwner.xyz,
+                gap = attempt.graphLed || attempt.BoneRoute ? 0f : attempt.search.gap,
                 workerSeconds = attempt.workerSeconds, turnSeconds = turnSeconds,
             });
         }
@@ -2135,7 +2174,9 @@ namespace Zantetsu.PhysicsCut
                     + " ms, the publishing turn " + (e.turnSeconds * 1000.0).ToString("F3", inv) + " ms"
                     + (e.convexesCut > 0 ? "; convexes cut by the plane " + e.convexesCut : "")
                     + (e.bentPieces > 0 ? "; a bent partition of " + e.bentPieces + " pieces (the normal is its height axis, the gap its least clearance)" : "")
-                    + (e.graph > 0 ? "; a graph placement (no plane: the normal and the gap are zero)" : ""));
+                    + (e.graph > 0 ? "; a graph placement (no plane: the normal and the gap are zero)" : "")
+                    + (e.bone > 0 ? "; an NPC's bone placement (logical, by the bones; no plane: the normal and the gap are zero)" : "")
+                    + (e.fallback > 0 ? "; an NPC's fallback to the method as before (the bones said connected; NPC-BONE-FALLBACK-1)" : ""));
             }
 
             if (EventsNotKept > 0)
@@ -2191,12 +2232,14 @@ namespace Zantetsu.PhysicsCut
             _attempt = null;
 #if ZANTETSU_OBSERVE
             EndCapture(attempt, end.ToString(), why);
+            NotePieceEnd(attempt, end);   // the piece probe's note (NPC-BONE-PROBE-1, diagnosis only)
             attempt.handledEndAt = TimelineClock();   // t6
             NoteTimeline(attempt, end);
 #endif
             _ends[(int)end]++;
             LastEnd = end;
             CountGraph(attempt);
+            CountBone(attempt);
             if (mark)
             {
                 _suppressed[attempt.fragment] = attempt.input;
@@ -2722,7 +2765,7 @@ namespace Zantetsu.PhysicsCut
         /// before the work that uses it was collected. (Internal for the capture's offline replay, which runs
         /// <see cref="Begin"/> on a saved input: SpatialSplitReplay.)
         /// </summary>
-        internal sealed unsafe class Attempt : IDispatchWork, IDispatchObserved, IDispatchLabeled
+        internal sealed unsafe partial class Attempt : IDispatchWork, IDispatchObserved, IDispatchLabeled
 #if ZANTETSU_OBSERVE
             , SpatialSplitReplayPool.IRunStamped   // the run stamps for the pool replay (development builds only)
 #endif
@@ -2895,6 +2938,9 @@ namespace Zantetsu.PhysicsCut
             // and the end on Main (t6). Stopwatch ticks; 0 where not taken (the timeline off, or the attempt not there yet). The
             // bake pass (a second acceptance, a second Begin) leaves the search pass's stamps.
             internal long enqueuedAt, acceptedAt, beganAt, endedAt, collectedAt, handledAt, handledEndAt;
+            // NPC-BONE-EVAL-1: the worker's clock where the placement was known and its sharing out began (development builds; 0 where
+            // the run ended without a sharing out, or in a Release build). The decision is beganAt..decidedAt, the sharing out decidedAt..endedAt.
+            internal long decidedAt;
 
             /// <summary>The pool's acceptance stamp (<see cref="IDispatchObserved"/>): a store, nothing else.</summary>
             public void NoteAccepted(long timestamp)
@@ -2922,6 +2968,29 @@ namespace Zantetsu.PhysicsCut
                 if (beganAt == 0) beganAt = begin;   // t2 (the existing clock reading: not a new one)
                 try
                 {
+                    if (boneLed)
+                    {
+                        // An NPC's fragment (NPC-BONE-SPLIT-1): its bones alone decide, and no geometric search runs for it; a
+                        // placement they make is shared out as the graph's is.
+                        ran = true;
+                        RunBone();
+                        if (bone.verdict == NpcBoneSplitVerdict.Separable)
+                        {
+                            NoteDecided();
+                            BeginBySides();
+                            return;
+                        }
+
+                        // NPC-BONE-FALLBACK-1 (the evaluation's switch): connected by the bones, and only that, goes on to the method as
+                        // before on the same input -- its searches in the order its settings give (graphFirst included).
+                        if (!boneFallback || bone.verdict != NpcBoneSplitVerdict.NotSeparable)
+                        {
+                            return;
+                        }
+
+                        boneFellBack = true;
+                    }
+
                     CutSpatialSplitSearch.FindPlane(
                         vertices, vertexViewLength, indices, indexCount, in geometryToOwner,
                         banks, ranges, convexCount, in shapeToOwner, margin, in limits, scratch, ref search);
@@ -2953,6 +3022,7 @@ namespace Zantetsu.PhysicsCut
                         if (graph.verdict == SpatialSplitGraphVerdict.None) RunGraph();
                         if (graph.verdict == SpatialSplitGraphVerdict.Separable)
                         {
+                            NoteDecided();
                             BeginGraph();
                             return;
                         }
@@ -2982,6 +3052,7 @@ namespace Zantetsu.PhysicsCut
                         return;
                     }
 
+                    NoteDecided();
                     if (IsBentResult(in search))
                     {
                         BeginBent();
@@ -3076,6 +3147,14 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
+            // NPC-BONE-EVAL-1: the boundary between the decision and the sharing out (one clock reading, development builds only).
+            private void NoteDecided()
+            {
+#if ZANTETSU_OBSERVE
+                decidedAt = Stopwatch.GetTimestamp();
+#endif
+            }
+
             // The graph stage (GRAPH-CONNECT-4 §3-2): the engine over the attempt's own pointers -- the vertex view, the
             // indices, the convexes by bank and range -- with the sides written to the attempt's bytes; the span compaction, the
             // caps and the work budget are the engine's (Unfinished, never an exception, for any of them, for an allocation that
@@ -3167,6 +3246,14 @@ namespace Zantetsu.PhysicsCut
                     distributed = false;
                     return;
                 }
+
+                BeginBySides();
+            }
+
+            // The sharing out of a placement given as sides (the graph's, the bones'), in the sides' bytes: the convexes' C, then a
+            // byte a triangle (1 positive, 0 negative). The triangles by their bytes, the anchors none, the convexes by theirs.
+            private void BeginBySides()
+            {
                 byte* sides = (byte*)graphSides.GetUnsafePtr();
                 distributed = CutSpatialSplitSearch.DistributeBySides(
                     vertices, vertexViewLength, indices, indexCount, submeshOffsets, submeshCounts, submeshCount, sides + convexCount,
@@ -3473,8 +3560,9 @@ namespace Zantetsu.PhysicsCut
                 arena = null;
                 if (block.IsCreated) block.Dispose();
                 block = default;
-                if (graphSides.IsCreated) graphSides.Dispose();   // the graph's own allocation, once
+                if (graphSides.IsCreated) graphSides.Dispose();   // the graph's own allocation (or the bones'), once
                 graphSides = default;
+                FreeBone();
                 vertices = null;
                 indices = null;
                 output = null;

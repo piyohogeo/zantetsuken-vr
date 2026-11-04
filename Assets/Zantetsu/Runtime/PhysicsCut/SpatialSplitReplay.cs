@@ -1249,6 +1249,9 @@ namespace Zantetsu.PhysicsCut
         // The sample's convexes in their order, in one bank of the replay's own (each convex's arrays as they were, its
         // bases from where it now begins), made a shape the product's way: Authored copies it, so the bank goes back here.
         // One mesh for every convex, whose box holds them all: the shape asks a mesh of each, the numbers read none.
+        /// <summary>The sample's shape made as the replay makes it (NPC-BONE-EVAL-1's comparison: the same input to both methods).</summary>
+        internal static PhysicsOwnerShape BuildShapeForComparison(SpatialSplitSample s, out Mesh mesh) => BuildShape(s, out mesh);
+
         private static PhysicsOwnerShape BuildShape(SpatialSplitSample s, out Mesh mesh)
         {
             int vertices = 0, offsets = 0, faceIndices = 0, edges = 0;

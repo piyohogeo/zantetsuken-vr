@@ -543,6 +543,7 @@ namespace Zantetsu.MeshCut
             result.newTopologyVertexCount = input.topology.topologyVertexCount;
             result.usedScratchBytes = phaseA;
             if (K == 0 && output.nodeEdgeKeys != null && output.nodeParams != null) result.nodeCorrespondenceWritten = 1;
+            if (K == 0 && output.newVertexOrigins != null) result.vertexOriginsWritten = 1;   // no new vertex: nothing to record
 
             // ---- whole mesh on one side: the input geometry is reused unchanged, nothing is written (DESIGN 4.5.6).
             if (!anyNeg || !anyPos)
@@ -805,6 +806,8 @@ namespace Zantetsu.MeshCut
             if (K > 0)
             {
                 float3 nrm = input.plane.xyz;
+                // The optional origins (NPC-BONE-SPLIT-1): which input render vertices each new vertex interpolates.
+                bool origins = output.newVertexOrigins != null && newVertexCount <= output.newVertexOriginCapacity;
                 for (int i = 0; i < newVertexCount; i++)
                 {
                     NewVertex rec = l.records[i];
@@ -830,8 +833,25 @@ namespace Zantetsu.MeshCut
                         output.newVertexTopology[i] = rec.kind == 1 ? topoBase + rec.node : topoBase + nodeCount + rec.node;
                     }
                     output.newVertices[i] = v;
+                    if (origins)
+                    {
+                        // An interpolated slot keeps its face's own render pair; a node's cap vertex, the pair its node was made
+                        // from; an auxiliary cap vertex interpolates nothing. A parameter of 0 or 1 is the one endpoint itself.
+                        uint a = MeshCutOutput.NoVertexOrigin, b = MeshCutOutput.NoVertexOrigin;
+                        float f = 0.5f;
+                        if (rec.kind == 0) { a = rec.rLo; b = rec.rHi; f = rec.f; }
+                        else if (rec.kind == 1) { a = l.nodes[rec.node].rLo; b = l.nodes[rec.node].rHi; f = l.nodes[rec.node].f; }
+                        if (rec.kind != 2)
+                        {
+                            if (!(f > 0f)) b = a;
+                            else if (!(f < 1f)) a = b;
+                        }
+
+                        output.newVertexOrigins[i] = new uint2(a, b);
+                    }
                 }
                 result.newTopologyVertexCount = topoBase + nodeCount + auxTotal;
+                if (origins) result.vertexOriginsWritten = 1;
             }
 
             // ---- pass 3: surface indices per submesh, positive then negative, crossing triangles clipped in place

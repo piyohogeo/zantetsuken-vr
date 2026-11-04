@@ -103,6 +103,18 @@ namespace Zantetsu.Rendering
         /// <summary>The pose <see cref="TryCapturePose"/> took (one matrix a palette bone), for the GPU-first snapshot (DESIGN 4.5.15); valid while a pose is taken.</summary>
         internal float4x4* CapturedMatrices => matrices;
 
+        /// <summary>
+        /// One palette bone's matrix of the pose <see cref="TryCapturePose"/> took (renderer frame, times the bind pose), read only
+        /// (NPC-BONE-SPLIT-1: the joints of the cut's pose). False while no pose is taken, or for a bone outside the palette.
+        /// </summary>
+        public bool TryGetCapturedMatrix(int bone, out float4x4 matrix)
+        {
+            matrix = default;
+            if (disposed || !captured || (uint)bone >= (uint)model.BoneCount) return false;
+            matrix = matrices[bone];
+            return true;
+        }
+
         /// <summary>How many inputs were made in this process (measurement and tests).</summary>
         public static int CreatedCount { get; private set; }
 
