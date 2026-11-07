@@ -22,6 +22,7 @@
 // buffer.
 #pragma kernel CullCommands
 #pragma kernel CullInstanceBounds
+#pragma kernel CullShadowSlice
 
 // Matches Zantetsu.Rendering.VpCullCommand: 48 bytes; float3 bounds have an explicit fourth component, the centre's
 // being the command's flags.
@@ -203,4 +204,58 @@ void CullCommands(uint3 id : SV_DispatchThreadID)
 void CullInstanceBounds(uint3 id : SV_DispatchThreadID)
 {
     VpCull(id.x, true);
+}
+
+// One cascade of the existing union selection. Each command retains its own instance slots and argument entry.
+// All cascades are dispatched before any native draw is recorded. No CPU count or readback is involved.
+ByteAddressBuffer _VpShadowSliceSourceArguments;
+StructuredBuffer<uint> _VpShadowSliceSourceVisible;
+RWByteAddressBuffer _VpShadowSliceArguments;
+RWStructuredBuffer<uint> _VpShadowSliceVisible;
+float4x4 _VpShadowSliceMatrixVP;
+float _VpShadowSliceBias;
+
+bool VpOutsideShadowSlice(VpCullCommand command, float4x4 objectToWorld)
+{
+    float3 centreWS = mul(objectToWorld, float4(command.centre, 1.0)).xyz;
+    float3 axisX = float3(objectToWorld._m00, objectToWorld._m10, objectToWorld._m20) * command.extents.x;
+    float3 axisY = float3(objectToWorld._m01, objectToWorld._m11, objectToWorld._m21) * command.extents.y;
+    float3 axisZ = float3(objectToWorld._m02, objectToWorld._m12, objectToWorld._m22) * command.extents.z;
+    float4 centreCS = mul(_VpShadowSliceMatrixVP, float4(centreWS, 1.0));
+    float3 rowX = _VpShadowSliceMatrixVP[0].xyz;
+    float3 rowY = _VpShadowSliceMatrixVP[1].xyz;
+    float reachX = abs(dot(rowX, axisX)) + abs(dot(rowX, axisY)) + abs(dot(rowX, axisZ)) + _VpShadowSliceBias * length(rowX);
+    float reachY = abs(dot(rowY, axisX)) + abs(dot(rowY, axisY)) + abs(dot(rowY, axisZ)) + _VpShadowSliceBias * length(rowY);
+    // Identical to the directional shadow VS guard. The light-side near plane must not reject a caster.
+    return abs(centreCS.x) - reachX > centreCS.w || abs(centreCS.y) - reachY > centreCS.w;
+}
+
+[numthreads(64, 1, 1)]
+void CullShadowSlice(uint3 id : SV_DispatchThreadID)
+{
+    uint c = id.x;
+    if (c >= _VpCommandCount)
+        return;
+
+    uint entry = c * _VpArgumentStride;
+    uint offset = entry + _VpArgumentOffset;
+    uint4 source = _VpShadowSliceSourceArguments.Load4(offset);
+    uint startInstance = _VpShadowSliceSourceArguments.Load(offset + 16u);
+    VpCullCommand command = _VpCullCommands[c];
+    uint kept = 0u;
+    [loop]
+    for (uint i = 0u; i < source.y; i++)
+    {
+        uint instance = _VpShadowSliceSourceVisible[startInstance + i];
+        if (!VpOutsideShadowSlice(command, _VpInstanceObjectToWorld[instance]))
+        {
+            _VpShadowSliceVisible[startInstance + kept] = instance;
+            kept++;
+        }
+    }
+
+    if (_VpArgumentOffset != 0u)
+        _VpShadowSliceArguments.Store(entry, c);
+    _VpShadowSliceArguments.Store4(offset, uint4(source.x, kept, source.z, source.w));
+    _VpShadowSliceArguments.Store(offset + 16u, startInstance);
 }

@@ -839,6 +839,17 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     Assert.That(drawing.NativeRefusals, Is.Zero, "no camera went undrawn for want of the plugin's pass");
                     Assert.That(drewEverything, Is.True, "every body taken was issued");
                     Assert.That(pluginRoute.DrawsClipLists, Is.True, "the plugin's route draws clip lists");
+                    if (VpGpuCullSetup.ComputeShadowSlices)
+                    {
+                        Assert.That(pluginRoute.ShadowSliceCullDispatches, Is.GreaterThan(10L), "the per-cascade compute path was exercised");
+                        Assert.That(pluginRoute.LastCasterVariant, Does.Contain("compute-slices"));
+                        if (compacted)
+                        {
+                            Assert.That(pluginRoute.ShadowSliceCompactions, Is.GreaterThan(10L), "the cascades' selected runs were compacted");
+                            for (int split = 0; split < pluginRoute.LastSplitCount; split++)
+                                Assert.That(pluginRoute.ShadowSliceCompactionsFor(split), Is.GreaterThan(0L), "cascade " + split + " had its own compactions");
+                        }
+                    }
                     VpNativeDrawPlugin.TryReadIndirectCountInfo(out bool _, out uint lanesLeast, out uint lanesMost, out ulong countDrawsAfter, out ulong _);
                     if (compacted)
                     {

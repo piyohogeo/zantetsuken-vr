@@ -517,7 +517,9 @@ Phase 5.6の追加分割で必要になる面の配分、新Index領域への振
 
 **眼。** 本体は、描画に使う各眼の視錐台6面のうち、どれか一つの眼に入り得るInstanceを残す。XR Single Pass Instancedでは左右眼の両方を条件とし、片眼にしか見えないInstanceは残る。Single PassでないXR Passでは本体を選別せず、全Instanceを残す。
 
-**影。** 影は本体とは別の可視列と引数を持ち、カメラの可視判定を使わない。主光源Shadow Mapの各Split（Cascade）について、URPが使う入力から求めたShadow Casterのカリング面を条件とし、どれか一つのSplitの体積に入り得るInstanceを残す。光源側を向く面は使わない（近平面より光源側のCasterもURPが近平面へ寄せて描くため）。カメラの外にあって視界へ影を落とすCasterは残る。主光源以外に影を落とす可視光源がある場合、Splitが4を超える場合、主光源Shadow Mapが描かれないフレームは、全Instanceを残す。Stable片面／即時切断中の両面のCaster区分（5.4）と影側のClipはStage 3と同じで、同じCommand範囲を同じMaterial区分で発行する。一つの引数Bufferが全SliceへそのままDrawされるため、Splitごとの引数は持たない。その代わり、Shadow Casterの頂点段で、描画中のSliceの投影範囲から箱ごと外れているInstanceをClip Recordや法線の評価より前に捨てる（方向光のSliceだけ）。これはInstance単位の除外であり、Drawのinstance countを減らすものではない。 まとめると、影の選別は「全Splitに共通の影候補（どれか一つのSplitに入り得るInstance）をGPUが選ぶ」ことと「頂点段でのSplit別の除外」の二段であり、SplitごとにIndirectの件数を減らす方式ではない。
+**影。** 影は本体とは別の可視列と引数を持ち、カメラの可視判定を使わない。主光源Shadow Mapの各Split（Cascade）について、URPが使う入力から求めたShadow Casterのカリング面を条件とし、どれか一つのSplitの体積に入り得るInstanceを残す。光源側を向く面は使わない（近平面より光源側のCasterもURPが近平面へ寄せて描くため）。カメラの外にあって視界へ影を落とすCasterは残る。主光源以外に影を落とす可視光源がある場合、Splitが4を超える場合、主光源Shadow Mapが描かれないフレームは、全Instanceを残す。Stable片面／即時切断中の両面のCaster区分（5.4）と影側のClipはStage 3と同じで、同じCommand範囲を同じMaterial区分で発行する。Unity描画とVulkanネイティブ描画は一つの引数Bufferを全Sliceへ渡し、Shadow Casterの頂点段で、描画中のSliceの投影範囲から箱ごと外れているInstanceをClip Recordや法線の評価より前に捨てる（方向光のSliceだけ）。この場合はInstance単位の除外であり、Drawのinstance countは同じである。
+
+**Direct3D 12ネイティブのCascade別選別。** 方向光のCascade別の除外はComputeで行うことを既定とする（2026-11-07、TL指示）。既存の全Splitに共通の影候補を入力として、最大4個のCascadeそれぞれに独立した可視列と引数Bufferを作り、必要なInstanceだけを残す。頂点段はそのCascadeの可視列と引数を読み、Boundsの参照とCascadeの除外判定をコンパイル時に除いた変種で描く。判定は従来のXY範囲とBiasのままで、Z方向や光源側の追加除外はしない。Clipリストの経路は従来のままである。`-zantetsuVp3cVertexShadowSlices` で頂点段の判定へ戻せる。従来の `-zantetsuVp3cComputeShadowSlices` も受け付けるが、頂点段の指定または `-zantetsuVp3cNoSliceSelection` があればCompute選別は無効にする。Direct3D 11とVulkanでは従来の方式を使う。 Skin24のInstanceごとのBoundsを使う描画はこの追加選別の対象に含めず、従来の選別・頂点段の判定・圧縮を使う。
 
 **カメラ別の資源と寿命。** 可視列と引数は、カメラ枠ごとに本体用と影用を持つ。そのカメラの選別だけが書き、そのカメラの描画だけが読むので、他のカメラ・眼・Splitの選別で上書きされない。本体Batchを大きいものへ交換するとき（4.5.4）、可視列と引数も新しいBatchのものへ替わり、引数は0（何も描かない）で初期化する。旧Batchは既存の退役規則に従い、GPUが使い終えたことを確認してから解放する。Stage 3C用に表示が複製したMaterial（対応Variantを有効にしたもの）は表示が所有し、表示の解放時に破棄する。
 
@@ -675,7 +677,7 @@ IndirectCountを使えないVulkanではGPU圧縮とそのカウンタ初期化�
 
 **元の識別情報。** 24 byteのRecord全体を写す（先頭の元のCommand番号、Index範囲、Instance個数、開始Instance）。Direct3D 12の頂点シェーダーは、Command Signatureが渡す元のCommand番号で、選別の引数Bufferから自分のRecordを読む。そのため圧縮した連なりでは、`ExecuteIndirect` の引数Bufferだけを圧縮後のBufferにし、頂点シェーダーには選別の（圧縮前の）引数Bufferを束縛したままにする。圧縮後の位置はどのシェーダーにも渡らない。1回の圧縮は1つの連なり（1つのMaterial区分、本体または影、1つのカメラの選別）の中だけで詰め、出力もその連なり自身の範囲に置く。Material・描画状態・ビュー・Passの異なる区間は混ざらない。
 
-**件数付きの描画。** プラグインは、件数付きの発行（共通契約の拡張で、Vulkan版と同じRecord）を受けると、圧縮後のBufferを引数に、連なりのCommand数を `MaxCommandCount` に、件数Bufferとそのスロットのオフセットを件数にして `ExecuteIndirect` を1回記録する。件数は連なりごとに別のスロットに入る（列ごとに256個。Passの中の連なりへ先頭から割り当てる）。影は連なりごとに1回だけ圧縮し、各Cascadeが同じ圧縮結果と同じ件数で描く。件数をCPUへ読み戻さない。プラグインはこの拡張の他の形（Vulkan版の直接描画・グループ、初期化や写しの指定）を拒否する。
+**件数付きの描画。** プラグインは、件数付きの発行（共通契約の拡張で、Vulkan版と同じRecord）を受けると、圧縮後のBufferを引数に、連なりのCommand数を `MaxCommandCount` に、件数Bufferとそのスロットのオフセットを件数にして `ExecuteIndirect` を1回記録する。件数は連なりごとに別のスロットに入る（列ごとに256個。Passの中の連なりへ先頭から割り当てる）。頂点段でCascadeを除外する方式では、影を連なりごとに1回だけ圧縮し、各Cascadeが同じ圧縮結果と同じ件数で描く。Cascade別Compute（4.5.7）を使う方式では、各Cascadeの選別結果をそれぞれ圧縮し、圧縮後の引数と件数もCascadeごとに独立して保持する。頂点段が参照する圧縮前の引数と可視列も、そのCascadeのものを使う。各Cascadeの選別と圧縮のDispatchをすべて記録してから、プラグインの描画イベントを記録する。件数をCPUへ読み戻さない。プラグインはこの拡張の他の形（Vulkan版の直接描画・グループ、初期化や写しの指定）を拒否する。
 
 **GPU上の順序。** 1フレームの順序は「選別 → 件数の初期化 → 圧縮 → 描画」である。件数の初期化と選別は別のBufferを扱うので、互いの順序は結果に関係しない（経路の最初のPassが選別のPassの後に入るため、この並びになる）。どの段も、前の段との間にDirect3D 12が要求する資源状態の遷移があり、それが順序になる。プラグインのイベントを段の間に置かない。
 
@@ -694,7 +696,7 @@ IndirectCountを使えないVulkanではGPU圧縮とそのカウンタ初期化�
 
 **寿命。** 圧縮後のBufferと件数Bufferは、選別の出力と同じく描画Batchが持つ。Batchの置換と終了のときは、他のBufferと同じ引渡し（発行済みのイベントが消化されるまで解放を待つ）に乗る。0を書いたBufferは経路が持ち、経路の終了時に同じ待ちに乗る。圧縮後のBufferと件数Bufferは作成後にCPUから書かないので、Native Pointerの取得は1回である。
 
-**メモリ。** 1組は2列ぶんのRecord（Command容量×24 byte）と件数（各256個）である。Command容量65536では1組3,147,776 byte（約3.0 MiB）。描画するカメラ（選別）ごとに1組を、最初に圧縮するフレームで作る。
+**メモリ。** 通常の1組は2列ぶんのRecord（Command容量×24 byte）と件数（各256個）である。Command容量65536では1組3,147,776 byte（約3.0 MiB）。描画するカメラ（選別）ごとに1組を、最初に圧縮するフレームで作る。Cascade別Computeと圧縮を併用する場合は、各Cascadeに影用1列の圧縮出力を追加し、選別出力と同じBatchの寿命で保持する。固定長を使う場合は圧縮出力を作らない。
 
 **確認の範囲。** Editor（Direct3D 12、NVIDIA GeForce RTX 3090、wave幅32）で確かめた。カーネル単体：連なりの長さ31種（1〜257と1602。2の累乗の前後を含む）×可視の並び10種（全部、無し、飛び飛び、wave境界など）で、残すCommandが1回ずつ、Record全体が元のまま、連なりの外と件数より後ろは書かれないこと。複数の連なりが別の範囲・別のスロットに入ること。前のフレームの件数が残らず、0件の次のフレームで再び数えられること。描画まで：製品と同じ経路の世界で、2つのMaterialの連なり、影の4 Cascade、Clip経路のCommand（選別が0個を書き、件数付きの描画に入らない）、Batchの置換、Commandの退役と詰め直しを通した35枚の絵が、固定長の絵と1画素も違わないこと。2つのカメラ、世界の途中での切替、描画の無効化と再有効化、片方のカメラの休止でも同じであること。Player（Development、Simulator v207）でも確かめた：切断シーンの両眼・画面・影マップ56枚と、静的な街の場面の停止位置の絵21枚が、固定長と1画素も違わないこと。整合検査ONの街歩き全行程が合格し、GPU検査の不一致が0であること。固定長で描いた連なりとプラグインの拒否が0であること。
 

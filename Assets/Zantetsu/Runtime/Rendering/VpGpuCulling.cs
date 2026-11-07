@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace Zantetsu.Rendering
 {
@@ -180,6 +181,12 @@ namespace Zantetsu.Rendering
         /// </summary>
         public const string Skin24SliceSelectionArgument = "-zantetsuSkin24SliceSelection";
 
+        /// <summary>Explicitly selects each shadow cascade in compute on the native route.</summary>
+        public const string ComputeShadowSlicesArgument = "-zantetsuVp3cComputeShadowSlices";
+        /// <summary>Uses the shadow vertex stage's cascade judgement instead of the Direct3D 12 native default.</summary>
+        public const string VertexShadowSlicesArgument = "-zantetsuVp3cVertexShadowSlices";
+        public const string ComputeShadowSlicesKeyword = "VP_COMPUTE_SHADOW_SLICES";
+
         /// <summary>The compute shader's name under a Resources folder.</summary>
         public const string ShaderResource = "VpInstanceCull";
 
@@ -207,6 +214,7 @@ namespace Zantetsu.Rendering
         private static bool s_sliceSelection = true;
         private static bool s_skin24SliceSelectionOnVulkan;
         private static bool s_separateClip = true;
+        private static bool s_computeShadowSlices;
 
         /// <summary>The argument entry Unity's own indirect draw reads: GraphicsBuffer.IndirectDrawIndexedArgs.</summary>
         public const int UnityArgumentStride = 20;
@@ -306,6 +314,32 @@ namespace Zantetsu.Rendering
                 ReadArguments();
                 s_sliceSelection = value;
             }
+        }
+
+        /// <summary>
+        /// Whether the native route selects each shadow cascade in compute. On by default on Direct3D 12 when
+        /// slice selection is enabled. <see cref="VertexShadowSlicesArgument"/> selects the vertex judgement.
+        /// </summary>
+        public static bool ComputeShadowSlices
+        {
+            get
+            {
+                ReadArguments();
+                return s_computeShadowSlices && SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D12 && s_sliceSelection;
+            }
+            set { ReadArguments(); s_computeShadowSlices = value; }
+        }
+
+        public static bool ReadComputeShadowSlices(string[] arguments)
+        {
+            return ReadComputeShadowSlices(arguments, SystemInfo.graphicsDeviceType);
+        }
+
+        public static bool ReadComputeShadowSlices(string[] arguments, GraphicsDeviceType device)
+        {
+            return device == GraphicsDeviceType.Direct3D12
+                && (arguments == null || (Array.IndexOf(arguments, VertexShadowSlicesArgument) < 0
+                    && Array.IndexOf(arguments, NoSliceSelectionArgument) < 0));
         }
 
         /// <summary>
@@ -411,6 +445,7 @@ namespace Zantetsu.Rendering
             Read(Environment.GetCommandLineArgs(), out s_requested, out s_sliceSelection);
             s_separateClip = ReadSeparateClip(Environment.GetCommandLineArgs());
             s_skin24SliceSelectionOnVulkan = ReadSkin24SliceSelection(Environment.GetCommandLineArgs());
+            s_computeShadowSlices = ReadComputeShadowSlices(Environment.GetCommandLineArgs());
         }
 
         /// <summary>

@@ -52,7 +52,11 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(VpNativeShaderBake.Variants.SelectMany(v => v.Keywords), Does.Contain(VpNativeShaderBake.StereoKeyword), "Vulkan expansion must not mutate the D3D templates");
             VpNativeShaderBake.Variant[] d3d = VpNativeShaderBake.GetVariants(false);
             Assert.That(d3d.Count(v => v.Name.EndsWith(VpNativeShaderBake.SkinSuffix, StringComparison.Ordinal)), Is.EqualTo(11), "10 bodies and the caster");
-            Assert.That(d3d.Length, Is.EqualTo(37 + 11));
+            Assert.That(d3d.Length, Is.EqualTo(37 + 11 + 2));
+            var computedCasters = d3d.Where(v => v.Keywords.Contains(VpGpuCullSetup.ComputeShadowSlicesKeyword)).ToArray();
+            Assert.That(computedCasters.Length, Is.EqualTo(2));
+            Assert.That(computedCasters.SelectMany(v => v.Keywords), Does.Not.Contain(VpNativeShaderBake.SkinKeyword),
+                "Skin24 retains its own instance-bounds selection and caster variants");
             Assert.That(d3d.SelectMany(v => v.Keywords), Does.Not.Contain(VpNativeShaderBake.PixelClipKeyword));
         }
 

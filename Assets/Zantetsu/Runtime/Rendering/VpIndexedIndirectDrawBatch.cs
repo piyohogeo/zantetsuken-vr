@@ -75,6 +75,12 @@ namespace Zantetsu.Rendering
         private static readonly int ForwardArgumentsId = Shader.PropertyToID("_VpForwardArguments");
         private static readonly int ShadowVisibleId = Shader.PropertyToID("_VpShadowVisible");
         private static readonly int ShadowArgumentsId = Shader.PropertyToID("_VpShadowArguments");
+        private static readonly int ShadowSliceSourceArgumentsId = Shader.PropertyToID("_VpShadowSliceSourceArguments");
+        private static readonly int ShadowSliceSourceVisibleId = Shader.PropertyToID("_VpShadowSliceSourceVisible");
+        private static readonly int ShadowSliceArgumentsId = Shader.PropertyToID("_VpShadowSliceArguments");
+        private static readonly int ShadowSliceVisibleId = Shader.PropertyToID("_VpShadowSliceVisible");
+        private static readonly int ShadowSliceMatrixVpId = Shader.PropertyToID("_VpShadowSliceMatrixVP");
+        private static readonly int ShadowSliceBiasId = Shader.PropertyToID("_VpShadowSliceBias");
 
         // The arguments are made here from the commands, so they are staged before they are sent: in managed arrays, or
         // -- for a batch made with a page backing -- in rooms on reserved address space, made and written at
@@ -98,6 +104,7 @@ namespace Zantetsu.Rendering
         private readonly VpNumericRoom<VpCullCommand> _cullStaging;
         private readonly GraphicsBuffer _cullCommandBuffer;
         private readonly CullView[] _cullViews;
+        private int _shadowSliceKernel = -1;
         private bool _uploaded;
         private bool _disposed;
 
@@ -109,6 +116,7 @@ namespace Zantetsu.Rendering
             public GraphicsBuffer forwardArguments;
             public GraphicsBuffer shadowVisible;
             public GraphicsBuffer shadowArguments;
+            public ShadowSliceOutput shadowSlices;
 
             // The compacted entries and count slots of each column (VpCommandCompaction), made only when a route asks
             // for them. On Vulkan one set a frame of a ring (CompactionRing): a frame's compaction never writes the set
@@ -121,6 +129,7 @@ namespace Zantetsu.Rendering
                 forwardArguments?.Dispose();
                 shadowVisible?.Dispose();
                 shadowArguments?.Dispose();
+                shadowSlices?.GiveUp(null);
                 if (compactions != null) foreach (Compaction c in compactions) c?.Dispose();
             }
         }
@@ -362,6 +371,115 @@ namespace Zantetsu.Rendering
         /// <summary>Whether this batch's selection writes the plugin's argument entries (see <see cref="NativeDrawBuffers"/>).</summary>
         public bool NativeArguments => _cull != null && _cull.NativeArguments;
 
+        /// <summary>Independent GPU-only outputs for the four directional cascades of one batch view.</summary>
+        public sealed class ShadowSliceOutput
+        {
+            private readonly GraphicsBuffer[] _arguments = new GraphicsBuffer[VpCullConditions.SplitCapacity];
+            private readonly GraphicsBuffer[] _visible = new GraphicsBuffer[VpCullConditions.SplitCapacity];
+            internal readonly Compaction[] compactions = new Compaction[VpCullConditions.SplitCapacity];
+
+            internal ShadowSliceOutput(int commandCapacity, int instanceCapacity, int stride, int view)
+            {
+                try
+                {
+                    for (int split = 0; split < _arguments.Length; split++)
+                    {
+                        _arguments[split] = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride, "VP Shadow Slice Arguments " + view + "/" + split);
+                        _visible[split] = VpGpuStop.Buffer(GraphicsBuffer.Target.Structured, instanceCapacity, sizeof(uint), "VP Shadow Slice Visible " + view + "/" + split);
+                    }
+                }
+                catch { GiveUp(null); throw; }
+            }
+
+            public GraphicsBuffer Arguments(int split) => _arguments[split];
+            public GraphicsBuffer Visible(int split) => _visible[split];
+
+            internal long GpuBytes
+            {
+                get
+                {
+                    long bytes = _arguments[0] == null ? 0L
+                        : (long)_arguments.Length * ((long)_arguments[0].count * _arguments[0].stride + (long)_visible[0].count * _visible[0].stride);
+                    foreach (Compaction compaction in compactions) bytes += compaction?.AllocatedBytes ?? 0L;
+                    return bytes;
+                }
+            }
+
+            internal void GiveUp(Action<GraphicsBuffer> giveUp)
+            {
+                for (int split = 0; split < _arguments.Length; split++)
+                {
+                    VpIndexedIndirectDrawBatch.GiveUp(giveUp, _arguments[split]);
+                    VpIndexedIndirectDrawBatch.GiveUp(giveUp, _visible[split]);
+                    _arguments[split] = null;
+                    _visible[split] = null;
+                    compactions[split]?.GiveUp(giveUp);
+                    compactions[split] = null;
+                }
+            }
+        }
+
+        /// <summary>One independent shadow-only compaction set per cascade, on the Direct3D 12 queue.</summary>
+        public Compaction ShadowSliceCompactionOf(int view, int split, int frame)
+        {
+            ThrowIfDisposed();
+            ThrowIfNotCulled();
+            View(view);
+            if (!_cull.NativeArguments || !VpCommandCompaction.ZeroesByCopy || _cull.InstanceBounds)
+                throw new InvalidOperationException("Shadow slice compaction requires ordinary Direct3D 12 native commands.");
+            if ((uint)split >= VpCullConditions.SplitCapacity) throw new ArgumentOutOfRangeException(nameof(split));
+            ref CullView target = ref _cullViews[view];
+            ShadowSliceOutput output = target.shadowSlices ??= new ShadowSliceOutput(CommandCapacity, InstanceCapacity, _cull.ArgumentStride, view);
+            return output.compactions[split] ??= new Compaction(CommandCapacity, _cull.ArgumentStride,
+                "view " + view + " shadow slice " + split, shadowOnly: true);
+        }
+
+        /// <summary>
+        /// Filters this view's existing union selection with the shadow VS's XY and bias judgement. The supplied
+        /// matrices must be the directional cascades' current GPU view-projections. Record all slices before drawing.
+        /// </summary>
+        public ShadowSliceOutput IssueShadowSliceCull(CommandBuffer commands, int view, Matrix4x4[] viewProjections, Vector4[] biases, int splitCount)
+        {
+            ThrowIfDisposed();
+            ThrowIfNotCulled();
+            View(view);
+            if (!_cull.NativeArguments || _cull.InstanceBounds)
+                throw new InvalidOperationException("Shadow slice compute requires ordinary native commands, not per-instance bounds.");
+            if (commands == null) throw new ArgumentNullException(nameof(commands));
+            if (splitCount < 1 || splitCount > VpCullConditions.SplitCapacity) throw new ArgumentOutOfRangeException(nameof(splitCount));
+            if (viewProjections == null || viewProjections.Length < splitCount) throw new ArgumentException("A GPU matrix for every cascade is required.", nameof(viewProjections));
+            if (biases == null || biases.Length < splitCount) throw new ArgumentException("A bias for every cascade is required.", nameof(biases));
+            for (int split = 0; split < splitCount; split++)
+            {
+                Matrix4x4 matrix = viewProjections[split];
+                if (matrix.m30 != 0f || matrix.m31 != 0f || matrix.m32 != 0f || matrix.m33 != 1f)
+                    throw new ArgumentException("Shadow slice compute requires an orthographic directional cascade.", nameof(viewProjections));
+            }
+
+            ref CullView target = ref _cullViews[view];
+            ShadowSliceOutput output = target.shadowSlices ??= new ShadowSliceOutput(CommandCapacity, InstanceCapacity, _cull.ArgumentStride, view);
+            ComputeShader shader = _cull.Shader;
+            if (_shadowSliceKernel < 0) _shadowSliceKernel = shader.FindKernel("CullShadowSlice");
+            int kernel = _shadowSliceKernel;
+            commands.SetComputeIntParam(shader, CommandCountId, CommandCount);
+            commands.SetComputeIntParam(shader, ArgumentStrideId, _cull.ArgumentStride);
+            commands.SetComputeIntParam(shader, ArgumentOffsetId, _cull.ArgumentOffset);
+            commands.SetComputeBufferParam(shader, kernel, CullCommandsId, _cullCommandBuffer);
+            commands.SetComputeBufferParam(shader, kernel, InstanceObjectToWorldId, _instanceBuffer);
+            commands.SetComputeBufferParam(shader, kernel, ShadowSliceSourceArgumentsId, target.shadowArguments);
+            commands.SetComputeBufferParam(shader, kernel, ShadowSliceSourceVisibleId, target.shadowVisible);
+            for (int split = 0; split < splitCount; split++)
+            {
+                commands.SetComputeMatrixParam(shader, ShadowSliceMatrixVpId, viewProjections[split]);
+                commands.SetComputeFloatParam(shader, ShadowSliceBiasId, Mathf.Abs(biases[split].x) + Mathf.Abs(biases[split].y));
+                commands.SetComputeBufferParam(shader, kernel, ShadowSliceArgumentsId, output.Arguments(split));
+                commands.SetComputeBufferParam(shader, kernel, ShadowSliceVisibleId, output.Visible(split));
+                commands.DispatchCompute(shader, kernel, Math.Max(1, (CommandCount + 63) / 64), 1, 1);
+            }
+
+            return output;
+        }
+
         // ---- the command compaction (DESIGN 4.5.10 Quest 3S / Vulkan; 4.5.11 Direct3D 12) --------------------------
         // The compacted entries and the count slots of one column of one selection (a view's, or a caller-owned
         // output's): GPU-written alone, by VpCommandCompaction, between the selection and the draws. The fixed
@@ -409,6 +527,7 @@ namespace Zantetsu.Rendering
             // body entries too, and compacting them into the body's buffers again doubled the count (icB7, 2026-10-10).
             public GraphicsBuffer MotionEntries { get; private set; }
             public GraphicsBuffer MotionCounts { get; private set; }
+            public long AllocatedBytes { get; private set; }
 
             /// <summary>Column 0 the body, 1 the casters, 2 the motion.</summary>
             public GraphicsBuffer Entries(int column) => column == 1 ? ShadowEntries : column == 2 ? MotionEntries : ForwardEntries;
@@ -443,18 +562,23 @@ namespace Zantetsu.Rendering
                 return Columns * (((long)commandCapacity * stride) + ((HasDrawCounts ? 2L : 1L) * VpCommandCompaction.Slots * sizeof(uint)));
             }
 
-            internal Compaction(int commandCapacity, int stride, string name)
+            internal Compaction(int commandCapacity, int stride, string name, bool shadowOnly = false)
             {
+                if (shadowOnly && !VpCommandCompaction.ZeroesByCopy)
+                    throw new InvalidOperationException("A shadow-only compaction set requires Direct3D 12.");
                 long began = Began();
                 try
                 {
                     // The counts are written here, once, so that no slot is ever read before something set it; after
                     // that the GPU alone writes them (the plugin's zero event on Vulkan, a copy on Direct3D 12).
-                    ForwardEntries = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride, "VP Compact Forward Entries " + name);
-                    ForwardCounts = VpCommandCompaction.NewCounts("VP Compact Forward Counts " + name);
+                    if (!shadowOnly)
+                    {
+                        ForwardEntries = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride, "VP Compact Forward Entries " + name);
+                        ForwardCounts = VpCommandCompaction.NewCounts("VP Compact Forward Counts " + name);
+                        ForwardCounts.SetData(VpCommandCompaction.ZeroSlots, "VpIndexedIndirectDrawBatch.cs:452");
+                    }
                     ShadowEntries = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride, "VP Compact Shadow Entries " + name);
                     ShadowCounts = VpCommandCompaction.NewCounts("VP Compact Shadow Counts " + name);
-                    ForwardCounts.SetData(VpCommandCompaction.ZeroSlots, "VpIndexedIndirectDrawBatch.cs:452");
                     ShadowCounts.SetData(VpCommandCompaction.ZeroSlots, "VpIndexedIndirectDrawBatch.cs:453");
                     if (Columns > 2)
                     {
@@ -473,8 +597,10 @@ namespace Zantetsu.Rendering
                         MotionDrawCounts.SetData(VpCommandCompaction.ZeroSlots, "VpIndexedIndirectDrawBatch.cs:468");
                     }
 
-                    VpCommandCompaction.NoteSetMade(BytesFor(commandCapacity, stride),
-                        SecondsSince(began));
+                    AllocatedBytes = shadowOnly
+                        ? (long)commandCapacity * stride + VpCommandCompaction.Slots * sizeof(uint)
+                        : BytesFor(commandCapacity, stride);
+                    VpCommandCompaction.NoteSetMade(AllocatedBytes, SecondsSince(began));
                 }
                 catch { Dispose(); throw; }
             }
@@ -492,6 +618,7 @@ namespace Zantetsu.Rendering
                 VpIndexedIndirectDrawBatch.GiveUp(giveUp, ForwardDrawCounts); ForwardDrawCounts = null;
                 VpIndexedIndirectDrawBatch.GiveUp(giveUp, ShadowDrawCounts); ShadowDrawCounts = null;
                 VpIndexedIndirectDrawBatch.GiveUp(giveUp, MotionDrawCounts); MotionDrawCounts = null;
+                AllocatedBytes = 0;
             }
         }
 
@@ -1940,9 +2067,16 @@ namespace Zantetsu.Rendering
             : ((long)CommandCapacity * VpCullCommand.Stride) + ((long)InstanceCapacity * (InstanceStride + InstanceClipStride)) + CullViewBytes;
 
         /// <summary>The bytes the selection's own results take on the GPU, every view together; zero without selection.</summary>
-        public long CullViewBytes => _cull == null
-            ? 0L
-            : (long)_cull.ViewCapacity * 2L * (((long)CommandCapacity * _cull.ArgumentStride) + ((long)InstanceCapacity * sizeof(uint)));
+        public long CullViewBytes
+        {
+            get
+            {
+                if (_cull == null) return 0L;
+                long bytes = (long)_cull.ViewCapacity * 2L * (((long)CommandCapacity * _cull.ArgumentStride) + ((long)InstanceCapacity * sizeof(uint)));
+                foreach (CullView view in _cullViews) bytes += view.shadowSlices?.GpuBytes ?? 0L;
+                return bytes;
+            }
+        }
 
         /// <summary>What this batch's staging is made of, in bytes.</summary>
         public void DescribeStaging(System.Collections.Generic.List<VpRoomLine> into, string owner)
@@ -2553,6 +2687,7 @@ namespace Zantetsu.Rendering
                     GiveUp(giveUp, _cullViews[v].forwardArguments);
                     GiveUp(giveUp, _cullViews[v].shadowVisible);
                     GiveUp(giveUp, _cullViews[v].shadowArguments);
+                    _cullViews[v].shadowSlices?.GiveUp(giveUp);
                     if (_cullViews[v].compactions != null) foreach (Compaction c in _cullViews[v].compactions) c?.GiveUp(giveUp);
                 }
             }

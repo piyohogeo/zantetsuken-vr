@@ -83,7 +83,9 @@ namespace Zantetsu.EditorTools.Rendering
         public const string StereoKeyword = "STEREO_INSTANCING_ON";
 
         private static bool s_vulkan;
+        private static bool s_computeShadowSlicesOnly;
         public static void VulkanBatch() { s_vulkan = true; Batch(); }
+        public static void ComputeShadowSlicesBatch() { s_computeShadowSlicesOnly = true; Batch(); }
         public static void Batch()
         {
             int code = 1;
@@ -96,7 +98,10 @@ namespace Zantetsu.EditorTools.Rendering
                 var report = new StringBuilder();
                 report.AppendLine("VpNativeShaderBake " + DateTime.Now.ToString("o") + " Unity " + Application.unityVersion);
                 bool allCompiled = true;
-                foreach (Variant variant in GetVariants(s_vulkan))
+                var variants = new List<Variant>(GetVariants(s_vulkan));
+                if (s_computeShadowSlicesOnly)
+                    variants.RemoveAll(v => Array.IndexOf(v.Keywords, VpGpuCullSetup.ComputeShadowSlicesKeyword) < 0);
+                foreach (Variant variant in variants)
                     allCompiled &= Bake(variant, folder, report);
                 if (s_vulkan)
                 {
@@ -173,6 +178,13 @@ namespace Zantetsu.EditorTools.Rendering
                 if (!original.Name.Contains("-plugin") || Array.IndexOf(original.Keywords, NoClipKeyword) < 0) continue;
                 var skinKeys = new List<string>(original.Keywords) { SkinKeyword };
                 variants.Add(new Variant(original.Name + SkinSuffix, original.Shader, skinKeys.ToArray()));
+            }
+
+            // These are ordinary 16-byte caster variants. Skin24 retains its instance-bounds selection.
+            if (!vulkan)
+            {
+                variants.Add(new Variant("caster-plugin-compute-slices", ShadowCasterShader, GpuCulledKeyword, PluginKeyword, VpGpuCullSetup.ComputeShadowSlicesKeyword));
+                variants.Add(new Variant("caster-plugin-compute-slices-noclip", ShadowCasterShader, GpuCulledKeyword, PluginKeyword, VpGpuCullSetup.ComputeShadowSlicesKeyword, NoClipKeyword));
             }
 
             return variants.ToArray();
@@ -286,6 +298,15 @@ namespace Zantetsu.EditorTools.Rendering
             bool noClip = Array.IndexOf(variant.Keywords, NoClipKeyword) >= 0;
             bool direct = Array.IndexOf(variant.Keywords, DirectKeyword) >= 0;
             bool valid = vertex != null && pixel != null;
+            if (Array.IndexOf(variant.Keywords, VpGpuCullSetup.ComputeShadowSlicesKeyword) >= 0)
+            {
+                bool selected = vertex != null && vertex.Buffers.Exists(b => b.Name == "_VpVisible")
+                    && vertex.Buffers.Exists(b => b.Name == "_VpInstanceObjectToWorld")
+                    && vertex.Buffers.Exists(b => b.Name == "_VpNativeArguments");
+                bool noBounds = vertex != null && !vertex.Buffers.Exists(b => b.Name == "_VpCullCommands");
+                valid &= selected && noBounds;
+                report.AppendLine("  compute shadow slices VS gate: " + (selected && noBounds ? "passed (selected instance and transform, no Bounds buffer)" : "FAILED"));
+            }
             if (noClip)
             {
                 valid &= vertex != null && !vertex.Buffers.Exists(b => b.Name == "_VpInstanceClip");

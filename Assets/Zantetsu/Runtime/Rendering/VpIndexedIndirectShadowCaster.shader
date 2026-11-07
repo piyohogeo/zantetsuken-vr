@@ -63,6 +63,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
             #pragma multi_compile_local_vertex _ VP_GPU_CULLED
             #pragma shader_feature_local VP_NATIVE_MULTIDRAW
+            #pragma shader_feature_local_vertex VP_COMPUTE_SHADOW_SLICES
             // Both stages: the pixel stage's input must not declare the clip distances that a no-clip vertex stage
             // does not write. With the keyword seen by the vertex stage alone, Direct3D 12 refuses the pipeline of
             // Unity's own draw (the two signatures do not link) and nothing is drawn; Direct3D 11 draws all the same.
@@ -124,7 +125,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             StructuredBuffer<uint> _VpVisible;
         #endif
 
-        #if (defined(VP_GPU_CULLED) || defined(VP_CLIP_LIST_SLICES)) && !defined(VP_NATIVE_DIRECT)
+        #if (defined(VP_GPU_CULLED) || defined(VP_CLIP_LIST_SLICES)) && !defined(VP_NATIVE_DIRECT) && !defined(VP_COMPUTE_SHADOW_SLICES)
             #define VP_SLICE_JUDGEMENT 1
 
             // Matches Zantetsu.Rendering.VpCullCommand: 48 bytes. The bounds of a command's range in the geometry's

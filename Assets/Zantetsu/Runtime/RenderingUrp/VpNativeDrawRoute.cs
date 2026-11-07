@@ -273,6 +273,7 @@ namespace Zantetsu.Rendering.Urp
 #endif
         }
         public const string CasterVariant = "caster-plugin";
+        public const string ComputeShadowSlicesVariant = "caster-plugin-compute-slices";
         public const string CopyShaderResource = "VpNativeConstantCopy";
 
         /// <summary>The suffix of the skin draw's variants (DESIGN 4.5.12), after the no-clip suffix: forward-plugin-cascade-soft-stereo-noclip-skin24.</summary>
@@ -290,6 +291,7 @@ namespace Zantetsu.Rendering.Urp
         private static readonly ProfilingSampler ConstantCopySampler = new ProfilingSampler("VP Native Constant Copy");
         private static readonly ProfilingSampler ConstantCopyWarmSampler = new ProfilingSampler("VP Native Constant Copy Warm");
         private static readonly ProfilingSampler CullWarmSampler = new ProfilingSampler("VP GPU Cull Warm");
+        private static readonly ProfilingSampler ShadowSliceCullSampler = new ProfilingSampler("VP Shadow Slice Compute");
         private static readonly int OffsetsId = Shader.PropertyToID("_VpNativeOffsets");
         private static readonly int DestinationId = Shader.PropertyToID("_VpNativeDestination");
         private static readonly int ConstantsId = Shader.PropertyToID("_VpNativeConstants");
@@ -434,6 +436,10 @@ namespace Zantetsu.Rendering.Urp
             public VpSkinDrawBuffers skin;
         }
 
+        // The per-cascade kernel reads a command's bounds. Per-instance bounds and Skin24 keep their existing union.
+        private static bool UsesComputeShadowSlices(bool enabled, Issue issue)
+            => enabled && !issue.clipList && issue.skin == null && !issue.batch.CullsByInstanceBounds;
+
         private struct ClipIssue
         {
             public VpGpuIndexedGeometryBuffers buffers;
@@ -519,6 +525,11 @@ namespace Zantetsu.Rendering.Urp
         public long ClipCasterRunsTaken { get; private set; }
         public long ClipCasterEntriesTaken { get; private set; }
         public long ClipCasterIssues { get; private set; }
+        public long ShadowSliceCullDispatches { get; private set; }
+        public long ShadowSliceCompactions { get; private set; }
+        private readonly long[] _shadowSliceCompactions = new long[VpCullConditions.SplitCapacity];
+        public long ShadowSliceCompactionsFor(int split) => _shadowSliceCompactions[split];
+        public string LastCasterVariant { get; private set; }
         private readonly long[] _clipCasterEntriesKept = new long[VpCullConditions.SplitCapacity];
         public long ClipCasterEntriesKept(int split) => _clipCasterEntriesKept[split];
 
@@ -1646,6 +1657,11 @@ namespace Zantetsu.Rendering.Urp
                 .Append(", runs of frames never executed: bodies ").Append(BodiesDropped).Append(", casters ").Append(CasterRunsDropped)
                 .Append(", caster bounds declared ").Append(CasterBoundsDeclared)
                 .Append(", caster bias ").Append(CasterDepthBiasSigned).Append("/").Append(CasterSlopeScaledDepthBiasSigned)
+                .Append(", compute shadow slice dispatches ").Append(ShadowSliceCullDispatches)
+                .Append(" (last caster variant ").Append(LastCasterVariant ?? "none").Append(")")
+                .Append(", compute shadow slice compactions ").Append(ShadowSliceCompactions)
+                .Append(" (by split ").Append(_shadowSliceCompactions[0]).Append('/').Append(_shadowSliceCompactions[1])
+                .Append('/').Append(_shadowSliceCompactions[2]).Append('/').Append(_shadowSliceCompactions[3]).Append(')')
                 .Append(", warm events ").Append(PrewarmRecorded).Append(" completed ").Append(PrewarmCompleted)
                 .Append(", warm compute dispatches: constants ").Append(PrewarmConstantDispatches).Append(" cull ").Append(PrewarmCullDispatches)
                 .Append(", native pointers asked ").Append(_pointers.Acquisitions).Append(" / kept ").Append(_pointers.Hits)
@@ -3119,7 +3135,16 @@ namespace Zantetsu.Rendering.Urp
                 foreach (Issue issue in _passes.bodies) if (!issue.clipList) AddColumn(issue.batch.CompactionOf(issue.view, _passes.frame), 1);
                 if (!VpCommandCompaction.CastersFixed)
                 {
-                    foreach (Issue issue in _passes.casterRuns) if (!issue.clipList) AddColumn(issue.batch.CompactionOf(issue.view, _passes.frame), 2);
+                    foreach (Issue issue in _passes.casterRuns)
+                    {
+                        if (issue.clipList) continue;
+                        if (UsesComputeShadowSlices(VpGpuCullSetup.ComputeShadowSlices, issue))
+                        {
+                            for (int split = 0; split < VpCullConditions.SplitCapacity; split++)
+                                AddColumn(issue.batch.ShadowSliceCompactionOf(issue.view, split, _passes.frame), 2);
+                        }
+                        else AddColumn(issue.batch.CompactionOf(issue.view, _passes.frame), 2);
+                    }
                 }
 
                 int copies = 0;
@@ -3278,6 +3303,9 @@ namespace Zantetsu.Rendering.Urp
             private readonly Matrix4x4[] _projections = new Matrix4x4[MaxSplits];
             private readonly Vector4[] _biases = new Vector4[MaxSplits];
             private readonly Rect[] _viewports = new Rect[MaxSplits];
+            private readonly Matrix4x4[] _sliceViewProjections = new Matrix4x4[MaxSplits];
+            private readonly Dictionary<(VpIndexedIndirectDrawBatch batch, int view), VpIndexedIndirectDrawBatch.ShadowSliceOutput> _sliceOutputs = new Dictionary<(VpIndexedIndirectDrawBatch, int), VpIndexedIndirectDrawBatch.ShadowSliceOutput>();
+            private readonly Dictionary<(VpIndexedIndirectDrawBatch batch, int view, int first, int count, int split), Bound> _sliceCompactedRuns = new Dictionary<(VpIndexedIndirectDrawBatch, int, int, int, int), Bound>();
             private GraphicsBuffer _gpuConstants;
             private int _gpuConstantsUsed;
 
@@ -3436,6 +3464,87 @@ namespace Zantetsu.Rendering.Urp
                     return;
                 }
 
+                bool compacts = _route.CompactsCommands;
+                bool computeSlices = VpGpuCullSetup.ComputeShadowSlices;
+                if (computeSlices && (Plugin.Vulkan || !VpGpuCullSetup.ShadowSliceSelection))
+                    throw new InvalidOperationException("Compute shadow slices requires the Direct3D 12 native route with slice selection enabled.");
+                _sliceOutputs.Clear();
+                _sliceCompactedRuns.Clear();
+                if (computeSlices)
+                {
+                    for (int split = 0; split < data.splitCount; split++)
+                        _sliceViewProjections[split] = GL.GetGPUProjectionMatrix(_projections[split], true) * _views[split];
+                    // Complete every output before recording plugin draws. An output belongs to a batch and view,
+                    // so material runs share the selection without sharing another cascade's storage.
+                    using (new ProfilingScope(commands, ShadowSliceCullSampler))
+                    {
+                        foreach (Issue issue in _passes.casterRuns)
+                        {
+                            var key = (issue.batch, issue.view);
+                            if (!UsesComputeShadowSlices(computeSlices, issue) || _sliceOutputs.ContainsKey(key)) continue;
+                            _sliceOutputs.Add(key, issue.batch.IssueShadowSliceCull(commands, issue.view, _sliceViewProjections, _biases, data.splitCount));
+                            _route.ShadowSliceCullDispatches += data.splitCount;
+                        }
+                    }
+
+                    // All compactions must precede prewarm and drawing events in this pass. Each cascade reads its
+                    // own fixed entries in the VS and keeps its own compacted entries and count for ExecuteIndirect.
+                    if (compacts && !VpCommandCompaction.CastersFixed)
+                    {
+                        _route.BeginCompactions();
+                        foreach (Issue issue in _passes.casterRuns)
+                        {
+                            if (issue.clipList) continue;
+                            issue.batch.NativeDrawBuffers(issue.view, out _, out _, out GraphicsBuffer shadowArguments, out GraphicsBuffer shadowVisible,
+                                out GraphicsBuffer instances, out GraphicsBuffer clips, out GraphicsBuffer cullCommands);
+                            var sourceBound = new Bound
+                            {
+                                arguments = shadowArguments, visible = shadowVisible,
+                                instances = instances, clips = clips, cullCommands = cullCommands,
+                            };
+                            if (issue.skin != null)
+                                sourceBound.TakeSkin(issue.batch, issue.skin);
+                            else
+                            {
+                                sourceBound.indexBuffer = issue.buffers.IndexBuffer;
+                                sourceBound.vertexBuffer = issue.buffers.VertexBuffer;
+                                sourceBound.TakeGenerations(issue.batch, issue.buffers);
+                            }
+
+                            if (!UsesComputeShadowSlices(computeSlices, issue))
+                            {
+                                // Per-instance bounds still use the union and the existing vertex-stage judgement.
+                                // A split of -1 keeps that one result separate from the ordinary per-cascade results.
+                                var key = (issue.batch, issue.view, issue.startCommand, issue.commandCount, -1);
+                                if (_sliceCompactedRuns.ContainsKey(key)) continue;
+                                _route.CompactRun(commands, issue.batch, issue.batch.CompactionOf(issue.view, _passes.frame),
+                                    shadowArguments, 1, issue.startCommand, issue.commandCount, _passes.frame, ref sourceBound);
+                                _sliceCompactedRuns.Add(key, sourceBound);
+                                continue;
+                            }
+
+                            VpIndexedIndirectDrawBatch.ShadowSliceOutput output = _sliceOutputs[(issue.batch, issue.view)];
+                            for (int split = 0; split < data.splitCount; split++)
+                            {
+                                var key = (issue.batch, issue.view, issue.startCommand, issue.commandCount, split);
+                                if (_sliceCompactedRuns.ContainsKey(key)) continue;
+                                Bound compacted = sourceBound;
+                                compacted.arguments = output.Arguments(split);
+                                compacted.visible = output.Visible(split);
+                                compacted.argumentsGeneration = 0;
+                                compacted.visibleGeneration = 0;
+                                if (_route.CompactRun(commands, issue.batch, issue.batch.ShadowSliceCompactionOf(issue.view, split, _passes.frame),
+                                    output.Arguments(split), 1, issue.startCommand, issue.commandCount, _passes.frame, ref compacted))
+                                {
+                                    _route.ShadowSliceCompactions++;
+                                    _route._shadowSliceCompactions[split]++;
+                                }
+                                _sliceCompactedRuns.Add(key, compacted);
+                            }
+                        }
+                    }
+                }
+
                 GraphicsBuffer gpuConstants = EnsureGpuConstants(ref _gpuConstants, "VP Native Caster Constants ", _passes.camera);
                 PrewarmRequest request = _passes.prewarm;
                 if (request != null && request.failure == null && !request.shadowSubmitted)
@@ -3449,8 +3558,10 @@ namespace Zantetsu.Rendering.Urp
                             depthFunc = SystemInfo.usesReversedZBuffer ? Plugin.Compare.GreaterEqual : Plugin.Compare.LessEqual,
                             depthWrite = true, colourWrite = false, depthBias = _route.CasterDepthBiasSigned,
                             slopeScaledDepthBias = _route.CasterSlopeScaledDepthBiasSigned };
-                        PipelineEntry ordinary = _route.PrewarmPipeline(request, material,
-                            Plugin.VulkanNoClipShadowShaders ? CasterVariant + "-noclip" : CasterVariant, warmState);
+                        string warmVariant = computeSlices && !request.batch.CullsByInstanceBounds
+                            ? ComputeShadowSlicesVariant + (_route.OrdinaryDrawsHaveNoClip(material) ? NoClipSuffix : "")
+                            : Plugin.VulkanNoClipShadowShaders ? CasterVariant + "-noclip" : CasterVariant;
+                        PipelineEntry ordinary = _route.PrewarmPipeline(request, material, warmVariant, warmState);
                         PipelineEntry clip = _route.PrewarmPipeline(request, material, "caster-direct", warmState);
                         if (ordinary != null && !entries.Contains(ordinary)) entries.Add(ordinary);
                         if (clip != null && !entries.Contains(clip)) entries.Add(clip);
@@ -3466,13 +3577,13 @@ namespace Zantetsu.Rendering.Urp
                 _gpuConstantsUsed = 0;
                 _route._copiedGpuBlocks.Clear();
                 int firstBlock = _route._blocks.Count;
-                float sliceSelection = VpGpuCullSetup.ShadowSliceSelection ? 1f : 0f;   // the global switch: the direct clip casters' CPU judgement
-                bool compacts = _route.CompactsCommands;
-                if (compacts) _route.BeginCompactions();
+                float sliceSelection = VpGpuCullSetup.ShadowSliceSelection ? 1f : 0f;   // the direct clip casters' CPU judgement
+                if (compacts && !computeSlices) _route.BeginCompactions();
                 {
                     for (int i = 0; i < _passes.casterRuns.Count; i++)
                     {
                         Issue issue = _passes.casterRuns[i];
+                        bool computeIssue = UsesComputeShadowSlices(computeSlices, issue);
                         // The selection this issue's constants carry (SKIN-BENCH-3): the ordinary casters keep 0 on Vulkan
                         // (their judgement would read command-zero bounds), the skin draw's may select there when asked.
                         float issueSlice = VpGpuCullSetup.CasterSliceSelectionFor(issue.skin != null, Plugin.Vulkan, VpGpuCullSetup.ShadowSliceSelection, VpGpuCullSetup.Skin24SliceSelectionOnVulkan);
@@ -3493,7 +3604,8 @@ namespace Zantetsu.Rendering.Urp
                         string casterVariant = issue.skin != null ? CasterVariant + NoClipSuffix + SkinSuffix
                             : Plugin.Vulkan ? (Plugin.VulkanNoClipShadowShaders ? CasterVariant + "-noclip" : CasterVariant)
                             : issue.clipList ? ClipListCasterVariant
-                            : _route.OrdinaryDrawsHaveNoClip(issue.material) ? CasterVariant + NoClipSuffix : CasterVariant;
+                            : (computeIssue ? ComputeShadowSlicesVariant : CasterVariant) + (_route.OrdinaryDrawsHaveNoClip(issue.material) ? NoClipSuffix : "");
+                        if (!issue.clipList) _route.LastCasterVariant = casterVariant;
                         PipelineEntry entry = _route.PipelineFor(issue.material, casterVariant, state, out string failure);
                         if (entry == null)
                         {
@@ -3537,11 +3649,38 @@ namespace Zantetsu.Rendering.Urp
                             }
 
                             // Experiment: the run's caster entries compacted once, drawn by count into every split.
-                            if (compacts && !VpCommandCompaction.CastersFixed) _route.CompactRun(commands, issue.batch, issue.batch.CompactionOf(issue.view, _passes.frame),
-                                shadowArguments, 1, issue.startCommand, issue.commandCount, _passes.frame, ref bound);
+                            if (compacts && !VpCommandCompaction.CastersFixed)
+                            {
+                                if (computeSlices && !computeIssue)
+                                    bound = _sliceCompactedRuns[(issue.batch, issue.view, issue.startCommand, issue.commandCount, -1)];
+                                else if (!computeSlices)
+                                    _route.CompactRun(commands, issue.batch, issue.batch.CompactionOf(issue.view, _passes.frame),
+                                        shadowArguments, 1, issue.startCommand, issue.commandCount, _passes.frame, ref bound);
+                            }
                         }
                         for (int split = 0; split < data.splitCount; split++)
                         {
+                            Bound sliceBound = bound;
+                            if (computeIssue)
+                            {
+                                if (compacts && !VpCommandCompaction.CastersFixed)
+                                {
+                                    sliceBound = _sliceCompactedRuns[(issue.batch, issue.view, issue.startCommand, issue.commandCount, split)];
+                                    // Multiple issues may share argument entries while drawing different geometry buffers.
+                                    sliceBound.indexBuffer = bound.indexBuffer;
+                                    sliceBound.vertexBuffer = bound.vertexBuffer;
+                                    sliceBound.indexGeneration = bound.indexGeneration;
+                                    sliceBound.vertexGeneration = bound.vertexGeneration;
+                                }
+                                else
+                                {
+                                    VpIndexedIndirectDrawBatch.ShadowSliceOutput output = _sliceOutputs[(issue.batch, issue.view)];
+                                    sliceBound.arguments = output.Arguments(split);
+                                    sliceBound.visible = output.Visible(split);
+                                    sliceBound.argumentsGeneration = 0;
+                                    sliceBound.visibleGeneration = 0;
+                                }
+                            }
                             // The shadow map is a render texture: the same GPU projection SetViewProjectionMatrices would derive.
                             var inputs = new GlobalsInputs
                             {
@@ -3590,7 +3729,7 @@ namespace Zantetsu.Rendering.Urp
                                 continue;
                             }
 
-                            if (_route.IssueOne(commands, entry, issue.material, bound, issue.startCommand, issue.commandCount, _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame, constantContext: constantContext))
+                            if (_route.IssueOne(commands, entry, issue.material, sliceBound, issue.startCommand, issue.commandCount, _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame, constantContext: constantContext))
                             {
                                 if (issue.skin != null) _route.SkinCastersIssued++; else _route.CastersIssued++;
                                 if (i == 0 && split == 0) _route.LastCasterGpuBlocks.Clear();
