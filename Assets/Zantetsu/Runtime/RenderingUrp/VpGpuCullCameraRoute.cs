@@ -110,6 +110,18 @@ namespace Zantetsu.Rendering.Urp
         }
 
         /// <summary>
+        /// Whether the Vulkan caster VS can omit its per-slice Bounds judgement for this pipeline. The compute
+        /// selection remains in place, and the shadow map's raster clipping handles its projection boundary.
+        /// </summary>
+        public static bool CanSkipShadowSliceJudgement(
+            GraphicsDeviceType device, UniversalRenderPipelineAsset pipeline, bool vertexSelectionRequested = false)
+        {
+            return !vertexSelectionRequested && device == GraphicsDeviceType.Vulkan && pipeline != null
+                && pipeline.supportsMainLightShadows && pipeline.shadowCascadeCount == 1
+                && !pipeline.supportsAdditionalLightShadows;
+        }
+
+        /// <summary>
         /// Enqueues, for <paramref name="camera"/>'s rendering that is about to begin, the pass that asks
         /// <paramref name="target"/> for its selection. To be called from <c>RenderPipelineManager.beginCameraRendering</c>
         /// for that camera, before the target registers the draws that read the selection. False, with the reason and
@@ -160,6 +172,9 @@ namespace Zantetsu.Rendering.Urp
                 _passes.Add(pass);
             }
 
+            target.SetSingleShadowSlice(camera, CanSkipShadowSliceJudgement(
+                SystemInfo.graphicsDeviceType, GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset,
+                VpGpuCullSetup.VertexShadowSlicesRequested));
             pass.target = target;
             renderer.EnqueuePass(pass);
             Enqueued++;

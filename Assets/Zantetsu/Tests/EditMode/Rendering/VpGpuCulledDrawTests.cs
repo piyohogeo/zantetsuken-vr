@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using NUnit.Framework;
 using Unity.Collections;
+using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -919,7 +920,8 @@ namespace Zantetsu.Rendering.Tests
         /// </summary>
         private Color32[] LitGround(
             Matrix4x4[] cubes, Route route, bool selectBody = true, VpInstanceClip[] clips = null, Action<Camera> view = null,
-            Action<VpCullConditions> casters = null, float groundScale = 3f, bool hiddenFrameThenNoSelection = false)
+            Action<VpCullConditions> casters = null, float groundScale = 3f, bool hiddenFrameThenNoSelection = false,
+            bool singleShadowSlice = false, bool noClip = false)
         {
             Light light = Track(new GameObject("VP GPU Cull Test Sun")).AddComponent<Light>();
             light.transform.rotation = Quaternion.Euler(35f, 0f, 0f);
@@ -958,6 +960,18 @@ namespace Zantetsu.Rendering.Tests
             int indexCount = (int)mesh.GetIndexCount(0);
             Material forward = Material(ShaderName, Color.green, culled);
             Material shadow = Material(ShadowShaderName, Color.green, culled);
+            if (singleShadowSlice)
+            {
+                Assert.That(shadow.shader.keywordSpace.FindKeyword(VpGpuCullSetup.ComputeShadowSlicesKeyword).isValid, Is.True);
+                shadow.EnableKeyword(VpGpuCullSetup.ComputeShadowSlicesKeyword);
+            }
+
+            if (noClip)
+            {
+                forward.EnableKeyword(VpGpuCullSetup.NoClipKeyword);
+                shadow.EnableKeyword(VpGpuCullSetup.NoClipKeyword);
+            }
+
             var properties = new MaterialPropertyBlock();
             using (var pool = new VpCpuGeometryPool(mesh.vertexCount, indexCount, Allocator.Persistent))
             using (var buffers = new VpGpuIndexedGeometryBuffers(mesh.vertexCount, indexCount))
@@ -1746,6 +1760,58 @@ namespace Zantetsu.Rendering.Tests
                 Assert.That(CountDiffering(vp3, culled), Is.Zero, "pixels differing between VP Stage 3 and the GPU selection");
                 Assert.That(CountDiffering(vp3, withoutSlices), Is.Zero, "pixels differing without the slice selection");
             });
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        public void OneShadowSlice_WithoutTheVertexBoundsJudgement_KeepsTheImageAndShadow(bool noClip, bool pixelClip)
+        {
+            RenderPipelineAsset pipeline = GraphicsSettings.currentRenderPipeline;
+            Assert.That(pipeline, Is.Not.Null, "the fixture uses URP");
+            var pipelineSettings = new SerializedObject(pipeline);
+            SerializedProperty cascadeCount = pipelineSettings.FindProperty("m_ShadowCascadeCount");
+            Assert.That(cascadeCount, Is.Not.Null, "the pipeline has a shadow cascade count");
+            int cascades = cascadeCount.intValue;
+            bool? clipOverride = VpClipShaderPolicy.PixelClipOverrideForTests;
+            Matrix4x4[] cubes =
+            {
+                Matrix4x4.Translate(new Vector3(-1.5f, 1.2f, 0f)),
+                Matrix4x4.Translate(new Vector3(1.5f, 1.2f, 0f)),
+                Matrix4x4.Translate(new Vector3(0f, 2f, -5.2f)),
+                Matrix4x4.Translate(new Vector3(-9f, 1f, 9f)),
+            };
+            VpInstanceClip[] clips = noClip ? null : new[]
+            {
+                VpInstanceClip.None,
+                VpInstanceClip.Keep(new Vector4(1f, 0f, 0f, -1.5f), 1f),
+                VpInstanceClip.None,
+                VpInstanceClip.None,
+            };
+            try
+            {
+                VpClipShaderPolicy.PixelClipOverrideForTests = pixelClip;
+                cascadeCount.intValue = 1;
+                pipelineSettings.ApplyModifiedPropertiesWithoutUndo();
+                InEmptyScene(() =>
+                {
+                    Color32[] ground = LitGround(null, Route.Vp3);
+                    DestroyObjects();
+                    Color32[] withBounds = LitGround(cubes, Route.Culled, clips: clips, noClip: noClip);
+                    DestroyObjects();
+                    Color32[] withoutBounds = LitGround(cubes, Route.Culled, clips: clips, singleShadowSlice: true, noClip: noClip);
+                    Assert.That(CountGreen(withBounds), Is.GreaterThan(100), "the visible cubes are drawn");
+                    Assert.That(CountDarker(ground, withBounds), Is.GreaterThan(100), "the cubes cast shadows on the ground");
+                    Assert.That(CountDiffering(withBounds, withoutBounds), Is.Zero, "the one-slice variant preserves the image and its shadows");
+                });
+            }
+            finally
+            {
+                VpClipShaderPolicy.PixelClipOverrideForTests = clipOverride;
+                pipelineSettings.Update();
+                cascadeCount.intValue = cascades;
+                pipelineSettings.ApplyModifiedPropertiesWithoutUndo();
+            }
         }
 
         [Test]

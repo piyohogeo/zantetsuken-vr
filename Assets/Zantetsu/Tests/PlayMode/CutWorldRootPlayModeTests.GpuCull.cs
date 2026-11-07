@@ -874,7 +874,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     }
                     else
                     {
-                        Assert.That(pluginRoute.CommandCompactionChoice, Does.StartWith("fixed: the default of the Direct3D 12 route"), "the fixed draw, as that route draws by default");
+                        Assert.That(pluginRoute.CommandCompactionChoice, Does.StartWith("fixed: command compaction is disabled for the Direct3D 12 route"), "the fixed draw was selected for this comparison");
                         Assert.That(new[] { pluginRoute.IndirectCountIssues, pluginRoute.IndirectCountCompactions, pluginRoute.IndirectCountCopies }, Is.EqualTo(new long[3]), "nothing compacted, nothing drawn by a count");
                         Assert.That(countDrawsAfter - countDrawsBefore, Is.Zero, "the plugin recorded no count draw");
                         Assert.That(pluginRoute.ReadCompactionCheck(), Is.Null);

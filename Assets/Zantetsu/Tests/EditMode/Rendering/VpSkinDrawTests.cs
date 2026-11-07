@@ -862,6 +862,31 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(VpGpuCullSetup.CasterSliceSelectionFor(skinIssue: false, vulkan: false, sliceSelection: false, skin24OnVulkan: true), Is.EqualTo(0f));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TheOrdinaryDisplaySingleSliceHint_KeepsTheSkinCasterPolicy(bool skinSliceSelection)
+        {
+            bool before = VpGpuCullSetup.Skin24SliceSelectionOnVulkan;
+            try
+            {
+                VpGpuCullSetup.Skin24SliceSelectionOnVulkan = skinSliceSelection;
+                using (VpSkinDisplay display = Display())
+                {
+                    Camera camera = Track(new GameObject("skin shadow view")).AddComponent<Camera>();
+                    IVpGpuCullTarget target = display;
+                    target.SetSingleShadowSlice(camera, true);
+                    target.SetSingleShadowSlice(camera, false);
+                    Assert.That(VpGpuCullSetup.Skin24SliceSelectionOnVulkan, Is.EqualTo(skinSliceSelection));
+                    Assert.That(VpGpuCullSetup.CasterSliceSelectionFor(true, true, true, skinSliceSelection),
+                        Is.EqualTo(skinSliceSelection ? 1f : 0f));
+                }
+            }
+            finally
+            {
+                VpGpuCullSetup.Skin24SliceSelectionOnVulkan = before;
+            }
+        }
+
         // ----- the picture ---------------------------------------------------------------------------------------------
 
         private Color32[] RenderAndRead(Camera camera, RenderTexture target, string name = null)

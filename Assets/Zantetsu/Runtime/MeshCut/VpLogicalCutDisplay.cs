@@ -532,6 +532,7 @@ namespace Zantetsu.MeshCut
         // with the variant that reads the selection's list switched on, which are its own to destroy.
         private VpGpuCullSetup _cull;
         private List<Material> _ownedMaterials;
+        private Dictionary<Material, Material> _singleSliceShadowMaterials;
 
         // The clip route, drawn apart (DESIGN 4.5.9). Whether this display has one is fixed when it is made: the
         // setup asked for it and every material has the variant with no clip. The selection's own draws are then of
@@ -956,6 +957,7 @@ namespace Zantetsu.MeshCut
             // for the frame it last registered draws in, the batch those draws read and whether their selection was
             // issued.
             public int view;
+            public bool singleShadowSlice;
             public VpIndexedIndirectDrawBatch cullBatch;
             public int cullRequestedFrame = int.MinValue;
             public int cullIssuedFrame = int.MinValue;
@@ -1921,6 +1923,26 @@ namespace Zantetsu.MeshCut
         private static bool HasNoClipVariant(Material material)
         {
             return material.shader != null && material.shader.keywordSpace.FindKeyword(VpGpuCullSetup.NoClipKeyword).isValid;
+        }
+
+        internal Material SelectShadowMaterial(Material source, bool singleShadowSlice)
+        {
+            if (!singleShadowSlice || _cull == null || source == null || source.shader == null
+                || !source.shader.keywordSpace.FindKeyword(VpGpuCullSetup.ComputeShadowSlicesKeyword).isValid)
+            {
+                return source;
+            }
+
+            _singleSliceShadowMaterials ??= new Dictionary<Material, Material>(4);
+            if (!_singleSliceShadowMaterials.TryGetValue(source, out Material copy))
+            {
+                copy = new Material(source) { name = source.name + " (single shadow slice)" };
+                copy.EnableKeyword(VpGpuCullSetup.ComputeShadowSlicesKeyword);
+                _ownedMaterials.Add(copy);
+                _singleSliceShadowMaterials.Add(source, copy);
+            }
+
+            return copy;
         }
 
         private static bool TryMakeCulledMaterials(
@@ -4766,7 +4788,7 @@ namespace Zantetsu.MeshCut
                     else if (culled)
                     {
                         _batch.RenderShadows(
-                            provisional ? _provisionalShadowMaterial : _shadowMaterial, _properties, _buffers, layer,
+                            SelectShadowMaterial(provisional ? _provisionalShadowMaterial : _shadowMaterial, cameraStencil.singleShadowSlice), _properties, _buffers, layer,
                             start, end - start, camera, cameraStencil.view);
                     }
                     else
@@ -4791,7 +4813,7 @@ namespace Zantetsu.MeshCut
 
             if (clipped && listClipDraws)
             {
-                RenderClipList(camera, layer, clipListSink, cameraStencil.view, clipSelection);
+                RenderClipList(camera, layer, clipListSink, cameraStencil.view, clipSelection, cameraStencil.singleShadowSlice);
             }
             else if (clipped)
             {
@@ -4946,7 +4968,7 @@ namespace Zantetsu.MeshCut
         // Which of the entries the camera keeps is not known yet (the selection's conditions are the frame's own, taken
         // later): the sink is given the judgement's slot and reads it when it issues; Unity's calls are registered for
         // every entry, and the selection writes a count of zero into the entries it does not keep.
-        private void RenderClipList(Camera camera, int layer, IVpNativeClipListDrawSink sink, int view, VpClipSelection selection)
+        private void RenderClipList(Camera camera, int layer, IVpNativeClipListDrawSink sink, int view, VpClipSelection selection, bool singleShadowSlice)
         {
             int count = _clipDrawRecords.Count;
             if (_clipUploadedVersion != _clipListVersion || !ReferenceEquals(_clipUploadedBatch, _batch)
@@ -5028,7 +5050,7 @@ namespace Zantetsu.MeshCut
                 }
                 else
                 {
-                    _batch.RenderClipShadows(_clipMaterials[caster], _properties, _buffers, layer, first, run, camera, view, listBounds);
+                    _batch.RenderClipShadows(SelectShadowMaterial(_clipMaterials[caster], singleShadowSlice), _properties, _buffers, layer, first, run, camera, view, listBounds);
                 }
 
                 ClipCasterIssues++;
@@ -5058,12 +5080,20 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// Issues, into <paramref name="commands"/>, the selection for the draws <see cref="Render"/> registered for
-        /// <paramref name="camera"/> in this frame, from <paramref name="conditions"/> (DESIGN 4.5.7). The commands must
-        /// be executed before that camera's shadow maps and colour are drawn; it is the caller that puts them there.
-        /// It may be issued again in the same frame, for a camera that renders more than one pass: each issue serves
-        /// the draws that follow it. False, issuing nothing, when the display does not select on the GPU, has ended,
-        /// or registered no draw for that camera in this frame.
+        /// Configures this camera's shadow variant before its draws are registered. Separate material copies keep
+        /// another camera's pending draw independent of this camera's single-slice choice.
+        /// </summary>
+        public void SetSingleShadowSlice(Camera camera, bool singleSlice)
+        {
+            ThrowIfDisposed();
+            CameraStencil slot = FindCamera(camera);
+            if (slot == null) throw new ArgumentException("the camera must be registered before its shadow draw is configured", nameof(camera));
+            slot.singleShadowSlice = singleSlice;
+        }
+
+        /// <summary>
+        /// Issues the GPU selection for this camera's registered draws, before its shadow maps and colour are drawn.
+        /// False when the display has ended, does not select on the GPU, or registered no draw for this camera.
         /// </summary>
         public bool IssueCull(UnityEngine.Rendering.CommandBuffer commands, Camera camera, VpCullConditions conditions)
         {

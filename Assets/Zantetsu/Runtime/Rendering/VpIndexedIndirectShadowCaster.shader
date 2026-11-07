@@ -32,6 +32,7 @@
 // VP_SKIN24 is the skin draw's variant (DESIGN 4.5.12): 24-byte vertices skinned by the instance's palette, as the
 // forward pass skins them, and the slice judgement reads the instance's own bounds (_VpInstanceBounds, written on the
 // GPU from its pose) instead of its command's.
+// Ordinary native Vulkan casters keep the union for every slice and compile out the per-slice Bounds judgement.
 Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 {
     Properties
@@ -63,7 +64,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
             #pragma multi_compile_local_vertex _ VP_GPU_CULLED
             #pragma shader_feature_local VP_NATIVE_MULTIDRAW
-            #pragma shader_feature_local_vertex VP_COMPUTE_SHADOW_SLICES
+            #pragma multi_compile_local_vertex _ VP_COMPUTE_SHADOW_SLICES
             // Both stages: the pixel stage's input must not declare the clip distances that a no-clip vertex stage
             // does not write. With the keyword seen by the vertex stage alone, Direct3D 12 refuses the pipeline of
             // Unity's own draw (the two signatures do not link) and nothing is drawn; Direct3D 11 draws all the same.
@@ -125,7 +126,9 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             StructuredBuffer<uint> _VpVisible;
         #endif
 
-        #if (defined(VP_GPU_CULLED) || defined(VP_CLIP_LIST_SLICES)) && !defined(VP_NATIVE_DIRECT) && !defined(VP_COMPUTE_SHADOW_SLICES)
+            // Ordinary native Vulkan draws the caster union with slice selection disabled. Skin24 retains its
+            // explicit slice switch and each instance's bounds. A runtime zero alone can leave the work in SPIR-V.
+        #if (defined(VP_GPU_CULLED) || defined(VP_CLIP_LIST_SLICES)) && !defined(VP_NATIVE_DIRECT) && !defined(VP_COMPUTE_SHADOW_SLICES) && !(defined(SHADER_API_VULKAN) && defined(VP_NATIVE_MULTIDRAW) && !defined(VP_SKIN24))
             #define VP_SLICE_JUDGEMENT 1
 
             // Matches Zantetsu.Rendering.VpCullCommand: 48 bytes. The bounds of a command's range in the geometry's

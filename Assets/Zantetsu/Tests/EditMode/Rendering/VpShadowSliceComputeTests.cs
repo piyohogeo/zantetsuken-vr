@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -8,6 +9,47 @@ namespace Zantetsu.Rendering.Tests
 {
     public class VpShadowSliceComputeTests
     {
+        [TestCase(GraphicsDeviceType.Vulkan, 1, true, false, false, true)]
+        [TestCase(GraphicsDeviceType.Vulkan, 2, true, false, false, false)]
+        [TestCase(GraphicsDeviceType.Vulkan, 4, true, false, false, false)]
+        [TestCase(GraphicsDeviceType.Direct3D11, 1, true, false, false, false)]
+        [TestCase(GraphicsDeviceType.Direct3D12, 1, true, false, false, false)]
+        [TestCase(GraphicsDeviceType.Vulkan, 1, false, false, false, false)]
+        [TestCase(GraphicsDeviceType.Vulkan, 1, true, true, false, false)]
+        [TestCase(GraphicsDeviceType.Vulkan, 1, true, false, true, false)]
+        public void SingleSliceVertexJudgement_IsOmittedOnlyForTheKnownVulkanPipeline(
+            GraphicsDeviceType device, int cascades, bool mainShadows, bool additionalShadows, bool vertexRequested, bool expected)
+        {
+            var pipelineType = Type.GetType("UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset, Unity.RenderPipelines.Universal.Runtime", true);
+            var pipeline = ScriptableObject.CreateInstance(pipelineType);
+            try
+            {
+                var settings = new SerializedObject(pipeline);
+                settings.FindProperty("m_MainLightShadowsSupported").boolValue = mainShadows;
+                settings.FindProperty("m_AdditionalLightShadowsSupported").boolValue = additionalShadows;
+                settings.FindProperty("m_ShadowCascadeCount").intValue = cascades;
+                settings.ApplyModifiedPropertiesWithoutUndo();
+
+                var routeType = Type.GetType("Zantetsu.Rendering.Urp.VpGpuCullCameraRoute, Zantetsu.Rendering.Urp", true);
+                var judgement = routeType.GetMethod("CanSkipShadowSliceJudgement");
+                Assert.That(judgement, Is.Not.Null);
+                Assert.That(judgement.Invoke(null, new object[] { device, pipeline, vertexRequested }), Is.EqualTo(expected));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(pipeline);
+            }
+        }
+
+        [Test]
+        public void SingleSliceVertexJudgement_IsKeptForAnUnknownPipeline()
+        {
+            var routeType = Type.GetType("Zantetsu.Rendering.Urp.VpGpuCullCameraRoute, Zantetsu.Rendering.Urp", true);
+            var judgement = routeType.GetMethod("CanSkipShadowSliceJudgement");
+            Assert.That(judgement, Is.Not.Null);
+            Assert.That(judgement.Invoke(null, new object[] { GraphicsDeviceType.Vulkan, null, false }), Is.False);
+        }
+
         [Test]
         public void PerInstanceBounds_KeepTheirOwnSelection_AndRefuseTheCommandBoundsShadowKernel()
         {

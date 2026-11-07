@@ -84,8 +84,12 @@ namespace Zantetsu.EditorTools.Rendering
 
         private static bool s_vulkan;
         private static bool s_computeShadowSlicesOnly;
+        private static bool s_vulkanShadowCastersOnly;
+        private static bool s_vulkanUnityShadowCastersOnly;
         public static void VulkanBatch() { s_vulkan = true; Batch(); }
         public static void ComputeShadowSlicesBatch() { s_computeShadowSlicesOnly = true; Batch(); }
+        public static void VulkanShadowCastersBatch() { s_vulkan = true; s_vulkanShadowCastersOnly = true; Batch(); }
+        public static void VulkanUnityShadowCastersBatch() { s_vulkan = true; s_vulkanUnityShadowCastersOnly = true; Batch(); }
         public static void Batch()
         {
             int code = 1;
@@ -101,8 +105,26 @@ namespace Zantetsu.EditorTools.Rendering
                 var variants = new List<Variant>(GetVariants(s_vulkan));
                 if (s_computeShadowSlicesOnly)
                     variants.RemoveAll(v => Array.IndexOf(v.Keywords, VpGpuCullSetup.ComputeShadowSlicesKeyword) < 0);
+                if (s_vulkanShadowCastersOnly)
+                    variants.RemoveAll(v => v.Name != "caster-plugin" && v.Name != "caster-plugin-noclip" && v.Name != "caster-plugin-pixelclip");
+                if (s_vulkanUnityShadowCastersOnly)
+                {
+                    variants.RemoveAll(v => v.Name != "caster-unity" && v.Name != "caster-unity-noclip" && v.Name != "caster-unity-pixelclip");
+                    foreach (Variant original in variants.ToArray())
+                    {
+                        var keys = new List<string>(original.Keywords) { VpGpuCullSetup.ComputeShadowSlicesKeyword };
+                        variants.Add(new Variant(original.Name.Replace("caster-unity", "caster-unity-single-slice"), original.Shader, keys.ToArray()));
+                    }
+                }
                 foreach (Variant variant in variants)
                     allCompiled &= Bake(variant, folder, report);
+                if (s_vulkanShadowCastersOnly)
+                {
+                    // Skin24 keeps an explicit vertex-stage slice switch. Compile its existing variant as a sentinel,
+                    // while the ordinary caster assets above are the only ones replaced by this focused bake.
+                    allCompiled &= Bake(new Variant("caster-plugin-noclip-skin24", ShadowCasterShader,
+                        GpuCulledKeyword, PluginKeyword, NoClipKeyword, SkinKeyword), folder, report, false);
+                }
                 if (s_vulkan)
                 {
                     // Stencil uses Unity draws, not native pipeline assets. Still compile its fallback here: forced
@@ -298,13 +320,34 @@ namespace Zantetsu.EditorTools.Rendering
             bool noClip = Array.IndexOf(variant.Keywords, NoClipKeyword) >= 0;
             bool direct = Array.IndexOf(variant.Keywords, DirectKeyword) >= 0;
             bool valid = vertex != null && pixel != null;
+            bool skin = Array.IndexOf(variant.Keywords, SkinKeyword) >= 0;
+            if (s_vulkan && variant.Shader == ShadowCasterShader && Array.IndexOf(variant.Keywords, PluginKeyword) >= 0)
+            {
+                bool selected = vertex != null && vertex.Buffers.Exists(b => b.Name == "_VpVertices")
+                    && vertex.Buffers.Exists(b => b.Name == "_VpVisible")
+                    && vertex.Buffers.Exists(b => b.Name == "_VpInstanceObjectToWorld");
+                bool selector = vertex != null && vertex.ConstantBuffers.Exists(b => b.Constants.Exists(c => c.Name == "_VpShadowSliceSelection"));
+                bool bounds = vertex != null && vertex.Buffers.Exists(b => b.Name == "_VpInstanceBounds");
+                bool noCommands = vertex != null && !vertex.Buffers.Exists(b => b.Name == "_VpCullCommands")
+                    && vertex.FindConstantBuffer(VpNativePipeline.CommandConstantBuffer) == null;
+                bool judgement = skin ? bounds && selector : !bounds && !selector;
+                bool clip = vertex != null && (noClip || (vertex.Buffers.Exists(b => b.Name == "_VpInstanceClip")
+                    && (pixelClip || HasSpirvClipDistance(vertex.Bytecode))));
+                valid &= selected && noCommands && judgement && clip;
+                string detail = skin ? "passed (skin instance bounds and explicit slice selector kept)"
+                    : "passed (selected instance and transform, no slice judgement, Clip contract kept)";
+                report.AppendLine("  native Vulkan caster VS gate: " + (selected && noCommands && judgement && clip ? detail : "FAILED"));
+            }
             if (Array.IndexOf(variant.Keywords, VpGpuCullSetup.ComputeShadowSlicesKeyword) >= 0)
             {
+                bool native = Array.IndexOf(variant.Keywords, PluginKeyword) >= 0;
                 bool selected = vertex != null && vertex.Buffers.Exists(b => b.Name == "_VpVisible")
                     && vertex.Buffers.Exists(b => b.Name == "_VpInstanceObjectToWorld")
-                    && vertex.Buffers.Exists(b => b.Name == "_VpNativeArguments");
+                    && (!native || vertex.Buffers.Exists(b => b.Name == "_VpNativeArguments"));
                 bool noBounds = vertex != null && !vertex.Buffers.Exists(b => b.Name == "_VpCullCommands");
                 valid &= selected && noBounds;
+                if (s_vulkan && !noClip && vertex != null)
+                    valid &= vertex.Buffers.Exists(b => b.Name == "_VpInstanceClip") && (pixelClip || HasSpirvClipDistance(vertex.Bytecode));
                 report.AppendLine("  compute shadow slices VS gate: " + (selected && noBounds ? "passed (selected instance and transform, no Bounds buffer)" : "FAILED"));
             }
             if (noClip)

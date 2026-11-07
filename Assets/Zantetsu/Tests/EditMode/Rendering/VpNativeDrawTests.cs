@@ -276,6 +276,53 @@ namespace Zantetsu.Rendering.Tests
             }
         }
 
+        [TestCase("caster-plugin", true)]
+        [TestCase("caster-plugin-noclip", false)]
+        [TestCase("caster-plugin-pixelclip", true)]
+        public void VulkanCasters_ReadSelectedInstancesWithoutBoundsOrCommandIds(string variant, bool keepsClip)
+        {
+            string resource = "VpNativeVulkan/" + variant;
+            var asset = Resources.Load<TextAsset>(resource);
+            Assert.That(asset, Is.Not.Null, "Resources/" + resource + ".bytes (VpNativeShaderBake)");
+            Assert.That(VpNativeShaderBinary.TryRead(asset.bytes, out VpNativeShaderBinary binary, out string failure), Is.True, failure);
+            VpNativeShaderBinary.Stage vertex = binary.FindStage(VpNativeShaderBinary.StageKind.Vertex);
+            Assert.That(vertex, Is.Not.Null);
+            Assert.That(vertex.Bytecode.Length, Is.GreaterThanOrEqualTo(20));
+            Assert.That(BitConverter.ToUInt32(vertex.Bytecode, 0), Is.EqualTo(0x07230203u), "SPIR-V from the first byte");
+            foreach (string name in new[] { "_VpVertices", "_VpVisible", "_VpInstanceObjectToWorld" })
+            {
+                Assert.That(vertex.Buffers.Exists(b => b.Name == name), Is.True, name);
+            }
+
+            foreach (string name in new[] { "_VpCullCommands", "_VpNativeArguments" })
+            {
+                Assert.That(vertex.Buffers.Exists(b => b.Name == name), Is.False, name);
+            }
+
+            Assert.That(vertex.FindConstantBuffer(VpNativePipeline.CommandConstantBuffer), Is.Null, "no per-command constant");
+            foreach (VpNativeShaderBinary.ConstantBuffer buffer in vertex.ConstantBuffers)
+            {
+                Assert.That(buffer.Find("_VpShadowSliceSelection"), Is.Null, buffer.Name + " has no slice judgement selector");
+            }
+
+            Assert.That(vertex.Buffers.Exists(b => b.Name == "_VpInstanceClip"), Is.EqualTo(keepsClip), "the Clip variant keeps its instance clip records");
+        }
+
+        [Test]
+        public void VulkanSkinCaster_KeepsItsInstanceBoundsAndExplicitSliceSelector()
+        {
+            var asset = Resources.Load<TextAsset>("VpNativeVulkan/caster-plugin-noclip-skin24");
+            Assert.That(asset, Is.Not.Null);
+            Assert.That(VpNativeShaderBinary.TryRead(asset.bytes, out VpNativeShaderBinary binary, out string failure), Is.True, failure);
+            VpNativeShaderBinary.Stage vertex = binary.FindStage(VpNativeShaderBinary.StageKind.Vertex);
+            Assert.That(vertex, Is.Not.Null);
+            Assert.That(vertex.Buffers.Exists(b => b.Name == "_VpInstanceBounds"), Is.True,
+                "Skin24 reads each individual's current bounds when its explicit slice switch is enabled");
+            Assert.That(vertex.ConstantBuffers.Exists(b => b.Find("_VpShadowSliceSelection") != null), Is.True);
+            Assert.That(vertex.Buffers.Exists(b => b.Name == "_VpCullCommands"), Is.False,
+                "the skin caster keeps its instance bounds instead of command bounds");
+        }
+
         [Test]
         public void ConstantBlock_WritesEachConstantAtItsOffset_AndSaysWhichAreUnused()
         {

@@ -1349,6 +1349,12 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
+        /// Skin24 retains its per-instance bounds and explicit slice-selection policy. The ordinary display's
+        /// single-slice material choice does not change this display's variants or the skin caster switch.
+        /// </summary>
+        public void SetSingleShadowSlice(Camera camera, bool singleSlice) { }
+
+        /// <summary>
         /// Issues the camera's selection: once a frame, first, the bounds of every instance slot are written on the GPU
         /// from the records, the palettes and the bone boxes, and -- where the device needs it -- the sink's compute
         /// barrier is recorded between; then the batch's selection for the camera's view. False when the camera has

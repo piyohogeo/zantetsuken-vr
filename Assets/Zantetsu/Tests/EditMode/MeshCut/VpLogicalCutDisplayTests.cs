@@ -223,6 +223,59 @@ namespace Zantetsu.MeshCut.Tests
             return side;
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SingleShadowSlice_UsesAnOwnedCachedMaterial_AndRestoresTheOriginalForMoreSlices(bool noClip)
+        {
+            Shader shader = Shader.Find("Zantetsu/VP Indexed Indirect Shadow Caster");
+            Assert.That(shader, Is.Not.Null);
+            Material source = Track(new Material(shader) { name = "single-slice source" });
+            source.EnableKeyword(VpGpuCullSetup.Keyword);
+            if (noClip)
+            {
+                source.EnableKeyword(VpGpuCullSetup.NoClipKeyword);
+            }
+
+            source.SetFloat("_Cull", (float)UnityEngine.Rendering.CullMode.Off);
+            string[] originalKeywords = source.shaderKeywords;
+            Material cached = null;
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                VpStencilSettings stencil = VpStencilTestSettings.Create();
+                Assert.That(VpGpuCullSetup.TryCreate(stencil.cameraCapacity, out VpGpuCullSetup culling, out string failure), Is.True, failure);
+                Assert.That(VpLogicalCutDisplay.TryCreateCore(
+                    storage, table, ledger, Materials(), null, null, 16, 16,
+                    VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth,
+                    stencil, () => _frame, storage.CommittedVertexCapacity, storage.CommittedIndexCapacity,
+                    out VpLogicalCutDisplay display, culling: culling), Is.True, VpLogicalCutDisplay.LastCreationFailure);
+                using (display)
+                {
+                    Assert.That(display.SelectShadowMaterial(source, false), Is.SameAs(source));
+                    cached = display.SelectShadowMaterial(source, true);
+                    Assert.That(cached, Is.Not.SameAs(source));
+                    Assert.That(cached.IsKeywordEnabled(VpGpuCullSetup.ComputeShadowSlicesKeyword), Is.True);
+                    Assert.That(cached.IsKeywordEnabled(VpGpuCullSetup.Keyword), Is.True, "the GPU selection remains enabled");
+                    Assert.That(cached.IsKeywordEnabled(VpGpuCullSetup.NoClipKeyword), Is.EqualTo(noClip));
+                    Assert.That(cached.GetFloat("_Cull"), Is.EqualTo(source.GetFloat("_Cull")), "two-sided casters keep their cull mode");
+                    Assert.That(display.SelectShadowMaterial(source, true), Is.SameAs(cached), "one copy is reused");
+                    Assert.That(display.SelectShadowMaterial(source, false), Is.SameAs(source), "more than one slice uses the original judgement");
+                    Assert.That(display.SelectShadowMaterial(source, true), Is.SameAs(cached), "returning to one slice reuses its copy");
+                    Assert.That(source.shaderKeywords, Is.EquivalentTo(originalKeywords), "the source material is unchanged");
+                    Assert.That(source.IsKeywordEnabled(VpGpuCullSetup.ComputeShadowSlicesKeyword), Is.False);
+                }
+
+                Assert.That(cached == null, Is.True, "the display destroys its cached copy");
+                Assert.That(source != null, Is.True, "the external source survives the display");
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay unculled), Is.True);
+                using (unculled)
+                {
+                    Assert.That(unculled.SelectShadowMaterial(source, true), Is.SameAs(source), "Stage 3 keeps the original material");
+                }
+            }
+        }
+
         // ----- what is settled again, and what is not ---------------------------------------------------------------
 
         /// <summary>
