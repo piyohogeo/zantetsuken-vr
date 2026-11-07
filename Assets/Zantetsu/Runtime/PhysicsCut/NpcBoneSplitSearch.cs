@@ -93,10 +93,13 @@ namespace Zantetsu.PhysicsCut
     /// **The placement.** Every group (a connected set holding a convex or triangles) must be known: triangles weighted to no
     /// bone at all, a convex without its bone, a vertex of no known origin end the decision as insufficient -- nothing is dropped
     /// to make a split. Triangles weighted only to known bones the piece no longer holds are known: they are a group of mesh
-    /// alone (<see cref="NpcBoneSplitRecord.unboundGroups"/>), placed by the rule below, never given to a convex of their choosing. With two groups or more that each hold a convex and triangles, the one of most triangles goes to the
-    /// positive side and everything else to the negative: a group of mesh or convexes alone stays with the others, as it was.
-    /// One split at a time, two outputs as every split: what remains together on the negative side is split again by a later
-    /// decision of its own fragment.
+    /// alone (<see cref="NpcBoneSplitRecord.unboundGroups"/>), placed by the rule below, never given to a convex of their choosing. Among the groups that each hold a convex and triangles (the full groups): with three or more, the one of
+    /// fewest triangles goes to the positive side alone (the smallest independent group first, 2026-11-07: after a cut at the waist,
+    /// one hand comes off, then the other from what remains, rather than both hands together from the lower body; of equal triangles
+    /// the one of fewer convexes, of equal convexes the one the scan meets first); with two, the one of more triangles goes to the
+    /// positive side, as before. Everything else goes to the negative: a group of mesh or convexes alone stays with the others, as
+    /// it was, and is never the one chosen. One split at a time, two outputs as every split: what remains together on the negative
+    /// side is split again by a later decision of its own fragment (a large remainder is decided again, so the whole may cost more).
     /// </para>
     /// Plain C# over pointers and arrays the main thread handed over, on a background worker: no Unity object, no allocation but
     /// its own native scratch, which it gives back before it returns.
@@ -397,7 +400,9 @@ namespace Zantetsu.PhysicsCut
                     trianglesOf[r]++;
                 }
 
-                int positive = -1;
+                // Of the full groups (a convex and triangles), the one of most triangles and the one of fewest (of equal triangles the
+                // one of fewer convexes; of equal counts the one met first: a strict comparison keeps it), both kept in the one scan.
+                int largest = -1, smallest = -1;
                 for (int r = 0; r < e; r++)
                 {
                     if (convexesOf[r] == 0 && trianglesOf[r] == 0) continue;
@@ -418,7 +423,8 @@ namespace Zantetsu.PhysicsCut
                     if (convexesOf[r] > 0 && trianglesOf[r] > 0)
                     {
                         record.fullGroups++;
-                        if (positive < 0 || trianglesOf[r] > trianglesOf[positive]) positive = r;
+                        if (largest < 0 || trianglesOf[r] > trianglesOf[largest]) largest = r;
+                        if (smallest < 0 || trianglesOf[r] < trianglesOf[smallest] || (trianglesOf[r] == trianglesOf[smallest] && convexesOf[r] < convexesOf[smallest])) smallest = r;
                     }
                 }
 
@@ -434,7 +440,9 @@ namespace Zantetsu.PhysicsCut
                     return;
                 }
 
-                // 6. The placement: the group of most triangles positive, everything else negative.
+                // 6. The placement: with three full groups or more, the one of fewest triangles positive (the smallest independent group
+                // first, 2026-11-07); with two, the one of most triangles, as before. Everything else negative.
+                int positive = record.fullGroups >= 3 ? smallest : largest;
                 for (int i = 0; i < c; i++)
                 {
                     bool up = Find(parent, convexBase + i) == positive;

@@ -511,6 +511,126 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(up.verdict, Is.Not.EqualTo(NpcBoneSplitVerdict.Insufficient));
         }
 
+        // ----- the smallest independent group first (2026-11-07) ---------------------------------------------------------
+
+        // A body with two arms: 0 pelvis (y 1.0), 1 spine (y 1.3), 2/5 the left/right upper arm from the shoulder (x -+0.2, y 1.4),
+        // 3/6 the forearm from the elbow (x -+0.25, y 1.1), 4/7 the hand from the wrist (x -+0.25, y 0.8), 8 a finger of the right hand
+        // (x 0.25, y 0.7). The waist plane y = 1.05 leaves below the pelvis and, apart from it and from each other, the two hands (the
+        // lower part of each forearm's segment, the hand, and on the right the finger).
+        private static readonly int[] TwoArms = { -1, 0, 1, 2, 3, 1, 5, 6, 7 };
+        private static readonly float3[] TwoArmJoints =
+        {
+            new float3(0f, 1.0f, 0f), new float3(0f, 1.3f, 0f),
+            new float3(-0.2f, 1.4f, 0f), new float3(-0.25f, 1.1f, 0f), new float3(-0.25f, 0.8f, 0f),
+            new float3(0.2f, 1.4f, 0f), new float3(0.25f, 1.1f, 0f), new float3(0.25f, 0.8f, 0f), new float3(0.25f, 0.7f, 0f),
+        };
+
+        /// <summary>The convexes on each side of a decision, as the bones they are of, in the order given.</summary>
+        private static string ConvexSides(byte[] sides, int[] convexBones)
+        {
+            var text = new System.Text.StringBuilder();
+            for (int i = 0; i < convexBones.Length; i++) text.Append(sides[i] == 1 ? '+' : '-').Append(convexBones[i]).Append(' ');
+            return text.ToString();
+        }
+
+        /// <summary>
+        /// Each convex's bone is held by the child on the convex's side and by no other: the children's bone records agree with the
+        /// placement of the convexes (the triangles' placement is the groups', checked by the sides).
+        /// </summary>
+        private static void AssertChildrenHoldTheirConvexes(NpcBoneLineage lineage, NpcBonePiece piece, byte[] boneSides, byte[] sides, int[] convexBones)
+        {
+            NpcBonePiece positive = piece.Keep(boneSides, 1, lineage.Parent, lineage.Present), negative = piece.Keep(boneSides, 0, lineage.Parent, lineage.Present);
+            for (int i = 0; i < convexBones.Length; i++)
+            {
+                NpcBonePiece mine = sides[i] == 1 ? positive : negative, other = sides[i] == 1 ? negative : positive;
+                Assert.That(mine.Present[convexBones[i]], Is.True, "the child on convex " + i + "'s side holds its bone " + convexBones[i]);
+                Assert.That(other.Present[convexBones[i]], Is.False, "the other child does not hold bone " + convexBones[i]);
+            }
+        }
+
+        /// <summary>
+        /// **Three full groups: the smallest comes off alone, then the next from what remains.** Below the waist the lower body (the pelvis,
+        /// four triangles), the left hand (one triangle) and the right hand (two) are three groups with a convex and triangles; the trunk's
+        /// skin weighted to the spine alone is a mesh alone. The left hand -- the fewest triangles -- goes to the positive side by itself:
+        /// not the two hands together, not the lower body. The negative side (the lower body, the right hand, the mesh alone) decided
+        /// again as its own piece is two full groups, placed as before: the lower body (more triangles) positive, the right hand negative.
+        /// Nothing is lost on the way, and each child's bone record holds the bones of its convexes and no other's.
+        /// </summary>
+        [Test]
+        public void ThreeFullGroups_TheSmallestComesOffAlone_ThenTheNextFromWhatRemains()
+        {
+            // 0-11 the lower body on the pelvis (four triangles), 12-14 the left hand's skin, 15-20 the right hand's (two triangles), 21-23 the trunk's on the spine
+            ulong[] weights =
+            {
+                W(0), W(0), W(0), W(0), W(0), W(0), W(0), W(0), W(0), W(0), W(0), W(0),
+                W(4), W(4), W(4), W(7), W(7), W(7), W(7), W(7), W(7), W(1), W(1), W(1),
+            };
+            NpcBoneLineage lineage = Lineage(TwoArms, weights, TwoArmJoints);
+            NpcBonePiece below = CutBy(lineage, Whole(lineage), BodyWaist, false);
+            Assert.That(below.IsJointKept(0) && below.IsJointKept(4) && below.IsJointKept(7) && !below.IsJointKept(1) && !below.IsJointKept(3) && !below.IsJointKept(6), Is.True, "the layout");
+            int[] convexBones = { 0, 4, 7 };
+            uint[] triangles = Triangles(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23);
+            var boneSides = new byte[18];
+            NpcBoneSplitRecord first = Decide(lineage, below, convexBones, triangles, out byte[] sides, boneSides: boneSides);
+            Assert.That(first.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable));
+            Assert.That(first.clusters == 3 && first.groups == 4 && first.fullGroups == 3 && first.unboundGroups == 1, Is.True, "the pelvis | the left hand | the right hand; the trunk's skin alone");
+            Assert.That(sides, Is.EqualTo(new byte[] { 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0 }), "the left hand's convex and triangle positive, alone: " + ConvexSides(sides, convexBones));
+            Assert.That(first.positiveConvexes == 1 && first.positiveTriangles == 1, Is.True, "one convex and one triangle came off");
+            AssertWhole(first, sides, 3, 8);
+            Assert.That(boneSides[4] == 1 && boneSides[0] == 0 && boneSides[7] == 0 && boneSides[1] == 2 && boneSides[3] == 2 && boneSides[6] == 2, Is.True,
+                "the left hand positive; the pelvis and the right hand negative; the spine and the forearms not held");
+            AssertChildrenHoldTheirConvexes(lineage, below, boneSides, sides, convexBones);
+
+            // the negative side as its own piece: the lower body and the right hand (and the mesh alone), two full groups -- as before
+            NpcBonePiece remainder = below.Keep(boneSides, 0, lineage.Parent, lineage.Present);
+            Assert.That(remainder.Present, Is.EqualTo(new[] { true, false, false, false, false, false, false, true, true }), "the pelvis, the right hand and its finger; the left hand went");
+            int[] remainingConvexes = { 0, 7 };
+            uint[] remainingTriangles = Triangles(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 15, 16, 17, 18, 19, 20, 21, 22, 23);
+            var secondBoneSides = new byte[18];
+            NpcBoneSplitRecord second = Decide(lineage, remainder, remainingConvexes, remainingTriangles, out byte[] secondSides, boneSides: secondBoneSides);
+            Assert.That(second.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable));
+            Assert.That(second.groups == 3 && second.fullGroups == 2 && second.unboundGroups == 1, Is.True);
+            Assert.That(secondSides, Is.EqualTo(new byte[] { 1, 0, 1, 1, 1, 1, 0, 0, 0 }), "two full groups: the lower body (more triangles) positive, the right hand negative, as before");
+            AssertWhole(second, secondSides, 2, 7);
+            AssertChildrenHoldTheirConvexes(lineage, remainder, secondBoneSides, secondSides, remainingConvexes);
+            Assert.That(remainder.Keep(secondBoneSides, 0, lineage.Parent, lineage.Present).Present, Is.EqualTo(new[] { false, false, false, false, false, false, false, true, true }), "the right hand's child holds the right hand and its finger alone");
+        }
+
+        /// <summary>
+        /// **Equal triangles: fewer convexes; equal again: the scan's first, whatever the input's order.** The two hands have one triangle
+        /// each; the right hand holds two convexes (the hand's and the finger's, one cluster): the left hand (one convex) comes off. With
+        /// one convex each, the left hand (the lower bone, met first by the scan) comes off -- the same with the convexes and the triangles
+        /// given in the other order, so the choice does not move between decisions of one piece.
+        /// </summary>
+        [Test]
+        public void EqualTriangles_FewerConvexesFirst_EqualAgain_TheScansFirst_WhateverTheOrder()
+        {
+            // 0-8 the lower body (three triangles), 9-11 the left hand's triangle, 12-14 the right hand's
+            ulong[] weights = { W(0), W(0), W(0), W(0), W(0), W(0), W(0), W(0), W(0), W(4), W(4), W(4), W(7), W(7), W(7) };
+            NpcBoneLineage lineage = Lineage(TwoArms, weights, TwoArmJoints);
+            NpcBonePiece below = CutBy(lineage, Whole(lineage), BodyWaist, false);
+            uint[] triangles = Triangles(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
+
+            int[] twoOnTheRight = { 0, 4, 7, 8 };
+            NpcBoneSplitRecord fewer = Decide(lineage, below, twoOnTheRight, triangles, out byte[] sides);
+            Assert.That(fewer.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable));
+            Assert.That(fewer.fullGroups, Is.EqualTo(3), "the finger's convex joins the right hand's group");
+            Assert.That(sides, Is.EqualTo(new byte[] { 0, 1, 0, 0, 0, 0, 0, 1, 0 }), "equal triangles: the left hand (one convex) before the right (two): " + ConvexSides(sides, twoOnTheRight));
+            AssertWhole(fewer, sides, 4, 5);
+
+            int[] oneEach = { 0, 4, 7 };
+            NpcBoneSplitRecord even = Decide(lineage, below, oneEach, triangles, out sides);
+            Assert.That(even.fullGroups, Is.EqualTo(3));
+            Assert.That(sides, Is.EqualTo(new byte[] { 0, 1, 0, 0, 0, 0, 1, 0 }), "equal in both: the left hand, met first: " + ConvexSides(sides, oneEach));
+            AssertWhole(even, sides, 3, 5);
+
+            int[] reversed = { 7, 4, 0 };
+            uint[] reversedTriangles = Triangles(12, 13, 14, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7, 8);
+            NpcBoneSplitRecord other = Decide(lineage, below, reversed, reversedTriangles, out sides);
+            Assert.That(sides, Is.EqualTo(new byte[] { 0, 1, 0, 0, 1, 0, 0, 0 }), "the same hand in the other order: " + ConvexSides(sides, reversed));
+            AssertWhole(other, sides, 3, 5);
+        }
+
         /// <summary>A joint or a part exactly on the plane stays on both sides (each side is closed).</summary>
         [Test]
         public void WhatLiesOnThePlane_StaysOnBothSides()
