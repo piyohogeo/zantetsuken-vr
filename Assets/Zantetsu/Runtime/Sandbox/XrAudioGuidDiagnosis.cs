@@ -15,9 +15,9 @@ namespace Zantetsu.Sandbox
     /// <b>Observe</b>: every call is passed on and recorded. Nothing is changed.
     /// </para>
     /// <para>
-    /// <b>Reuse</b>: a successful answer is kept, for the instance it was given for and for its direction (output and
-    /// input apart), and given again to later calls of that instance and direction without asking the runtime. A failed
-    /// answer is never kept. Everything kept is dropped when the instance is destroyed and when an instance is created:
+    /// <b>Reuse</b>: an answer, including a failure result, is kept for its instance and direction (output and input
+    /// apart), and given again without asking the runtime. Only a success keeps or writes the GUID buffer; a failure
+    /// returns its original result without touching the caller's buffer. Everything kept is dropped at destruction and creation:
     /// nothing is carried from one instance to the next. Reuse is honoured only when <see cref="ReuseAllowed"/> was set
     /// (the feature sets it for the Simulator's runtime alone); otherwise the mode behaves as Observe.
     /// </para>
@@ -72,6 +72,7 @@ namespace Zantetsu.Sandbox
             public readonly char[] kept = new char[GuidLength];
             public bool hasKept;
             public ulong keptInstance;
+            public int keptResult;
         }
 
         private readonly Side[] _sides = { new Side(), new Side() };
@@ -138,11 +139,12 @@ namespace Zantetsu.Sandbox
         }
 
         /// <summary>
-        /// Before a call is passed on: in Reuse (and allowed), a kept successful answer of this instance and direction is
-        /// copied into <paramref name="buffer"/> and true is returned -- the runtime is then not asked.
+        /// Before a call is passed on: in Reuse (and allowed), return the kept result of this instance and direction.
+        /// Only a successful result copies its GUID into <paramref name="buffer"/>; failure leaves the buffer untouched.
         /// </summary>
-        public bool TryReuse(int side, ulong instance, Span<char> buffer)
+        public bool TryReuse(int side, ulong instance, Span<char> buffer, out int result)
         {
+            result = Success;
             Side s = _sides[side];
             NoteThread();
             if (Mode != DiagnosisMode.Reuse || !ReuseAllowed || !s.hasKept || s.keptInstance != instance || instance == 0 || buffer.Length < GuidLength)
@@ -150,7 +152,8 @@ namespace Zantetsu.Sandbox
                 return false;
             }
 
-            s.kept.AsSpan().CopyTo(buffer);
+            result = s.keptResult;
+            if (result == Success) s.kept.AsSpan().CopyTo(buffer);
             s.calls++;
             s.reused++;
             return true;
@@ -167,10 +170,19 @@ namespace Zantetsu.Sandbox
             s.lastResult = result;
             s.results.TryGetValue(result, out long n);
             s.results[result] = n + 1;
+            if (Mode == DiagnosisMode.Reuse && ReuseAllowed && instance != 0 && instance == Instance
+                && (result != Success || buffer.Length >= GuidLength))
+            {
+                if (result == Success) buffer.Slice(0, GuidLength).CopyTo(s.kept);
+                s.keptResult = result;
+                s.hasKept = true;
+                s.keptInstance = instance;
+            }
+
             if (result != Success)
             {
                 s.failed++;
-                return;   // a failed answer is neither compared nor kept
+                return;   // failure's undefined GUID buffer is neither read nor compared
             }
 
             if (buffer.Length < GuidLength) return;
@@ -178,12 +190,6 @@ namespace Zantetsu.Sandbox
             if (s.hasLast && !value.SequenceEqual(s.last)) s.valueChanges++;
             value.CopyTo(s.last);
             s.hasLast = true;
-            if (Mode == DiagnosisMode.Reuse && ReuseAllowed && instance != 0 && instance == Instance)
-            {
-                value.CopyTo(s.kept);
-                s.hasKept = true;
-                s.keptInstance = instance;
-            }
         }
 
         private void NoteThread()

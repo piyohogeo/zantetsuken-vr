@@ -6,7 +6,7 @@ namespace Zantetsu.Core.Tests
 {
     /// <summary>
     /// The audio device id diagnosis's rules (2026-10-04), without any runtime: what is counted in the observe mode, and
-    /// in the reuse mode that only a successful answer is kept, for its instance and its direction, and that nothing is
+    /// in the reuse mode that answers keep their result, instance and direction, and that nothing is
     /// kept across an instance's destruction or into a new instance, nor for a runtime that is not the Simulator.
     /// </summary>
     public sealed class XrAudioGuidDiagnosisTests
@@ -50,7 +50,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(d.Mode, Is.EqualTo(XrAudioGuidDiagnosis.DiagnosisMode.Off));
             Assert.That(d.Describe(), Does.StartWith("off"));
             var buffer = new char[XrAudioGuidDiagnosis.GuidLength];
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer), Is.False);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer, out _), Is.False);
         }
 
         [Test]
@@ -64,7 +64,7 @@ namespace Zantetsu.Core.Tests
             var buffer = new char[XrAudioGuidDiagnosis.GuidLength];
             for (int i = 0; i < 5; i++)
             {
-                Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer), Is.False, "observing never answers");
+                Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer, out _), Is.False, "observing never answers");
                 d.Record(XrAudioGuidDiagnosis.Output, 7, XrAudioGuidDiagnosis.Success, 100 + i, Guid(i < 3 ? "{out-a}" : "{out-b}"));
             }
 
@@ -86,43 +86,74 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Reuse_KeepsOnlyASuccess_PerInstanceAndDirection()
+        public void Reuse_KeepsASuccess_PerInstanceAndDirection()
         {
             var d = new XrAudioGuidDiagnosis();
             d.Begin(XrAudioGuidDiagnosis.DiagnosisMode.Reuse);
             d.OnInstanceCreate(7, "Meta XR Simulator", true);
             var buffer = new char[XrAudioGuidDiagnosis.GuidLength];
 
-            // a failure first: not kept, the next call is passed on again
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer), Is.False);
-            d.Record(XrAudioGuidDiagnosis.Output, 7, -1, 10, Guid("{bad}"));
-            Assert.That(d.HasKept(XrAudioGuidDiagnosis.Output), Is.False, "a failed answer is not kept");
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer), Is.False);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer, out _), Is.False);
 
             // a success: kept for the output of instance 7 only
             d.Record(XrAudioGuidDiagnosis.Output, 7, XrAudioGuidDiagnosis.Success, 10, Guid("{out}"));
             Assert.That(d.HasKept(XrAudioGuidDiagnosis.Output), Is.True);
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer), Is.True);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer, out int result), Is.True);
+            Assert.That(result, Is.EqualTo(XrAudioGuidDiagnosis.Success));
             Assert.That(Text(buffer), Is.EqualTo("{out}"));
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Input, 7, buffer), Is.False, "the input has its own");
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 8, buffer), Is.False, "another instance is not answered from this one's");
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 0, buffer), Is.False);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Input, 7, buffer, out _), Is.False, "the input has its own");
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 8, buffer, out _), Is.False, "another instance is not answered from this one's");
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 0, buffer, out _), Is.False);
 
             d.Record(XrAudioGuidDiagnosis.Input, 7, XrAudioGuidDiagnosis.Success, 10, Guid("{in}"));
             Array.Clear(buffer, 0, buffer.Length);
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Input, 7, buffer), Is.True);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Input, 7, buffer, out _), Is.True);
             Assert.That(Text(buffer), Is.EqualTo("{in}"));
 
             // an answer for an instance that is not the current one is not kept
             d.Record(XrAudioGuidDiagnosis.Output, 9, XrAudioGuidDiagnosis.Success, 10, Guid("{other}"));
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 9, buffer), Is.False);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 9, buffer, out _), Is.False);
 
             Assert.That(d.Reused(XrAudioGuidDiagnosis.Output), Is.EqualTo(1));
-            Assert.That(d.Forwarded(XrAudioGuidDiagnosis.Output), Is.EqualTo(3));
-            Assert.That(d.Calls(XrAudioGuidDiagnosis.Output), Is.EqualTo(4));
+            Assert.That(d.Forwarded(XrAudioGuidDiagnosis.Output), Is.EqualTo(2));
+            Assert.That(d.Calls(XrAudioGuidDiagnosis.Output), Is.EqualTo(3));
 
             // a buffer too short is never written into
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, new char[8]), Is.False);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, new char[8], out _), Is.False);
+        }
+
+        [TestCase(-1)]
+        [TestCase(-12)]
+        [TestCase(-51)]
+        public void Reuse_KeepsTheFailureCode_WithoutReadingOrWritingItsGuid(int failure)
+        {
+            var d = new XrAudioGuidDiagnosis();
+            d.Begin(XrAudioGuidDiagnosis.DiagnosisMode.Reuse);
+            d.OnInstanceCreate(7, "Meta XR Simulator", true);
+            var buffer = Guid("{untouched}");
+            d.Record(XrAudioGuidDiagnosis.Input, 7, failure, 10, Guid("{undefined failure data}"));
+            Assert.That(d.HasKept(XrAudioGuidDiagnosis.Input), Is.True);
+            Assert.That(d.LastValue(XrAudioGuidDiagnosis.Input), Is.Empty);
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Input, 7, buffer, out int result), Is.True);
+                Assert.That(result, Is.EqualTo(failure), "a cached failure must not turn into success");
+                Assert.That(Text(buffer), Is.EqualTo("{untouched}"));
+            }
+
+            Assert.That(d.Forwarded(XrAudioGuidDiagnosis.Input), Is.EqualTo(1));
+            Assert.That(d.Reused(XrAudioGuidDiagnosis.Input), Is.EqualTo(3));
+            Assert.That(d.Failed(XrAudioGuidDiagnosis.Input), Is.EqualTo(1), "failed forwarded calls, not cache hits");
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer, out _), Is.False);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Input, 8, buffer, out _), Is.False);
+            d.OnInstanceDestroy(7);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Input, 7, buffer, out _), Is.False);
+            d.OnInstanceCreate(7, "Meta XR Simulator", true);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Input, 7, buffer, out _), Is.False);
+            d.Record(XrAudioGuidDiagnosis.Input, 7, XrAudioGuidDiagnosis.Success, 10, Guid("{new instance}"));
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Input, 7, buffer, out int recovered), Is.True);
+            Assert.That(recovered, Is.EqualTo(XrAudioGuidDiagnosis.Success));
+            Assert.That(Text(buffer), Is.EqualTo("{new instance}"));
         }
 
         [Test]
@@ -134,12 +165,12 @@ namespace Zantetsu.Core.Tests
             var buffer = new char[XrAudioGuidDiagnosis.GuidLength];
             d.Record(XrAudioGuidDiagnosis.Output, 7, XrAudioGuidDiagnosis.Success, 10, Guid("{out}"));
             d.Record(XrAudioGuidDiagnosis.Input, 7, XrAudioGuidDiagnosis.Success, 10, Guid("{in}"));
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer), Is.True);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer, out _), Is.True);
 
             d.OnInstanceDestroy(7);
             Assert.That(d.HasKept(XrAudioGuidDiagnosis.Output), Is.False);
             Assert.That(d.HasKept(XrAudioGuidDiagnosis.Input), Is.False);
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer), Is.False, "after the destruction, even for the same handle value");
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer, out _), Is.False, "after the destruction, even for the same handle value");
 
             Assert.That(d.DescribeReuseCounts(), Does.Match(@"^output: real calls \d+ / cache hits \d+; input: real calls \d+ / cache hits \d+$"),
                 "the reuse mode's last line: the two counts of each direction and nothing else");
@@ -148,15 +179,15 @@ namespace Zantetsu.Core.Tests
 
             // the same handle value again: a new instance starts with nothing kept
             d.OnInstanceCreate(7, "Meta XR Simulator", true);
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer), Is.False);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer, out _), Is.False);
             d.Record(XrAudioGuidDiagnosis.Output, 7, XrAudioGuidDiagnosis.Success, 10, Guid("{out-2}"));
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer), Is.True);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer, out _), Is.True);
             Assert.That(Text(buffer), Is.EqualTo("{out-2}"));
 
             // an instance created without a destruction in between: still nothing carried over
             d.OnInstanceCreate(8, "Meta XR Simulator", true);
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer), Is.False);
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 8, buffer), Is.False);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer, out _), Is.False);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 8, buffer, out _), Is.False);
             Assert.That(d.InstancesCreated, Is.EqualTo(3));
             Assert.That(d.InstancesDestroyed, Is.EqualTo(1));
         }
@@ -170,7 +201,10 @@ namespace Zantetsu.Core.Tests
             var buffer = new char[XrAudioGuidDiagnosis.GuidLength];
             d.Record(XrAudioGuidDiagnosis.Output, 7, XrAudioGuidDiagnosis.Success, 10, Guid("{out}"));
             Assert.That(d.HasKept(XrAudioGuidDiagnosis.Output), Is.False);
-            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer), Is.False);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Output, 7, buffer, out _), Is.False);
+            d.Record(XrAudioGuidDiagnosis.Input, 7, -12, 10, Guid("{undefined failure data}"));
+            Assert.That(d.HasKept(XrAudioGuidDiagnosis.Input), Is.False);
+            Assert.That(d.TryReuse(XrAudioGuidDiagnosis.Input, 7, buffer, out _), Is.False);
             Assert.That(d.Describe(), Does.Contain("not allowed for this runtime"));
         }
     }

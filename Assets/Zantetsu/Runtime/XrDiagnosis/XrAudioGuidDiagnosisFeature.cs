@@ -18,7 +18,8 @@ namespace Zantetsu.XrDiagnosis
     /// and the runtime's <c>xrGetAudioOutputDeviceGuidOculus</c> / <c>xrGetAudioInputDeviceGuidOculus</c> (through the
     /// package's hook on xrGetInstanceProcAddr) and feeds <see cref="XrAudioGuidDiagnosis"/>: how often each is called,
     /// how long each call takes, what it returns. With the reuse argument, and only when the runtime names itself a
-    /// Simulator, a successful answer is given again to later calls of the same instance and direction.
+    /// Simulator, the result (including failure) is given again to calls of the same instance and direction.
+    /// Failed results do not read or write the undefined GUID buffer.
     /// <para>
     /// Whether the plugin's own calls of the two functions go through the hooked table at all is what the first run
     /// with the observe argument shows: address lookups and calls are counted apart, and no call counted means the
@@ -153,7 +154,7 @@ namespace Zantetsu.XrDiagnosis
             XrAudioGuidDiagnosis diagnosis = XrAudioGuidDiagnosis.Current;
             if (buffer == null || original == null) return original != null ? original(instance, buffer) : -1;
             var span = new Span<char>(buffer, XrAudioGuidDiagnosis.GuidLength);
-            if (diagnosis.TryReuse(side, instance, span)) return XrAudioGuidDiagnosis.Success;
+            if (diagnosis.TryReuse(side, instance, span, out int cachedResult)) return cachedResult;
             Unity.Profiling.ProfilerMarker marker = side == XrAudioGuidDiagnosis.Output ? s_outputMarker : s_inputMarker;
             marker.Begin();
             long start = Stopwatch.GetTimestamp();
