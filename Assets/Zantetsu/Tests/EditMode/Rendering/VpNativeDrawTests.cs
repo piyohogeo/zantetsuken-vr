@@ -413,13 +413,15 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(Plugin.CompactCommandsArgument, Is.EqualTo("-zantetsuVpCompactCommands"));
             Assert.That(Plugin.FixedCommandsArgument, Is.EqualTo("-zantetsuVpFixedCommands"));
 
-            // The Direct3D 12 route (DESIGN 4.5.11, D-219): the other way round -- the fixed draw unless the compaction
-            // is asked for, and the fixed argument wins there too.
-            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(null), Is.False);
-            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", "-zantetsuVp3cNative" }), Is.False, "the fixed draw is that route's default");
-            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument }), Is.True, "what asks for the compaction there");
-            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.FixedCommandsArgument }), Is.False);
-            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument, Plugin.FixedCommandsArgument }), Is.False, "the fixed draw wins");
+            // The Direct3D 12 route defaults to compaction on Radeon and to the fixed draw on other vendors.
+            // Explicit arguments are checked against a named device so this case is independent of the Editor GPU.
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(null, GraphicsDeviceType.Direct3D12, 0x10DE), Is.False);
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", "-zantetsuVp3cNative" }, GraphicsDeviceType.Direct3D12, 0x10DE), Is.False);
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument }, GraphicsDeviceType.Direct3D12, 0x10DE), Is.True);
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.FixedCommandsArgument }, GraphicsDeviceType.Direct3D12, 0x10DE), Is.False);
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument, Plugin.FixedCommandsArgument }, GraphicsDeviceType.Direct3D12, 0x10DE), Is.False, "the fixed draw wins");
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(null),
+                Is.EqualTo(Plugin.ReadDirect3D12IndirectCountRequest(null, SystemInfo.graphicsDeviceType, SystemInfo.graphicsDeviceVendorID)));
             Assert.That(VpCommandCompaction.VerifyArgument, Is.EqualTo("-zantetsuVpCompactVerify"));
 
             // What the Vulkan route is asked changes nothing off a Vulkan device; the choice there is the Direct3D 12
@@ -438,7 +440,7 @@ namespace Zantetsu.Rendering.Tests
                     Assert.That(reason, Does.StartWith("fixed:"));
                     if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D12)
                     {
-                        Assert.That(reason, Does.StartWith("fixed: the default of the Direct3D 12 route").And.Contain(Plugin.CompactCommandsArgument).And.Contain(Plugin.FixedCommandsArgument));
+                        Assert.That(reason, Does.StartWith("fixed: command compaction is disabled for the Direct3D 12 route").And.Contain(Plugin.CompactCommandsArgument).And.Contain(Plugin.FixedCommandsArgument));
                     }
                     else
                     {
@@ -453,7 +455,7 @@ namespace Zantetsu.Rendering.Tests
                 {
                     // This Editor's device and library: the plugin draws here, has the count draw, and the device has waves.
                     Assert.That(taken, Is.True, askedReason);
-                    Assert.That(askedReason, Does.StartWith("compaction: asked for on the Direct3D 12 route").And.Contain(Plugin.CompactCommandsArgument).And.Contain("lanes").And.Contain("one set a selection"));
+                    Assert.That(askedReason, Does.StartWith("compaction: selected on the Direct3D 12 route").And.Contain("lanes").And.Contain("one set a selection"));
                     Assert.That(Plugin.IndirectCountReady, Is.True);
                     Assert.That(Plugin.TryReadIndirectCountInfo(out bool waves, out uint least, out uint most, out _, out _), Is.True);
                     Assert.That(waves, Is.True);
@@ -473,23 +475,72 @@ namespace Zantetsu.Rendering.Tests
             }
         }
 
+        [TestCase(GraphicsDeviceType.Direct3D12, 0x1002, true)]
+        [TestCase(GraphicsDeviceType.Direct3D12, 0x10DE, false)]
+        [TestCase(GraphicsDeviceType.Direct3D12, 0x8086, false)]
+        [TestCase(GraphicsDeviceType.Direct3D12, 0, false)]
+        [TestCase(GraphicsDeviceType.Direct3D11, 0x1002, false)]
+        [TestCase(GraphicsDeviceType.Vulkan, 0x1002, false)]
+        public void Direct3D12CommandCompaction_DefaultsToRadeonOnThatApi(GraphicsDeviceType device, int vendorId, bool expected)
+        {
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(null, device, vendorId), Is.EqualTo(expected));
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", "-zantetsuVp3cNative" }, device, vendorId), Is.EqualTo(expected));
+        }
+
+        [TestCase(GraphicsDeviceType.Direct3D12, 0x1002)]
+        [TestCase(GraphicsDeviceType.Direct3D12, 0x10DE)]
+        [TestCase(GraphicsDeviceType.Direct3D12, 0x8086)]
+        [TestCase(GraphicsDeviceType.Direct3D12, 0)]
+        [TestCase(GraphicsDeviceType.Direct3D11, 0x1002)]
+        [TestCase(GraphicsDeviceType.Vulkan, 0x1002)]
+        public void Direct3D12CommandCompaction_ExplicitArgumentsWinOverTheDeviceDefault(GraphicsDeviceType device, int vendorId)
+        {
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument }, device, vendorId), Is.True);
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.FixedCommandsArgument }, device, vendorId), Is.False);
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument, Plugin.FixedCommandsArgument }, device, vendorId), Is.False);
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.FixedCommandsArgument, Plugin.CompactCommandsArgument }, device, vendorId), Is.False);
+        }
+
         [Test]
         public void TheLaunchRecord_SaysWhatIsAskedOfTheCommandCompaction()
         {
             Assume.That(Plugin.Vulkan, Is.False, "this case is the Editor's (Direct3D)");
-            string nothing = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe" });
-            string compact = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.CompactCommandsArgument });
-            string both = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.CompactCommandsArgument, Plugin.FixedCommandsArgument });
-            string check = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.CompactCommandsArgument, VpCommandCompaction.VerifyArgument });
+            string nothing = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe" }, GraphicsDeviceType.Direct3D12, 0x10DE);
+            string compact = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.CompactCommandsArgument }, GraphicsDeviceType.Direct3D12, 0x10DE);
+            string both = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.CompactCommandsArgument, Plugin.FixedCommandsArgument }, GraphicsDeviceType.Direct3D12, 0x10DE);
+            string check = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.CompactCommandsArgument, VpCommandCompaction.VerifyArgument }, GraphicsDeviceType.Direct3D12, 0x10DE);
             TestContext.Out.WriteLine(nothing + "\n" + compact + "\n" + both + "\n" + check);
-            string fixedDraw = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.FixedCommandsArgument });
+            string fixedDraw = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.FixedCommandsArgument }, GraphicsDeviceType.Direct3D12, 0x10DE);
             TestContext.Out.WriteLine(fixedDraw);
             Assert.That(nothing, Does.StartWith("no (").And.Contain("the Direct3D 12 route's default: the fixed draw"));
             Assert.That(compact, Does.StartWith("yes (").And.Contain(Plugin.CompactCommandsArgument).And.Not.Contain("the default anyway"));
             Assert.That(both, Does.StartWith("no (").And.Contain(Plugin.FixedCommandsArgument));
             Assert.That(fixedDraw, Does.StartWith("no (").And.Contain(Plugin.FixedCommandsArgument));
             Assert.That(check, Does.StartWith("yes (").And.Contain("a check run"));
-            Assert.That(Zantetsu.Sandbox.SandboxLaunchRecord.Describe(new[] { "player.exe" }), Does.Contain("; command compaction asked: no ("));
+            string actual = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe" });
+            Assert.That(actual, Is.EqualTo(Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(
+                new[] { "player.exe" }, SystemInfo.graphicsDeviceType, SystemInfo.graphicsDeviceVendorID)));
+            Assert.That(Zantetsu.Sandbox.SandboxLaunchRecord.Describe(new[] { "player.exe" }), Does.Contain("; command compaction asked: " + actual));
+        }
+
+        [TestCase(GraphicsDeviceType.Direct3D12, 0x1002, true, "the Radeon Direct3D 12 route's default")]
+        [TestCase(GraphicsDeviceType.Direct3D12, 0x10DE, false, "the Direct3D 12 route's default: the fixed draw")]
+        [TestCase(GraphicsDeviceType.Direct3D12, 0x8086, false, "the Direct3D 12 route's default: the fixed draw")]
+        [TestCase(GraphicsDeviceType.Direct3D12, 0, false, "the Direct3D 12 route's default: the fixed draw")]
+        [TestCase(GraphicsDeviceType.Direct3D11, 0x1002, false, "the Direct3D 12 route's default: the fixed draw")]
+        [TestCase(GraphicsDeviceType.Vulkan, 0x1002, true, "the Vulkan route's default")]
+        public void TheLaunchRecord_DescribesTheDeviceDefaultAndExplicitOverrides(GraphicsDeviceType device, int vendorId, bool expected, string defaultReason)
+        {
+            string defaultChoice = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe" }, device, vendorId);
+            Assert.That(defaultChoice, Does.StartWith(expected ? "yes (" : "no (").And.Contain(defaultReason));
+            string compact = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.CompactCommandsArgument }, device, vendorId);
+            Assert.That(compact, Does.StartWith("yes (").And.Contain(Plugin.CompactCommandsArgument));
+            string fixedChoice = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.FixedCommandsArgument }, device, vendorId);
+            Assert.That(fixedChoice, Does.StartWith("no (").And.Contain(Plugin.FixedCommandsArgument));
+            string both = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.CompactCommandsArgument, Plugin.FixedCommandsArgument }, device, vendorId);
+            Assert.That(both, Does.StartWith("no (").And.Contain(Plugin.FixedCommandsArgument));
+            string reverse = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.FixedCommandsArgument, Plugin.CompactCommandsArgument }, device, vendorId);
+            Assert.That(reverse, Does.StartWith("no (").And.Contain(Plugin.FixedCommandsArgument));
         }
 
         [Test]

@@ -21,7 +21,7 @@ namespace Zantetsu.Rendering
     /// <para>
     /// **Direct3D 12 (DESIGN 4.5.11, D-218, D-219).** The same kernel compacts for the Direct3D 12 plugin's
     /// ExecuteIndirect with a count buffer, where a launch asks for it (<see cref="VpNativeDrawPlugin.Direct3D12IndirectCount"/>):
-    /// that route's default is the fixed draw. There the order of the steps is Direct3D 12's own, by the resource state each
+    /// Radeon requests it by default on that route. There the order of the steps is Direct3D 12's own, by the resource state each
     /// needs, and nothing of the plugin stands between them: the count slots are zeroed by a copy in Unity's command
     /// stream (<see cref="ZeroCounts"/>), the compaction follows the selection as a reader of what it wrote, and the
     /// draw reads the count the compute wrote, directly. One set a selection, not a ring of them.
@@ -156,8 +156,8 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
-        /// The Direct3D 12 route's choice (DESIGN 4.5.11, D-219), with its reason in words for the log: the fixed
-        /// draw, that route's default, unless the launch asks for the compaction -- and then the compaction where
+        /// The Direct3D 12 route's choice (DESIGN 4.5.11), with its reason in words for the log. Radeon requests
+        /// compaction by default, with explicit launch choices overriding the default. Compaction is taken where
         /// the plugin is loaded and can record a count draw (a library built before it cannot), the device has wave
         /// operations (D3D12_FEATURE_D3D12_OPTIONS1, as the plugin read it) and the kernel is in the build and
         /// supported. Any of them missing is the fixed draw, with which one. Nothing is read back.
@@ -166,8 +166,9 @@ namespace Zantetsu.Rendering
         {
             if (!VpNativeDrawPlugin.Direct3D12IndirectCount)
             {
-                reason = "fixed: the default of the Direct3D 12 route (the compaction is taken where " + VpNativeDrawPlugin.CompactCommandsArgument
-                    + " asks for it and " + VpNativeDrawPlugin.FixedCommandsArgument + " is not given)";
+                reason = "fixed: command compaction is disabled for the Direct3D 12 route ("
+                    + VpNativeDrawPlugin.FixedCommandsArgument + ", device default or launch configuration, enable with "
+                    + VpNativeDrawPlugin.CompactCommandsArgument + ")";
                 return false;
             }
 
@@ -201,7 +202,7 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            reason = "compaction: asked for on the Direct3D 12 route (" + VpNativeDrawPlugin.CompactCommandsArgument + "; count draw ready, wave operations of "
+            reason = "compaction: selected on the Direct3D 12 route (count draw ready, wave operations of "
                 + (lanesLeast == lanesMost ? lanesLeast.ToString() : lanesLeast + " to " + lanesMost) + " lanes, wave kernel supported; counts zeroed by a copy, one set a selection)";
             return true;
         }

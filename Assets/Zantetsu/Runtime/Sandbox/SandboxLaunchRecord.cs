@@ -83,23 +83,29 @@ namespace Zantetsu.Sandbox
 
         /// <summary>
         /// What the launch asks of the command compaction on this device (DESIGN 4.5.10, 4.5.11): the Vulkan route
-        /// compacts unless the fixed draw is asked for; the Direct3D 12 route draws fixed unless the compaction is
-        /// asked for (D-219).
+        /// compacts unless the fixed draw is asked for. Direct3D 12 defaults to compaction on Radeon, with
+        /// explicit launch arguments overriding the device default.
         /// This is the launch's side; whether a route took it, and why not when it did not, is that route's own
         /// "VP COMMAND COMPACTION:" line.
         /// </summary>
         public static string DescribeCommandCompaction(string[] arguments)
+            => DescribeCommandCompaction(arguments, SystemInfo.graphicsDeviceType, SystemInfo.graphicsDeviceVendorID);
+
+        /// <summary>The launch description for a specified API and PCI vendor ID.</summary>
+        public static string DescribeCommandCompaction(string[] arguments, GraphicsDeviceType device, int vendorId)
         {
-            bool vulkan = Zantetsu.Rendering.VpNativeDrawPlugin.Vulkan;
+            arguments = arguments ?? Array.Empty<string>();
+            bool vulkan = device == GraphicsDeviceType.Vulkan;
             bool asked = vulkan
                 ? Zantetsu.Rendering.VpNativeDrawPlugin.ReadIndirectCountRequest(arguments)
-                : Zantetsu.Rendering.VpNativeDrawPlugin.ReadDirect3D12IndirectCountRequest(arguments);
+                : Zantetsu.Rendering.VpNativeDrawPlugin.ReadDirect3D12IndirectCountRequest(arguments, device, vendorId);
             bool fixedGiven = Array.IndexOf(arguments, Zantetsu.Rendering.VpNativeDrawPlugin.FixedCommandsArgument) >= 0;
             bool compactGiven = Array.IndexOf(arguments, Zantetsu.Rendering.VpNativeDrawPlugin.CompactCommandsArgument) >= 0;
             return (asked ? "yes" : "no") + " ("
                 + (fixedGiven ? Zantetsu.Rendering.VpNativeDrawPlugin.FixedCommandsArgument
                     : compactGiven ? Zantetsu.Rendering.VpNativeDrawPlugin.CompactCommandsArgument + (vulkan ? ", the default anyway" : "")
-                    : vulkan ? "the Vulkan route's default" : "the Direct3D 12 route's default: the fixed draw")
+                    : vulkan ? "the Vulkan route's default"
+                    : asked ? "the Radeon Direct3D 12 route's default" : "the Direct3D 12 route's default: the fixed draw")
                 + (Array.IndexOf(arguments, Zantetsu.Rendering.VpCommandCompaction.VerifyArgument) >= 0 ? "; " + Zantetsu.Rendering.VpCommandCompaction.VerifyArgument + " given: a check run" : "")
                 + ")";
         }
