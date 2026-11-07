@@ -1,6 +1,8 @@
 using System;
 using UnityEngine;
 using UnityEngine.Profiling;
+using UnityEngine.Rendering;
+using Zantetsu.Core;
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
 using Zantetsu.MeshCut;
 #endif
@@ -48,6 +50,10 @@ namespace Zantetsu.Sandbox
                 + ", " + DeepProfilingArgument + "=" + (Has(DeepProfilingArgument) ? "given" : "not given")
                 + ", " + ProfilerEnableArgument + "=" + (Has(ProfilerEnableArgument) ? "given" : "not given")
                 + "; graphics=" + SystemInfo.graphicsDeviceType + "; body route asked: " + DescribeBodyRoute(arguments)
+                + (Application.platform == RuntimePlatform.WindowsPlayer ? "; graphics launch: " + DescribeGraphicsSelection(
+                    SystemInfo.graphicsDeviceType,
+                    Environment.GetEnvironmentVariable(WindowsGraphicsPreference.SourceEnvironment),
+                    Environment.GetEnvironmentVariable(WindowsGraphicsPreference.ReasonEnvironment)) : string.Empty)
                 + "; clipped instances asked: " + (Zantetsu.Rendering.VpGpuCullSetup.ReadSeparateClip(arguments) ? "apart (the default)" : "with the selection (" + Zantetsu.Rendering.VpGpuCullSetup.ClipTogetherArgument + ")")
                 + "; command compaction asked: " + DescribeCommandCompaction(arguments)
                 + "; buildGuid=" + Application.buildGUID + ", version=" + Application.version + ", unity=" + Application.unityVersion
@@ -55,6 +61,12 @@ namespace Zantetsu.Sandbox
                 + "; Prop Slash parts: " + SandboxPropSlashPlayerCheck.DescribeParts(arguments)
                 + "; command line: " + string.Join(" ", arguments);
         }
+
+        /// <summary>The device Unity actually initialized, separately from why the Windows launcher selected it.</summary>
+        internal static string DescribeGraphicsSelection(GraphicsDeviceType actual, string source, string reason)
+            => "actual=" + actual + ", source=" + (string.IsNullOrEmpty(source) ? "direct (直接起動)" : PlayMenuGraphicsSettings.OneLine(source))
+                + ", reason=" + (string.IsNullOrEmpty(source) ? "not supplied (direct Player launch)"
+                    : string.IsNullOrWhiteSpace(reason) ? "not supplied" : PlayMenuGraphicsSettings.OneLine(reason));
 
         /// <summary>
         /// What the launch asks of the body's route and what that selects on this device (D-215): the request, and the

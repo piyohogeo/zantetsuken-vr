@@ -563,6 +563,7 @@ namespace Zantetsu.Sandbox
         private PlayStatisticsService _statistics;
         private bool _dialogOpen;
         private PlaySettings _settings;
+        private PlayMenuGraphicsSettings _graphicsSettings;
         private Camera _camera;
         private bool _gameInputHeldBack;
 
@@ -661,6 +662,7 @@ namespace Zantetsu.Sandbox
         {
             Scenario = scenario;
             _settings = new PlaySettings(scenario == SandboxScenarioKind.Play);
+            _graphicsSettings = PlayMenuGraphicsSettings.ForCurrentPlayer(scenario);
             _settings.Bind();
             FollowSystemPause();
             string applied = _settings.ApplySaved();
@@ -1209,6 +1211,7 @@ namespace Zantetsu.Sandbox
                 rows.Add(new PlayMenuView.Row { label = PlayStatisticsService.MenuExplanationFor(PlayStatisticsService.IsDesktopPlayer), isText = true, interactable = false });
             }
 
+            _graphicsSettings?.AppendRows(rows);
             return rows;
         }
 

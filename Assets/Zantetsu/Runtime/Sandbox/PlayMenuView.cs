@@ -65,8 +65,11 @@ namespace Zantetsu.Sandbox
             public string unit = "";
             public bool interactable = true;
             public bool isToggle;
+            /// <summary>A button cycling through named choices on a new press; its value is the choice's index.</summary>
+            public string[] choices;
             /// <summary>A line of text alone (an explanation): no slider, no toggle, no value; read/write unused.</summary>
             public bool isText;
+            public Func<string> readText;
             public Func<float> read;
             public Action<float> write;
 
@@ -220,7 +223,7 @@ namespace Zantetsu.Sandbox
             row.labelText = NewText(row.label, _canvas, font, row.label, 26, text, TextAnchor.MiddleLeft);
             Place(row.labelText.rectTransform, -200f, y, 280f, 40f);
 
-            if (row.isToggle)
+            if (row.isToggle || row.choices != null)
             {
                 row.background = NewImage("Toggle " + row.label, _canvas, row.interactable ? ControlColour : DisabledColour);
                 Place(row.background.rectTransform, 90f, y, 280f, 44f);
@@ -327,9 +330,18 @@ namespace Zantetsu.Sandbox
         {
             foreach (Row row in _rows)
             {
-                if (row.isText) continue;
+                if (row.isText)
+                {
+                    if (row.readText != null) row.labelText.text = row.readText() ?? string.Empty;
+                    continue;
+                }
                 float value = row.read != null ? row.read() : row.minimum;
-                if (row.isToggle)
+                if (row.choices != null)
+                {
+                    int choice = Mathf.RoundToInt(value);
+                    row.valueText.text = choice >= 0 && choice < row.choices.Length ? row.choices[choice] : "選択してください";
+                }
+                else if (row.isToggle)
                 {
                     row.valueText.text = value >= 0.5f ? "ON" : "OFF";
                 }
@@ -387,7 +399,7 @@ namespace Zantetsu.Sandbox
 
             foreach (Row row in _rows)
             {
-                if (!row.interactable)
+                if (!row.interactable || row.isText)
                 {
                     continue;
                 }
@@ -396,7 +408,14 @@ namespace Zantetsu.Sandbox
                 row.background.color = over || _held == row ? HoverColour : ControlColour;
                 if (over && pressed)
                 {
-                    if (row.isToggle)
+                    if (row.choices != null)
+                    {
+                        _held = null;
+                        int current = row.read != null ? Mathf.RoundToInt(row.read()) : -1;
+                        if (row.choices.Length > 0) row.write?.Invoke((current + 1) % row.choices.Length);
+                        Refresh();
+                    }
+                    else if (row.isToggle)
                     {
                         _held = null;
                         row.write?.Invoke(row.read != null && row.read() >= 0.5f ? 0f : 1f);
