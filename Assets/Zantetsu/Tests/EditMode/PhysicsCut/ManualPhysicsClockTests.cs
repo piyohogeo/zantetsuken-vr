@@ -27,6 +27,8 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(new ManualPhysicsClock(90, TicksPerSecond).StepSeconds, Is.EqualTo(1.0 / 90.0));
             Assert.That(new ManualPhysicsClock(60, TicksPerSecond).StepSeconds, Is.EqualTo(1.0 / 60.0));
             Assert.That(new ManualPhysicsClock(72, TicksPerSecond).StepSeconds, Is.EqualTo(1.0 / 72.0));
+            Assert.That(new ManualPhysicsClock(80, TicksPerSecond).StepSeconds, Is.EqualTo(1.0 / 80.0));
+            Assert.That(new ManualPhysicsClock(120, TicksPerSecond).StepSeconds, Is.EqualTo(1.0 / 120.0));
             Assert.Throws<ArgumentOutOfRangeException>(() => new ManualPhysicsClock(50, TicksPerSecond));
         }
 

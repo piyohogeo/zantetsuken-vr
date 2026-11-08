@@ -40,14 +40,14 @@ namespace Zantetsu.PhysicsCut
         private bool _started;
         private bool _paused;
 
-        /// <param name="frequencyHz">The physics frequency: 45, 60, 72 or 90 Hz.</param>
+        /// <param name="frequencyHz">The physics frequency: 45, 60, 72, 80, 90 or 120 Hz.</param>
         /// <param name="ticksPerSecond">The frequency of the monotonic clock the timestamps come from.</param>
         /// <param name="doubleStep">Whether a decision may take one step of twice the normal step when two are owed (PCVR's display step or non-VR Android's 60/30 Hz step).</param>
         public ManualPhysicsClock(int frequencyHz, long ticksPerSecond, bool doubleStep = false)
         {
             if (!IsSupportedFrequency(frequencyHz))
             {
-                throw new ArgumentOutOfRangeException(nameof(frequencyHz), "the physics frequency is 45, 60, 72 or 90 Hz");
+                throw new ArgumentOutOfRangeException(nameof(frequencyHz), "the physics frequency is 45, 60, 72, 80, 90 or 120 Hz");
             }
 
             if (ticksPerSecond <= 0)
@@ -111,10 +111,10 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Whether time is not being accumulated.</summary>
         public bool IsPaused => _paused;
 
-        /// <summary>The supported frequencies: 45 or 90 chosen at start, 72 or 90 for PCVR, and 60 for non-VR Android.</summary>
+        /// <summary>The supported frequencies: 45 or 90 chosen at start, 72, 80, 90 or 120 for PCVR, and 60 for non-VR Android.</summary>
         public static bool IsSupportedFrequency(int frequencyHz)
         {
-            return frequencyHz == 45 || frequencyHz == 60 || frequencyHz == 72 || frequencyHz == 90;
+            return frequencyHz == 45 || frequencyHz == 60 || frequencyHz == 72 || frequencyHz == 80 || frequencyHz == 90 || frequencyHz == 120;
         }
 
         /// <summary>

@@ -13,7 +13,7 @@ namespace Zantetsu.PhysicsCut
     /// <summary>
     /// **The one place the default physics scene is advanced** (DESIGN 4.4): with
     /// <see cref="SimulationMode.Script"/>, a fixed step of 45 or 90 Hz chosen at start -- or, on PCVR, the display's
-    /// step of 72 or 90 Hz, or non-VR Android's 60 Hz step, with one double step when two are owed -- at most one
+    /// step of 72, 80, 90 or 120 Hz, or non-VR Android's 60 Hz step, with one double step when two are owed -- at most one
     /// <see cref="Physics.Simulate"/> per rendered frame, taken only when a whole step is owed and its expected cost fits
     /// what is left of the frame's Main budget.
     /// <para>
@@ -57,7 +57,7 @@ namespace Zantetsu.PhysicsCut
     /// reader has a frame of its own, no reading or change of work starts it again, and a negative remainder is a
     /// shortfall as it stands. The period is settled at each frame's start from the host's source
     /// (non-VR Android: 60 Hz; <see cref="SetApplicationFrameSource"/>: Quest under frame synthesis is 45 Hz), else from the
-    /// PCVR display's rate settled at the session's start (72 or 90 Hz), and is one 90 Hz frame
+    /// PCVR display's rate settled at the session's start (72, 80, 90 or 120 Hz), and is one 90 Hz frame
     /// (<see cref="DefaultApplicationFrameSeconds"/>) when there is neither, the source has no answer, or its answer is
     /// not a frame period (<see cref="AcceptedFrameSeconds"/>). Never from measured frame times or fps.
     /// </para>

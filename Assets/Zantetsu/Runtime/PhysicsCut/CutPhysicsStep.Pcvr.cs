@@ -40,7 +40,7 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The fixed step of before: 45 or 90 Hz, one normal step at a time.</summary>
         Fixed = 0,
 
-        /// <summary>PCVR: the display's step (72 or 90 Hz), and one double step when two are owed.</summary>
+        /// <summary>PCVR: the display's step (72, 80, 90 or 120 Hz), and one double step when two are owed.</summary>
         Display = 1,
 
         /// <summary>Non-VR Android: 60 Hz with a single 1/30 s simulation when two normal steps are owed.</summary>
@@ -53,8 +53,8 @@ namespace Zantetsu.PhysicsCut
     // The source: the running XRDisplaySubsystem's TryGetDisplayRefreshRate -- the OpenXR runtime's display rate (with
     // XR_FB_display_refresh_rate, the display's; otherwise Unity's reading of the runtime's predicted display period).
     // When it is read: at each frame's start (BeginFrame, after the frame's start is taken, so the query's time is the
-    // frame's), from the session's first frame until it is settled, and settled once: a rate within PcvrToleranceHz of 72
-    // or 90 is that rate; any other rate is out of scope, said so, and the provisional 90 Hz is taken; no rate within
+    // frame's), from the session's first frame until it is settled, and settled once: a rate within PcvrToleranceHz of 72,
+    // 80, 90 or 120 is that rate; any other rate is out of scope, said so, and the provisional 90 Hz is taken; no rate within
     // PcvrSettleSeconds of the first frame is "not obtained", said so, and the provisional 90 Hz is taken. The session is
     // PCVR when a running XR display is seen (or -zantetsuPhysicsStep display); an XR display created and not yet started
     // is waited for (XR not ready is not a desktop); no XR display at all at the first frame is a desktop session at once,
@@ -70,7 +70,7 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The start-up argument choosing the margin: <c>9percent</c> (the default) or <c>fixed2ms</c>.</summary>
         public const string MarginArgument = "-zantetsuMainMargin";
 
-        /// <summary>How far a reported rate may be from 72 or 90 Hz and still be that rate, in Hz.</summary>
+        /// <summary>How far a reported rate may be from 72, 80, 90 or 120 Hz and still be that rate, in Hz.</summary>
         public const float PcvrToleranceHz = 0.5f;
 
         /// <summary>How long after the first frame a PCVR session waits for its display's rate before taking the provisional rate, in seconds. No step is taken meanwhile.</summary>
@@ -97,13 +97,13 @@ namespace Zantetsu.PhysicsCut
             /// <summary>The first frame not reached yet, or waiting for the rate.</summary>
             Pending = 1,
 
-            /// <summary>72 or 90 Hz read from the display.</summary>
+            /// <summary>72, 80, 90 or 120 Hz read from the display.</summary>
             Obtained = 2,
 
             /// <summary>No rate within the wait: the provisional 90 Hz.</summary>
             NotObtained = 3,
 
-            /// <summary>A rate other than 72 or 90 Hz: the provisional 90 Hz, said so.</summary>
+            /// <summary>A rate other than 72, 80, 90 or 120 Hz: the provisional 90 Hz, said so.</summary>
             OutOfScope = 4,
 
             /// <summary>No XR display at all at the first frame, not even one not yet started (a desktop session): no PCVR rate.</summary>
@@ -135,18 +135,20 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Whether the step is settled: false only while a PCVR display step waits for its rate at the session's start (no step meanwhile).</summary>
         public static bool StepSettled => s_stepSettled;
 
-        /// <summary>The PCVR target rate taken, in Hz: 72 or 90 when obtained, 90 provisional otherwise; 0 when no PCVR rate (Quest, desktop, not yet settled).</summary>
+        /// <summary>The PCVR target rate taken, in Hz: 72, 80, 90 or 120 when obtained, 90 provisional otherwise; 0 when no PCVR rate (Quest, desktop, not yet settled).</summary>
         public static int PcvrTargetHz => s_pcvrHz;
 
         /// <summary>
-        /// The 72 or 90 Hz a reported rate stands for (within <see cref="PcvrToleranceHz"/>), or 0 for any other rate --
+        /// The 72, 80, 90 or 120 Hz a reported rate stands for (within <see cref="PcvrToleranceHz"/>), or 0 for any other rate --
         /// never rounded to the nearer one (pure).
         /// </summary>
         internal static int SupportedPcvrRate(float reportedHz)
         {
             if (float.IsNaN(reportedHz) || float.IsInfinity(reportedHz) || reportedHz <= 0f) return 0;
             if (Math.Abs(reportedHz - 72f) <= PcvrToleranceHz) return 72;
+            if (Math.Abs(reportedHz - 80f) <= PcvrToleranceHz) return 80;
             if (Math.Abs(reportedHz - 90f) <= PcvrToleranceHz) return 90;
+            if (Math.Abs(reportedHz - 120f) <= PcvrToleranceHz) return 120;
             return 0;
         }
 
@@ -156,7 +158,7 @@ namespace Zantetsu.PhysicsCut
         /// and <paramref name="displayPresent"/>: a running XR display now, and any XR display at all (one created and not
         /// started yet is XR not ready, not a desktop); what the running display answered; how long since the first frame.
         /// <list type="bullet">
-        /// <item>a running display's answer: 72 or 90 within the tolerance, else out of scope (the provisional 90);</item>
+        /// <item>a running display's answer: 72, 80, 90 or 120 within the tolerance, else out of scope (the provisional 90);</item>
         /// <item>no XR display at all and not known to be PCVR: a desktop session, at once (no wait, no hold);</item>
         /// <item>past the wait: PCVR known -- not obtained (the provisional 90); else an XR display that never started --
         /// taken as a desktop session, said so;</item>
@@ -191,7 +193,7 @@ namespace Zantetsu.PhysicsCut
         /// The step's mode once the PCVR reading is settled (pure). The explicit frequency first
         /// (<see cref="FrequencyArgument"/>: the fixed step at it), then <see cref="StepModeArgument"/> (fixed, or display
         /// on PC), then automatically: the display step on PCVR, the fixed 45 Hz step on a desktop and on Quest. The
-        /// display step's frequency is the PCVR rate taken (72 or 90). Non-VR Android uses its own 60/30 Hz mode.
+        /// display step's frequency is the PCVR rate taken (72, 80, 90 or 120). Non-VR Android uses its own 60/30 Hz mode.
         /// </summary>
         internal static PhysicsStepMode ModeFor(bool pc, int explicitHz, PhysicsStepRequest request, PcvrRateState pcvr)
         {
@@ -456,9 +458,10 @@ namespace Zantetsu.PhysicsCut
                     return "XR NOT STARTED: an XR display existed but did not run within " + PcvrSettleSeconds.ToString("R", c) + " s; taken as desktop (settled at frame " + s_pcvrSettledFrame + ")";
                 case PcvrRateState.Obtained:
                     return s_pcvrHz + " Hz from the XR display (reported " + reported + ", settled at frame " + s_pcvrSettledFrame + " after " + s_pcvrWaitedSeconds.ToString("F2", c) + " s"
-                        + (s_pcvrWaitedForStart ? ", after waiting for the display to start" : "") + ")";
+                        + (s_pcvrWaitedForStart ? ", after waiting for the display to start" : "") + ")"
+                        + (s_pcvrHz == 80 || s_pcvrHz == 120 ? " (PCVR Player unverified)" : "");
                 case PcvrRateState.OutOfScope:
-                    return "OUT OF SCOPE: the XR display reported " + reported + ", not 72 or 90 Hz (within " + PcvrToleranceHz.ToString("R", c) + "); provisional " + s_pcvrHz + " Hz (settled at frame " + s_pcvrSettledFrame + ")";
+                    return "OUT OF SCOPE: the XR display reported " + reported + ", not 72, 80, 90 or 120 Hz (within " + PcvrToleranceHz.ToString("R", c) + "); provisional " + s_pcvrHz + " Hz (settled at frame " + s_pcvrSettledFrame + ")";
                 default:
                     return "NOT OBTAINED: no rate from the XR display in " + PcvrSettleSeconds.ToString("R", c) + " s; provisional " + s_pcvrHz + " Hz (settled at frame " + s_pcvrSettledFrame + ")";
             }

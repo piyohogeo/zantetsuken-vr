@@ -4,7 +4,7 @@ using NUnit.Framework;
 namespace Zantetsu.PhysicsCut.Tests
 {
     /// <summary>
-    /// PCVR's display step and non-VR Android's 60/30 Hz step in the clock's arithmetic: the normal step at 60, 72 or 90 Hz, one
+    /// PCVR's display step and non-VR Android's 60/30 Hz step in the clock's arithmetic: the normal step at 60, 72, 80, 90 or 120 Hz, one
     /// double step (one simulation of 2h) when two normal steps are owed and its own estimate fits, else the normal step
     /// when it fits, else none; the cap of two normal steps applied before the choice; the physics time the sum of what
     /// was really simulated; nothing owed or advanced while paused or on a skip.
@@ -27,7 +27,9 @@ namespace Zantetsu.PhysicsCut.Tests
 
         [TestCase(60)]
         [TestCase(72)]
+        [TestCase(80)]
         [TestCase(90)]
+        [TestCase(120)]
         public void TheNormalStep_IsTheDisplaysPeriod_AndTheDoubleStepTwiceIt(int hz)
         {
             var clock = new ManualPhysicsClock(hz, TicksPerSecond, doubleStep: true);
@@ -42,7 +44,9 @@ namespace Zantetsu.PhysicsCut.Tests
 
         [TestCase(60)]
         [TestCase(72)]
+        [TestCase(80)]
         [TestCase(90)]
+        [TestCase(120)]
         public void TheCandidate_FollowsTheOwing_AtItsBoundaries(int hz)
         {
             double h = 1.0 / hz;
@@ -62,7 +66,9 @@ namespace Zantetsu.PhysicsCut.Tests
         /// at most 2h of catch-up, never more.
         /// </summary>
         [TestCase(60)]
+        [TestCase(80)]
         [TestCase(90)]
+        [TestCase(120)]
         public void TheCap_IsOnWhatADecisionCarriesOver_AndAStallAddsAtMostTwoStepsOfCatchUp(int hz)
         {
             var clock = new ManualPhysicsClock(hz, TicksPerSecond, doubleStep: true);
@@ -93,10 +99,11 @@ namespace Zantetsu.PhysicsCut.Tests
             clock.CarryOver();
             Assert.That(clock.UnsimulatedSeconds, Is.EqualTo(2.0 * h).Within(4 * Tick), "never more than two steps carried");
             Assert.That(clock.DroppedSeconds, Is.EqualTo(0.5 * h + 1.0 - 2.0 * h).Within(4 * Tick), "the stall dropped beyond what is carried");
-            clock.Accumulate(Seconds(4.5 * h + 1.0 + h));   // then frames at the display's rate
+            // One extra tick keeps the recovery frames past the stall timestamp's rounding.
+            clock.Accumulate(Seconds(4.5 * h + 1.0 + h + Tick));   // then frames at the display's rate
             clock.Stepped(clock.Choose(0.0, 0.0, 1.0));
             clock.CarryOver();
-            clock.Accumulate(Seconds(4.5 * h + 1.0 + 2.0 * h));
+            clock.Accumulate(Seconds(4.5 * h + 1.0 + 2.0 * h + Tick));
             clock.Stepped(clock.Choose(0.0, 0.0, 1.0));
             clock.CarryOver();
             Assert.That(clock.PhysicsSeconds - before, Is.EqualTo(6.0 * h).Within(4 * Tick), "the stall's catch-up: 2h carried, simulated over the next frames, no more");
@@ -113,6 +120,8 @@ namespace Zantetsu.PhysicsCut.Tests
         [TestCase(60, 0.033333)]
         [TestCase(90, 0.022222)]
         [TestCase(72, 0.027777)]
+        [TestCase(80, 0.024999)]
+        [TestCase(120, 0.016666)]
         public void FramesAlittleUnderTwoSteps_KeepTheRealTime_NothingDropped(int hz, double interval)
         {
             var clock = new ManualPhysicsClock(hz, 1_000_000_000L, doubleStep: true);
@@ -203,7 +212,9 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         [TestCase(60)]
+        [TestCase(80)]
         [TestCase(90)]
+        [TestCase(120)]
         public void ADoubleStepThatDoesNotFit_FallsBackToTheNormalStep_AndOneThatNeitherFits_IsASkip(int hz)
         {
             ManualPhysicsClock clock = Owing(hz, 2.0);
@@ -218,10 +229,12 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(Owing(hz, 1.5).Choose(0.002, 0.0, 0.001), Is.Zero, "one step owed: only the normal step's estimate is compared");
         }
 
-        [Test]
-        public void TheExecutedStep_IsWhatIsConsumedAndAddedToThePhysicsTime_TheIdMovingByOne()
+        [TestCase(72)]
+        [TestCase(80)]
+        [TestCase(120)]
+        public void TheExecutedStep_IsWhatIsConsumedAndAddedToThePhysicsTime_TheIdMovingByOne(int hz)
         {
-            var clock = new ManualPhysicsClock(72, TicksPerSecond, doubleStep: true);
+            var clock = new ManualPhysicsClock(hz, TicksPerSecond, doubleStep: true);
             double h = clock.StepSeconds;
             clock.Accumulate(0);
             clock.Accumulate(Seconds(2.0 * h));
@@ -253,7 +266,9 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         [TestCase(60)]
+        [TestCase(80)]
         [TestCase(90)]
+        [TestCase(120)]
         public void WhilePaused_NothingIsOwedOrChosen_AndTheResumeCatchesNothingOfThePauseUp(int hz)
         {
             ManualPhysicsClock clock = Owing(hz, 1.5);

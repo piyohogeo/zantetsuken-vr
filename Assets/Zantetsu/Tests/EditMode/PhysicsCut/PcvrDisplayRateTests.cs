@@ -6,7 +6,7 @@ using UnityEngine.TestTools;
 namespace Zantetsu.PhysicsCut.Tests
 {
     /// <summary>
-    /// PCVR's target rate and the step's mode (DESIGN 4.4, 2026-10-20): 72 or 90 Hz from the XR display within the
+    /// PCVR's target rate and the step's mode (DESIGN 4.4, 2026-10-20): 72, 80, 90 or 120 Hz from the XR display within the
     /// tolerance, any other rate out of scope and never rounded to the nearer, no rate within the wait "not obtained",
     /// both taking the provisional 90 Hz; the explicit frequency first, then the mode asked for, then the automatic choice;
     /// Quest never on the display step.
@@ -14,14 +14,18 @@ namespace Zantetsu.PhysicsCut.Tests
     public sealed class PcvrDisplayRateTests
     {
         [Test]
-        public void OnlyRatesWithinTheToleranceOf72Or90_AreTaken_AndNoneIsRoundedToTheNearer()
+        public void OnlyRatesWithinTheToleranceOfSupportedDisplayRates_AreTaken_AndNoneIsRoundedToTheNearer()
         {
             foreach (float r in new[] { 72f, 71.6f, 72.4f, 72.00012f })
                 Assert.That(CutPhysicsStep.SupportedPcvrRate(r), Is.EqualTo(72), r.ToString("R"));
+            foreach (float r in new[] { 80f, 79.5f, 80.5f, 80.00012f })
+                Assert.That(CutPhysicsStep.SupportedPcvrRate(r), Is.EqualTo(80), r.ToString("R"));
             foreach (float r in new[] { 90f, 89.99f, 89.5f, 90.5f, 90.00037f })
                 Assert.That(CutPhysicsStep.SupportedPcvrRate(r), Is.EqualTo(90), r.ToString("R"));
-            foreach (float r in new[] { 71.4f, 80f, 85f, 120f, 144f, 60f, 45f, 36f, 0f, -90f, float.NaN, float.PositiveInfinity })
-                Assert.That(CutPhysicsStep.SupportedPcvrRate(r), Is.Zero, r.ToString("R") + " is out of scope, not the nearer of 72 and 90");
+            foreach (float r in new[] { 120f, 119.5f, 120.5f, 120.00012f })
+                Assert.That(CutPhysicsStep.SupportedPcvrRate(r), Is.EqualTo(120), r.ToString("R"));
+            foreach (float r in new[] { 71.4f, 79.49f, 80.51f, 85f, 119.49f, 120.51f, 144f, 60f, 45f, 36f, 0f, -90f, float.NaN, float.PositiveInfinity })
+                Assert.That(CutPhysicsStep.SupportedPcvrRate(r), Is.Zero, r.ToString("R") + " is outside the tolerance of every supported display rate");
         }
 
         [Test]
@@ -33,7 +37,12 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(CutPhysicsStep.ClassifyPcvr(true, true, true, true, 72.0001f, 0.5, out hz), Is.EqualTo(CutPhysicsStep.PcvrRateState.Obtained));
             Assert.That(hz, Is.EqualTo(72));
 
-            Assert.That(CutPhysicsStep.ClassifyPcvr(true, true, true, true, 120f, 0.0, out hz), Is.EqualTo(CutPhysicsStep.PcvrRateState.OutOfScope));
+            Assert.That(CutPhysicsStep.ClassifyPcvr(true, true, true, true, 80.0001f, 0.0, out hz), Is.EqualTo(CutPhysicsStep.PcvrRateState.Obtained));
+            Assert.That(hz, Is.EqualTo(80));
+            Assert.That(CutPhysicsStep.ClassifyPcvr(true, true, true, true, 120.0001f, 0.0, out hz), Is.EqualTo(CutPhysicsStep.PcvrRateState.Obtained));
+            Assert.That(hz, Is.EqualTo(120));
+
+            Assert.That(CutPhysicsStep.ClassifyPcvr(true, true, true, true, 144f, 0.0, out hz), Is.EqualTo(CutPhysicsStep.PcvrRateState.OutOfScope));
             Assert.That(hz, Is.EqualTo(CutPhysicsStep.PcvrProvisionalHz), "out of scope: the provisional 90 Hz, said so");
             Assert.That(CutPhysicsStep.ClassifyPcvr(true, true, true, true, 45f, 0.0, out hz), Is.EqualTo(CutPhysicsStep.PcvrRateState.OutOfScope),
                 "a reprojected 45 at the start is not a 45 Hz step");
