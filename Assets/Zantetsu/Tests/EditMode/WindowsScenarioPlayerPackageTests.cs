@@ -25,24 +25,48 @@ namespace Zantetsu.Core.Tests
             finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
         }
 
-        [Test]
-        public void ScenarioBuildHasBothApisAndRestoresTheDiagnosticProfileEvenAfterFailure()
+        [TestCase(true)]
+        [TestCase(false)]
+        public void FailedScenarioBuildRestoresTheApisAndSplashSetting(bool splashBefore)
         {
             const BuildTarget target = BuildTarget.StandaloneWindows64;
             bool automatic = PlayerSettings.GetUseDefaultGraphicsAPIs(target);
             GraphicsDeviceType[] before = PlayerSettings.GetGraphicsAPIs(target);
-            Assert.Throws<InvalidOperationException>(() =>
+            bool originalSplash = PlayerSettings.SplashScreen.show;
+            try
             {
-                using (WindowsScenarioPlayerPackage.GraphicsApis())
+                PlayerSettings.SplashScreen.show = splashBefore;
+                Assert.Throws<InvalidOperationException>(() =>
                 {
-                    Assert.That(PlayerSettings.GetUseDefaultGraphicsAPIs(target), Is.False);
-                    Assert.That(PlayerSettings.GetGraphicsAPIs(target),
-                        Is.EqualTo(new[] { GraphicsDeviceType.Direct3D12, GraphicsDeviceType.Direct3D11 }));
-                    throw new InvalidOperationException("Simulated build failure.");
-                }
-            });
-            Assert.That(PlayerSettings.GetGraphicsAPIs(target), Is.EqualTo(before));
-            Assert.That(PlayerSettings.GetUseDefaultGraphicsAPIs(target), Is.EqualTo(automatic));
+                    using (WindowsScenarioPlayerPackage.BuildSettings())
+                    {
+                        Assert.That(PlayerSettings.GetUseDefaultGraphicsAPIs(target), Is.False);
+                        Assert.That(PlayerSettings.GetGraphicsAPIs(target),
+                            Is.EqualTo(new[] { GraphicsDeviceType.Direct3D12, GraphicsDeviceType.Direct3D11 }));
+                        Assert.That(PlayerSettings.SplashScreen.show, Is.False);
+                        throw new InvalidOperationException("Simulated build failure.");
+                    }
+                });
+                Assert.That(PlayerSettings.GetGraphicsAPIs(target), Is.EqualTo(before));
+                Assert.That(PlayerSettings.GetUseDefaultGraphicsAPIs(target), Is.EqualTo(automatic));
+                Assert.That(PlayerSettings.SplashScreen.show, Is.EqualTo(splashBefore));
+            }
+            finally { PlayerSettings.SplashScreen.show = originalSplash; }
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void SuccessfulScenarioBuildDisablesTheSplashAndRestoresItsSetting(bool splashBefore)
+        {
+            bool originalSplash = PlayerSettings.SplashScreen.show;
+            try
+            {
+                PlayerSettings.SplashScreen.show = splashBefore;
+                using (WindowsScenarioPlayerPackage.BuildSettings())
+                    Assert.That(PlayerSettings.SplashScreen.show, Is.False);
+                Assert.That(PlayerSettings.SplashScreen.show, Is.EqualTo(splashBefore));
+            }
+            finally { PlayerSettings.SplashScreen.show = originalSplash; }
         }
     }
 }

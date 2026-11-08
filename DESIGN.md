@@ -173,6 +173,8 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 `ScenarioPlayerBuild` はビルド中だけWindows APIをD3D12・D3D11の順にし、成功・失敗とも元の設定へ戻す。従来の診断用ビルドと、D3D11単独を固定するプロジェクト設定・試験は維持する。起動アプリと起動設定の入口はWindows付属の.NET Frameworkのコンパイラで作り、ビルド出力だけへ置く。Playerを直接起動する既存の測定ツールは保存設定を読まず、従来どおり引数でAPIを決める。2026-11-03のRX570・Link90Hz・D3D11・4xMSAAの街歩きは完走したが、未切断の木の異常ポリゴンが人間から報告されており、表示の正しさが合格になったとは扱わない。
 
+**PCVR（Windows統合Player）の起動スプラッシュ。** `ScenarioPlayerBuild` はGPU・描画APIによらず起動スプラッシュ全体を無効にすることを既定とする（2026-11-08、TL指示）。`WindowsScenarioPlayerPackage.BuildSettings` はビルド中に `PlayerSettings.SplashScreen.show` をfalseにし、成功・失敗とも元の設定へ戻す。Questと従来の診断用ビルドは各入口の設定に従う。Radeon D3D12限定の実行時停止は、RX5500 XT・Linkで `StopImmediate` 呼出し後に停止状態となってもロゴが表示され、採用を取り下げた（`RADEON-SPLASH-1.txt`）。
+
 ### 3.5 Quest ALPHA 配布の署名とバージョン管理
 
 **範囲。** 配布用 APK の署名と更新（バージョン）の管理だけ（D-238、2026-10-17、TL の指示）。Target API・Manifest 全般・対応機種は次の単位、Store へのアップロードやテスターへの配布は別工程。手順と秘密情報の扱いは `docs/quest3s-alpha-distribution.md`。

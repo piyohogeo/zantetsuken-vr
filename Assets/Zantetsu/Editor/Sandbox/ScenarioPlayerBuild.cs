@@ -159,7 +159,7 @@ namespace Zantetsu.EditorTools.Sandbox
                 Debug.Log("SCENARIO PLAYER BUILD: scenes " + string.Join(", ", privateScenes) + (File.Exists(SkinBenchScenePath) ? "" : " (no NPC skin bench scene: npc-skin-bench is not in this Player)")
                     + (File.Exists(SkinBakeProbeScenePath) ? "" : " (no skin bake probe scene: skin-bake-probe is not in this Player)"));
                 var scenes = DemoBuildPolicy.SelectScenes(privateScenes, out bool demo);
-                using (WindowsScenarioPlayerPackage.GraphicsApis())
+                using (WindowsScenarioPlayerPackage.BuildSettings())
                 using (DemoBuildPolicy.Scope(demo, scenes))
                     built = !string.IsNullOrEmpty(directory) && CutWorldSandboxPlayerBuild.Build(directory, scenes, statsVerify ? new[] { StatsVerifySymbol } : null, development);
                 if (built) WindowsScenarioPlayerPackage.BuildLauncher(directory);

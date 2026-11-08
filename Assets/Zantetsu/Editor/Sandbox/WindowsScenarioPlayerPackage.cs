@@ -13,26 +13,30 @@ namespace Zantetsu.EditorTools.Sandbox
     /// </summary>
     public static class WindowsScenarioPlayerPackage
     {
-        public static IDisposable GraphicsApis()
+        public static IDisposable BuildSettings()
         {
-            return new GraphicsScope();
+            return new BuildSettingsScope();
         }
 
-        private sealed class GraphicsScope : IDisposable
+        private sealed class BuildSettingsScope : IDisposable
         {
             private readonly bool automatic;
             private readonly GraphicsDeviceType[] apis;
+            private readonly bool showSplashScreen;
             private bool disposed;
 
-            public GraphicsScope()
+            public BuildSettingsScope()
             {
                 automatic = PlayerSettings.GetUseDefaultGraphicsAPIs(BuildTarget.StandaloneWindows64);
                 apis = PlayerSettings.GetGraphicsAPIs(BuildTarget.StandaloneWindows64);
+                showSplashScreen = PlayerSettings.SplashScreen.show;
                 try
                 {
                     PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.StandaloneWindows64, false);
                     PlayerSettings.SetGraphicsAPIs(BuildTarget.StandaloneWindows64,
                         new[] { GraphicsDeviceType.Direct3D12, GraphicsDeviceType.Direct3D11 });
+                    PlayerSettings.SplashScreen.show = false;
+                    UnityEngine.Debug.Log("WINDOWS PLAYER BUILD: startup splash disabled.");
                 }
                 catch { Dispose(); throw; }
             }
@@ -41,8 +45,15 @@ namespace Zantetsu.EditorTools.Sandbox
             {
                 if (disposed) return;
                 disposed = true;
-                PlayerSettings.SetGraphicsAPIs(BuildTarget.StandaloneWindows64, apis);
-                PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.StandaloneWindows64, automatic);
+                try
+                {
+                    PlayerSettings.SetGraphicsAPIs(BuildTarget.StandaloneWindows64, apis);
+                    PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.StandaloneWindows64, automatic);
+                }
+                finally
+                {
+                    PlayerSettings.SplashScreen.show = showSplashScreen;
+                }
             }
         }
 
