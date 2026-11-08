@@ -13,9 +13,9 @@ namespace Zantetsu.Sandbox
     /// </summary>
     internal sealed class PlayMenuGraphicsSettings
     {
-        internal const string NextLaunchNote = "変更は次回起動時に反映されます";
-        private const string ReadError = "設定を読み込めません。描画方式を選び直して保存してください。";
-        private const string SaveError = "保存に失敗しました。設定は変更されていません。もう一度選んでください。";
+        internal const string NextLaunchNote = "Changes take effect on the next launch.";
+        private const string ReadError = "Could not read the graphics preference. Select a graphics API to save it.";
+        private const string SaveError = "Could not save the graphics preference. Select it again to retry.";
         private static readonly string[] Modes =
         {
             WindowsGraphicsPreference.Auto, WindowsGraphicsPreference.Direct3D12, WindowsGraphicsPreference.Direct3D11,
@@ -58,11 +58,11 @@ namespace Zantetsu.Sandbox
             _save = save;
             _report = report;
             _launchNote = string.IsNullOrEmpty(source)
-                ? "\n次回は Zantetsu.exe または「起動設定」から起動してください。"
-                : source == "command-line" ? "\n起動引数の指定は保存した設定より優先されます。" : string.Empty;
-            CurrentDescription = "現在: " + actual + " / " + SourceLabel(source);
+                ? "\nNext time, launch with Zantetsu.exe or the launch settings app."
+                : source == "command-line" ? "\nLaunch arguments take precedence over saved preferences." : string.Empty;
+            CurrentDescription = "Current: " + actual + " / " + SourceLabel(source);
             if (!string.IsNullOrEmpty(source) && !string.IsNullOrWhiteSpace(reason))
-                CurrentDescription += "\n理由: " + OneLine(reason);
+                CurrentDescription += "\nReason: " + OneLine(reason);
             try
             {
                 SelectedIndex = Array.IndexOf(Modes, load());
@@ -95,8 +95,8 @@ namespace Zantetsu.Sandbox
         {
             rows.Add(new PlayMenuView.Row
             {
-                label = "描画方式",
-                choices = new[] { "自動（推奨）", "標準 Direct3D12", "互換 Direct3D11" },
+                label = "Graphics API",
+                choices = new[] { "Auto (recommended)", "Standard D3D12", "Compatibility D3D11" },
                 read = () => SelectedIndex,
                 write = value => Select(Mathf.RoundToInt(value)),
             });
@@ -112,12 +112,12 @@ namespace Zantetsu.Sandbox
         {
             switch (source)
             {
-                case "auto": return "自動選択";
-                case "saved": return "保存設定";
-                case "command-line": return "起動引数";
+                case "auto": return "Automatic";
+                case "saved": return "Saved preference";
+                case "command-line": return "Launch argument";
                 case null:
-                case "": return "直接起動";
-                default: return "選択元不明 (" + OneLine(source) + ")";
+                case "": return "Direct launch";
+                default: return "Unknown source (" + OneLine(source) + ")";
             }
         }
 
