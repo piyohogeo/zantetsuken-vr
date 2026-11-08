@@ -169,7 +169,7 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 **Windowsの描画方式の起動設定。** 統合シナリオPlayerには、UnityとXRを初期化しない小さなWindows起動アプリ `Zantetsu.exe` と `起動設定.exe` を同梱する。通常起動は画面を出さず、保存した選択で同じフォルダの `CutWorldSandbox.exe` を1回起動し、その終了コードを返す。起動設定（`Zantetsu.exe --settings`）は「自動（推奨）／標準：Direct3D 12／互換：Direct3D 11」と説明、「保存して起動」「キャンセル」を持つ。キャンセルでは保存もPlayer起動もしない。設定は `%LOCALAPPDATA%/Zantetsu/Launch/graphics-api.txt` に置き、ゲーム内メニューと同じ `WindowsGraphicsPreference` を使って読む。未保存だけを自動とし、不正・読取り不能は黙って自動に戻さず、設定画面で選び直せるエラーとする。
 
-自動は通常D3D12とし、まず確認済みの単一GPU（AMD RX 570、PCI VEN_1002/DEV_67DF、ドライバ31.0.21925.1001）とMetaのOculus OpenXR runtimeを選ぶ環境だけをD3D11にする。複数GPU・判定不能を確認済み環境とは扱わない。黒画面そのものやLinkの装着状態を検出する機能ではない。手動の保存値が自動より優先し、明示の `-force-d3d11` / `-force-d3d12` は保存値より優先する。矛盾するAPI指定やD3D11とネイティブ描画の強制は起動前に拒否する。D3D11では既存のUnity API描画経路を使い、MSAAは変更しない。途中でAPIを切り替えず、再起動の自動反復もしない。実際のAPIと選択元・理由をPlayerの起動記録に残す。
+自動は通常D3D12とし、まず確認済みの単一GPU（AMD RX 570、PCI VEN_1002/DEV_67DF、ドライバ31.0.21925.1001）とMetaのOculus OpenXR runtimeを選ぶ環境だけをD3D11にする。GPUの列挙では、名前が `Meta Virtual Monitor` と大文字小文字を除いて完全一致し、PNP IDが `ROOT\DISPLAY\` で始まるレコードだけを、候補数による列挙打切りの前に除外する。名前やPNP IDの欠損・別のROOTレコード・複数の物理GPUは候補に残し、複数GPU・判定不能を確認済み環境とは扱わない。黒画面そのものやLinkの装着状態を検出する機能ではない。手動の保存値が自動より優先し、明示の `-force-d3d11` / `-force-d3d12` は保存値より優先する。矛盾するAPI指定やD3D11とネイティブ描画の強制は起動前に拒否する。D3D11では既存のUnity API描画経路を使い、MSAAは変更しない。途中でAPIを切り替えず、再起動の自動反復もしない。実際のAPIと選択元・理由をPlayerの起動記録に残す。
 
 `ScenarioPlayerBuild` はビルド中だけWindows APIをD3D12・D3D11の順にし、成功・失敗とも元の設定へ戻す。従来の診断用ビルドと、D3D11単独を固定するプロジェクト設定・試験は維持する。起動アプリと起動設定の入口はWindows付属の.NET Frameworkのコンパイラで作り、ビルド出力だけへ置く。Playerを直接起動する既存の測定ツールは保存設定を読まず、従来どおり引数でAPIを決める。2026-11-03のRX570・Link90Hz・D3D11・4xMSAAの街歩きは完走したが、未切断の木の異常ポリゴンが人間から報告されており、表示の正しさが合格になったとは扱わない。
 

@@ -16,6 +16,16 @@ namespace Zantetsu.WindowsLauncher
             try { action(); } catch (ArgumentException) { checks++; return; }
             throw new Exception(what);
         }
+
+        private static IEnumerable<Adapter> ObserveRecords(IEnumerable<Adapter> records, List<Adapter> visited)
+        {
+            foreach (Adapter record in records)
+            {
+                visited.Add(record);
+                yield return record;
+            }
+        }
+
         private static int Main(string[] args)
         {
             try
@@ -62,6 +72,51 @@ namespace Zantetsu.WindowsLauncher
                 var gpu = new Adapter { Name = "Radeon RX570 Series", PnpId = @"PCI\VEN_1002&DEV_67DF&SUBSYS_00000000", Driver = "31.0.21925.1001" };
                 string meta = @"C:\Program Files\Meta Horizon\Support\oculus-runtime\oculus_openxr_64.json";
                 Check(MachineDetection.Evaluate(new[] { gpu }, meta, null).Compatibility, "known hardware");
+                var monitor = new Adapter { Name = "Meta Virtual Monitor", PnpId = @"ROOT\DISPLAY\0000", Driver = "unrelated virtual driver" };
+                var rx5500 = new Adapter { Name = "AMD Radeon RX 5500 XT", PnpId = @"PCI\VEN_1002&DEV_7340&SUBSYS_00000000", Driver = "32.0.21045.16010" };
+                foreach (Adapter[] records in new[] { new[] { monitor, gpu }, new[] { gpu, monitor }, new[] { monitor, monitor, gpu } })
+                {
+                    List<Adapter> candidates = MachineDetection.CollectCandidates(records);
+                    Check(candidates.Count == 1 && candidates[0] == gpu, "known virtual monitor affected the bounded candidate loop");
+                    Detection detected = MachineDetection.Evaluate(candidates, meta, null);
+                    Check(select(new string[0], "auto", detected).Api == "d3d11", "RX570 plus known virtual monitor did not select compatibility");
+                    LaunchDecision saved = select(new string[0], "d3d12", detected);
+                    Check(saved.Api == "d3d12" && saved.Source == "saved", "saved API lost priority after virtual monitor exclusion");
+                    LaunchDecision explicitApi = select(new[] { "-force-d3d12" }, "d3d11", detected);
+                    Check(explicitApi.Api == "d3d12" && explicitApi.Source == "command-line", "explicit API lost priority after virtual monitor exclusion");
+                }
+                var visited = new List<Adapter>();
+                List<Adapter> multiple = MachineDetection.CollectCandidates(ObserveRecords(new[] { monitor, gpu, rx5500, monitor }, visited));
+                Check(visited.Count == 3 && multiple.Count == 2 && multiple[0] == gpu && multiple[1] == rx5500,
+                    "the WMI candidate loop must read the second physical GPU after a virtual-first record");
+                Check(!MachineDetection.Evaluate(multiple, meta, null).Compatibility, "virtual-first enumeration hid a second physical GPU");
+                visited.Clear();
+                multiple = MachineDetection.CollectCandidates(ObserveRecords(new[] { gpu, monitor, rx5500, monitor }, visited));
+                Check(visited.Count == 3 && multiple.Count == 2, "virtual-second enumeration stopped before the second physical GPU");
+                visited.Clear();
+                multiple = MachineDetection.CollectCandidates(ObserveRecords(new[] { gpu, rx5500, monitor }, visited));
+                Check(visited.Count == 2 && multiple.Count == 2, "candidate collection continued after ambiguity was established");
+                var lowerMonitor = new Adapter { Name = "meta virtual monitor", PnpId = @"root\display\0001" };
+                Check(MachineDetection.CollectCandidates(new[] { lowerMonitor, gpu }).Count == 1, "known virtual monitor comparison is not case-insensitive");
+                foreach (Adapter uncertain in new[] {
+                    new Adapter { Name = "Unknown adapter", PnpId = null },
+                    new Adapter { Name = "Meta Virtual Monitor", PnpId = null },
+                    new Adapter { Name = "Meta Virtual Monitor", PnpId = "" },
+                    new Adapter { Name = null, PnpId = @"ROOT\DISPLAY\0000" },
+                    new Adapter { Name = "Other Virtual Monitor", PnpId = @"ROOT\DISPLAY\0000" },
+                    new Adapter { Name = "Meta Virtual Monitor ", PnpId = @"ROOT\DISPLAY\0000" },
+                    new Adapter { Name = "Meta Virtual Monitor", PnpId = @"ROOT\OTHER\0000" },
+                    new Adapter { Name = "Meta Virtual Monitor", PnpId = @"ROOT\DISPLAYX\0000" },
+                    new Adapter { Name = "Meta Virtual Monitor", PnpId = @"PCI\VEN_1002&DEV_67DF" } })
+                {
+                    List<Adapter> candidates = MachineDetection.CollectCandidates(new[] { gpu, uncertain });
+                    Check(candidates.Count == 2 && !MachineDetection.Evaluate(candidates, meta, null).Compatibility,
+                        "unknown or non-matching adapter was discarded from ambiguity");
+                }
+                Check(!MachineDetection.Evaluate(MachineDetection.CollectCandidates(new[] { monitor }), meta, null).Compatibility,
+                    "a virtual monitor alone was treated as a known GPU");
+                Check(select(new string[0], "auto", MachineDetection.Evaluate(MachineDetection.CollectCandidates(new[] { monitor, rx5500 }), meta, null)).Api == "d3d12",
+                    "RX5500 XT plus virtual monitor did not retain the standard API");
                 Check(!MachineDetection.Evaluate(new[] { gpu, gpu }, meta, null).Compatibility, "multiple GPUs");
                 Check(!MachineDetection.Evaluate(new Adapter[0], meta, null).Compatibility, "no GPU");
                 Check(!MachineDetection.Evaluate(new[] { gpu }, meta, @"C:\other.json").Compatibility, "runtime override");

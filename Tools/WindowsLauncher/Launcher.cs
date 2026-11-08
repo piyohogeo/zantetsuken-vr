@@ -222,17 +222,12 @@ namespace Zantetsu.WindowsLauncher
                     using (RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
                     using (RegistryKey key = machine.OpenSubKey(@"SOFTWARE\Khronos\OpenXR\1", false))
                         runtime = key == null ? null : key.GetValue("ActiveRuntime") as string;
-                    var adapters = new List<Adapter>();
+                    List<Adapter> adapters;
                     var options = new EnumerationOptions { ReturnImmediately = false, Timeout = TimeSpan.FromMilliseconds(milliseconds) };
                     using (var searcher = new ManagementObjectSearcher(@"root\CIMV2", "SELECT Name, PNPDeviceID, DriverVersion FROM Win32_VideoController", options))
                     using (ManagementObjectCollection records = searcher.Get())
                     {
-                        foreach (ManagementObject record in records)
-                        {
-                            using (record)
-                                adapters.Add(new Adapter { Name = record["Name"] as string, PnpId = record["PNPDeviceID"] as string, Driver = record["DriverVersion"] as string });
-                            if (adapters.Count > 1) break;
-                        }
+                        adapters = CollectCandidates(ReadAdapters(records));
                     }
                     result = Evaluate(adapters, runtime, Environment.GetEnvironmentVariable("XR_RUNTIME_JSON"));
                 }
@@ -243,6 +238,32 @@ namespace Zantetsu.WindowsLauncher
             thread.Start();
             // EnumerationOptions.Timeout alone is not a total WMI timeout. Never block launch beyond this join.
             return thread.Join(milliseconds) && result != null ? result : new Detection(false, "standard: graphics environment probe timed out");
+        }
+
+        private static IEnumerable<Adapter> ReadAdapters(ManagementObjectCollection records)
+        {
+            foreach (ManagementObject record in records)
+            {
+                Adapter adapter;
+                using (record)
+                    adapter = new Adapter { Name = record["Name"] as string, PnpId = record["PNPDeviceID"] as string, Driver = record["DriverVersion"] as string };
+                yield return adapter;
+            }
+        }
+
+        // The same bounded candidate loop is used for WMI records and the enumeration-order tests.
+        internal static List<Adapter> CollectCandidates(IEnumerable<Adapter> records)
+        {
+            var adapters = new List<Adapter>();
+            foreach (Adapter adapter in records)
+            {
+                if (string.Equals(adapter.Name, "Meta Virtual Monitor", StringComparison.OrdinalIgnoreCase)
+                    && adapter.PnpId != null && adapter.PnpId.StartsWith(@"ROOT\DISPLAY\", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                adapters.Add(adapter);
+                if (adapters.Count > 1) break;
+            }
+            return adapters;
         }
 
         internal static Detection Evaluate(IList<Adapter> adapters, string runtime, string runtimeOverride)
