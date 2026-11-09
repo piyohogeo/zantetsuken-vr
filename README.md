@@ -23,6 +23,12 @@ PCVR（Meta Quest Link）でStanford Bunnyを切っている様子です（16秒
 | XR | OpenXR |
 | スクリプト | C#、IL2CPP、Burst |
 
+## PCVR版（Meta Quest Link）
+
+街とNPCを含む通常プレイ版をWindows x64向けに配布します。プレリリース **0.1.1-alpha.1**（`pcvr-v0.1.1-alpha.1`）の配布情報は [GitHub Releases](https://github.com/piyohogeo/zantetsuken-vr/releases) を参照してください。人型キャラクターの切断・欠損表現を含みます。
+
+展開したフォルダーの `Zantetsu.exe` から起動します。日本語の `起動設定.exe` で描画方式を選べます。導入・操作・対応環境は [PCVR版の利用案内](docs/pcvr.md)、確認した構成と測定条件は [PCVR性能評価](docs/pcvr-performance-2026-11-08.md)、任意の統計送信は [PCVR版プライバシーポリシー](docs/pcvr-privacy-policy.md) にまとめています。
+
 ## Android版（非VR）
 
 Android 12L（API 32）以降・ARM64・Vulkan対応端末向けの署名付きAPKを公開しています。現在のプレリリースは [0.1.0-alpha.1（versionCode 7）](https://github.com/piyohogeo/zantetsuken-vr/releases/tag/android-v0.1.0-alpha.1) です。[APKをダウンロード](https://github.com/piyohogeo/zantetsuken-vr/releases/download/android-v0.1.0-alpha.1/android-github-0.1.0-alpha.1-7.apk)できます。
@@ -39,7 +45,7 @@ Android 12L（API 32）以降・ARM64・Vulkan対応端末向けの署名付きA
 
 デモでは、テーブルの上に並んだBunnyを刀で切ります。切り方は製品と同じで、切断、物理、空間分割、描画のすべてが製品と同じ経路です。
 
-## 必要なもの
+## ソースからのビルドに必要なもの
 
 - Windows 10 / 11（x64）
 - Unity 6000.3.22f1
@@ -54,15 +60,14 @@ Android 12L（API 32）以降・ARM64・Vulkan対応端末向けの署名付きA
 PowerShellで、リポジトリのルートから実行します。
 
 ```powershell
-.\Tools\Build-ScenarioPlayer.ps1 -BuildMode Demo -Direct3D12 -Output D:\builds\bunny-pcvr
+.\Tools\Build-ScenarioPlayer.ps1 -BuildMode Demo -Output D:\builds\bunny-pcvr
 ```
 
 - `-Output` には、まだ何もない新しいフォルダを指定してください。
-- できあがるのは `CutWorldSandbox.exe` です（Windows x64、IL2CPP、Development）。
+- `CutWorldSandbox.exe`（Windows x64、IL2CPP、Development）と、起動用の `Zantetsu.exe`、日本語の `起動設定.exe` ができます。
   - 同じフォルダに、内容の監査 `zantetsu-content-audit.json` とStanfordの出典の通知が出力されます。
-- `-Direct3D12` を付けると、Direct3D 12で起動し、本体をネイティブのプラグインで描くPlayerになります（VP3C-NATIVE）。
-  - Direct3D 12が使えないPCでは、Direct3D 11に切り替わります。
-  - `-Direct3D12` を付けない場合は、Direct3D 11だけのPlayerになります。
+- PlayerにはDirect3D 12とDirect3D 11の両方が入ります。`Zantetsu.exe` は、単一のRadeonを判定できた場合はDirect3D 11、それ以外はDirect3D 12を自動で選びます。`起動設定.exe` で手動選択もできます。
+  - `-Direct3D12` は既存のビルド手順との互換用に受け付けます。現在の既定もDirect3D 12、Direct3D 11の順です。
 - ビルドの間に、Unityが次の3つのファイルを書き換えます。
   - `Assets/NonCommercialDemo/StanfordBunny/StanfordBunnyDemo.unity`
   - `Assets/NonCommercialDemo/StanfordBunny/BunnyProfile.asset`
@@ -73,11 +78,11 @@ PowerShellで、リポジトリのルートから実行します。
 git checkout -- Assets/NonCommercialDemo/StanfordBunny/StanfordBunnyDemo.unity Assets/NonCommercialDemo/StanfordBunny/BunnyProfile.asset Assets/Settings/PC_RPAsset.asset
 ```
 
-## 実行（PCVR）
+## Stanford Bunny デモの実行（PCVR）
 
 1. PCに Meta Horizon Link アプリを入れ、OpenXRの既定のランタイムを Meta Horizon Link にします。
 2. QuestをLinkで接続します（USBケーブルか Air Link）。ヘッドセットの中でLinkを有効にします。
-3. `CutWorldSandbox.exe` を起動します。引数は要りません。
+3. `Zantetsu.exe` を起動します。引数は要りません。
    - OpenXRは自動で始まります。
    - ログを残すなら `-logFile <ファイル>` を付けます。
 4. 遊び方
@@ -120,4 +125,5 @@ Questの単体版（APK）のビルド、Bunnyのデータを元データから�
   - Convexアドオン（`Tools/StanfordBunny/addons/convex_decomposition.py`）：Apache-2.0
   - V-HACD（`Tools/StanfordBunny/vhacd/`）：BSD-3-Clause
 - **Unityのプロジェクトテンプレートのファイル**（`Assets/TutorialInfo/`）：Unityの条件に従います。
+- **通常プレイ版に組み込む都市・人物素材**は、提供元のライセンス条件に従います。PCVR配布版の扱いは [PCVR版の利用案内](docs/pcvr.md#素材とライセンス) を参照してください。
 - **アプリに含まれる第三者のソフトウェア**：各配布物の第三者表記に従います。Android版ではAPKに同梱し、Releaseにも `ThirdPartyNotices.txt` を添付します。参照先は [Android版の利用案内](docs/android.md) にまとめています。
