@@ -97,9 +97,27 @@ namespace Zantetsu.Core.Statistics
             }
 
             XRDisplaySubsystem xr = XrDisplay;
-            if (xr != null && xr.TryGetAppGPUTimeLastFrame(out float seconds))
+            if (xr != null)
             {
-                sample.HasGpuXr = Positive(seconds * 1000.0, out sample.GpuXrMs);
+                try
+                {
+                    if (xr.running)
+                    {
+                        if (xr.TryGetAppGPUTimeLastFrame(out float seconds))
+                        {
+                            sample.HasGpuXr = Positive(seconds * 1000.0, out sample.GpuXrMs);
+                        }
+                    }
+                    else
+                    {
+                        XrDisplay = null;
+                    }
+                }
+                catch (System.NullReferenceException)
+                {
+                    // The native display can disappear after the running check during XR shutdown.
+                    XrDisplay = null;
+                }
             }
 
             return sample;

@@ -460,7 +460,7 @@ namespace Zantetsu.Sandbox
                 DrawRoute = _world != null ? _world.BodyRoute ?? "" : "",
                 XrRuntime = _xrRuntime,
                 // Whole hertz: the runtime's report jitters in its last digits, and that is no change of conditions.
-                RefreshRateHz = _xr != null && _xr.TryGetDisplayRefreshRate(out float hz) ? PlayEnvironment.RefreshRateHz(hz) : 0f,
+                RefreshRateHz = ReadRefreshRate(xrActive),
                 RenderScale = xrActive ? XRSettings.eyeTextureResolutionScale : 0f,
                 EyeTextureWidth = xrActive ? XRSettings.eyeTextureWidth : 0,
                 EyeTextureHeight = xrActive ? XRSettings.eyeTextureHeight : 0,
@@ -471,6 +471,28 @@ namespace Zantetsu.Sandbox
             // source was attached; the touch-screen host supplies effective settings without a per-frame allocation.
             if (!xrActive && FlatSource != null) FlatSource.ReadStatisticsConditions(ref c);
             return c;
+        }
+
+        private float ReadRefreshRate(bool xrActive)
+        {
+            if (_xr == null) return 0f;
+            try
+            {
+                if (xrActive && _xr.running)
+                {
+                    return _xr.TryGetDisplayRefreshRate(out float hz) ? PlayEnvironment.RefreshRateHz(hz) : 0f;
+                }
+            }
+            catch (NullReferenceException)
+            {
+                // XR can destroy its native display before the application's quit callback, while this wrapper remains.
+            }
+
+            // The next lookup can acquire a replacement display if XR starts again.
+            _xr = null;
+            Sampler.XrDisplay = null;
+            UpdateTimeSource();
+            return 0f;
         }
 
         // The world's counters as they stand: totals with the generation of what keeps them, peaks where a source keeps one.

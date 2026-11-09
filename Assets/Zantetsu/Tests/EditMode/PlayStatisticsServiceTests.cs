@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.XR;
 using Zantetsu.Core.Statistics;
 using Zantetsu.MeshCut;
 using Zantetsu.PhysicsCut;
@@ -169,6 +170,46 @@ namespace Zantetsu.Core.Tests
                 Assert.That(source.ConditionReads, Is.EqualTo(reads), "withdrawal stops source reads again");
             }
             finally { Object.DestroyImmediate(host); }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AnXrDisplayWithoutItsNativeHandle_IsAbsentAndReleased_BeforeReadingConditions(bool xrActive)
+        {
+            var host = new GameObject("statistics after XR shutdown");
+            try
+            {
+                PlayStatisticsService service = host.AddComponent<PlayStatisticsService>();
+                service.Setup(SandboxScenarioKind.Play, "TestScene", new MemoryPlayStatisticsStore(), null);
+                // A destroyed integrated subsystem leaves this same managed wrapper with no native handle.
+                var display = new XRDisplaySubsystem();
+                Assert.That(display.running, Is.False);
+                FieldInfo field = typeof(PlayStatisticsService).GetField("_xr", BindingFlags.Instance | BindingFlags.NonPublic);
+                field.SetValue(service, display);
+                service.Sampler.XrDisplay = display;
+                Call(service, "UpdateTimeSource");
+                Assert.That(service.Statistics.TimeSource, Does.Contain("XRDisplaySubsystem.AppGPUTime"));
+
+                PlayConditions conditions = (PlayConditions)Call(service, "ReadConditions", xrActive);
+                Assert.That(conditions.RefreshRateHz, Is.Zero);
+                Assert.That(field.GetValue(service), Is.Null, "the next lookup must be able to acquire a new display");
+                Assert.That(service.Sampler.XrDisplay, Is.Null, "the GPU-time reader shares the display's lifetime");
+                Assert.That(service.Statistics.TimeSource, Does.Not.Contain("XRDisplaySubsystem.AppGPUTime"));
+            }
+            finally { Object.DestroyImmediate(host); }
+        }
+
+        [Test]
+        public void AnXrDisplayWithoutItsNativeHandle_GivesNoAppGpuTime_AndTheSamplerReleasesIt()
+        {
+            var display = new XRDisplaySubsystem();
+            Assert.That(display.running, Is.False);
+            var sampler = new FrameTimeSampler { XrDisplay = display };
+            FrameTimeSample sample = sampler.Sample();
+            Assert.That(sample.HasGpuXr, Is.False);
+            Assert.That(sample.GpuXrMs, Is.Zero);
+            Assert.That(sampler.XrDisplay, Is.Null);
+            Assert.That(sampler.Reads, Is.EqualTo(1));
         }
 
         [Test]
