@@ -20,13 +20,13 @@ Windowsで動く、街とNPCを含む通常プレイ版です。右手の刀で�
 1. [GitHub Releases](https://github.com/piyohogeo/zantetsuken-vr/releases) でPCVR版のReleaseを開き、添付のWindows x64用ZIPをダウンロードします。
 2. ZIP全体を任意のフォルダーへ展開します。更新時は新しいフォルダーへ展開してください。
 3. QuestをUSB LinkまたはAir Linkで接続し、ヘッドセット内でLinkを開始します。
-4. 展開したフォルダーの `Zantetsu.exe` を起動します。
+4. 展開したフォルダーの `CutWorldSandbox.exe` を起動します。
 
-`Zantetsu.exe` と `CutWorldSandbox.exe`、設定解決用の `Zantetsu.Graphics.exe`、データフォルダー、DLLなどを同じ配置のまま使用します。通常の起動にはUnity Editorの導入は不要です。
+`CutWorldSandbox.exe`、`起動設定.exe`、設定解決用の `Zantetsu.Graphics.exe`、データフォルダー、DLLなどを同じ配置のまま使用します。通常の起動にはUnity Editorの導入は不要です。
 
 ### SmartScreenが表示された場合
 
-このプレリリースの `Zantetsu.exe`、`起動設定.exe`、`CutWorldSandbox.exe`、`Zantetsu.Graphics.exe` はコード署名を付けていません。初回起動時などに、Microsoft Defender SmartScreenの「WindowsによってPCが保護されました」や「不明な発行元」という警告が表示される場合があります。[Microsoftの説明](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)
+このプレリリースの `起動設定.exe`、`CutWorldSandbox.exe`、`Zantetsu.Graphics.exe` はコード署名を付けていません。初回起動時などに、Microsoft Defender SmartScreenの「WindowsによってPCが保護されました」や「不明な発行元」という警告が表示される場合があります。[Microsoftの説明](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)
 
 このリポジトリのGitHub Releasesから入手したファイルであることを確かめ、実行する場合は次の手順で進めます。
 
@@ -54,7 +54,7 @@ Windowsで動く、街とNPCを含む通常プレイ版です。右手の刀で�
 
 ## 描画方式の設定
 
-起動時はPlayer本体のUnity初期化前に、保存設定とGPUの自動判定から描画方式を選びます。`Zantetsu.exe` からの起動と、Quest Linkのライブラリから `CutWorldSandbox.exe` を再起動した場合の両方で、毎回現在の設定を読み直します。
+起動時はPlayer本体のUnity初期化前に、保存設定とGPUの自動判定から描画方式を選びます。エクスプローラーから `CutWorldSandbox.exe` を起動した場合も、Quest Linkのライブラリから再起動した場合も、毎回現在の設定を読み直します。
 
 | 条件 | 自動で選ぶ方式 |
 | --- | --- |
@@ -63,11 +63,11 @@ Windowsで動く、街とNPCを含む通常プレイ版です。右手の刀で�
 
 自動判定はRadeon全モデルに同じ方針を適用します。既知のMeta Virtual Monitorは物理GPUの候補数から除外します。
 
-画面が黒くなる場合や描画方式を指定したい場合は、ゲームを終了して `起動設定.exe` を開いてください。ヘッドセットを使わずに操作できる日本語の設定画面です。「自動（推奨）」「標準 Direct3D 12」「互換 Direct3D 11」から選び、「保存して起動」を押します。`Zantetsu.exe --settings` でも同じ画面を開けます。
+画面が黒くなる場合や描画方式を指定したい場合は、ゲームを終了して `起動設定.exe` を開いてください。ヘッドセットを使わずに操作できる日本語の設定画面です。「自動（推奨）」「標準 Direct3D 12」「互換 Direct3D 11」から選び、「保存して起動」を押します。
 
 VR内のメニューにある `Graphics API` からも保存できます。設定は次回の起動から反映されます。`Current` の表示で今回使っているAPIと選択理由を確認できます。
 
-選択の優先順位は、明示した起動引数、保存した設定、自動判定の順です。手動で引数を指定する場合は、`Zantetsu.exe -force-d3d11` または `Zantetsu.exe -force-d3d12` を使います。
+選択の優先順位は、明示した起動引数、保存した設定、自動判定の順です。手動で引数を指定する場合は、`CutWorldSandbox.exe -force-d3d11` または `CutWorldSandbox.exe -force-d3d12` を使います。
 
 ## 任意のプレイ統計
 

@@ -49,10 +49,10 @@ Windows Playerは起動と同時にOpenXRを開始します（XR Managementの�
 .\Tools\Build-ScenarioPlayer.ps1 -BuildMode Demo -Direct3D12 -Output D:\builds\bunny-pcvr
 ```
 
-- 成果物は `CutWorldSandbox.exe` と起動アプリ `Zantetsu.exe`・`起動設定.exe` です。同じフォルダに内容監査 `zantetsu-content-audit.json` とStanfordの通知 `...STANFORD-NOTICE.txt` が出ます。
+- 成果物は `CutWorldSandbox.exe`、`起動設定.exe`、描画設定解決用の `Zantetsu.Graphics.exe` です。同じフォルダに内容監査 `zantetsu-content-audit.json` とStanfordの通知 `...STANFORD-NOTICE.txt` が出ます。
 - 統合シナリオPlayerには、起動設定で選べるよう、WindowsのグラフィックスAPIを「Direct3D 12、Direct3D 11」の順で組み込みます。プロジェクトの設定はビルド後に元へ戻り、ログの `graphics APIs back to` に復元後の値が出ます。
 - `-Direct3D12` は引き続き受け付け、Unityへ `-zantetsuPlayerD3D12` を渡します。この明示指定は統合パッケージの既定と同じAPI順序です。
-- 通常は `Zantetsu.exe` から起動し、描画方式を変えるときは `起動設定.exe` を使います。自動は通常D3D12、確認済みのRX570・Oculus OpenXR構成ではD3D11を選びます。手動でもD3D12またはD3D11を保存できます。詳細は `Tools/WindowsLauncher/README.md` です。
+- 通常は `CutWorldSandbox.exe` から起動し、描画方式を変えるときは `起動設定.exe` を使います。自動は、単一のRadeonを判定できた場合はD3D11、それ以外はD3D12を選びます。手動でもD3D12またはD3D11を保存できます。詳細は `Tools/WindowsLauncher/README.md` です。
 - D3D12では本体をネイティブのプラグイン（VP3C-NATIVE、D-215の既定）で、D3D11ではUnityの呼び出しで描きます。
 - このスクリプトが作るのはDevelopment Playerです。
 - Unityを直接呼んで `-zantetsuPlayerRelease` を付けるとRelease Playerになります。ただし、ReleaseでのPCVRの確認はまだしていません。

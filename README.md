@@ -27,7 +27,7 @@ PCVR（Meta Quest Link）でStanford Bunnyを切っている様子です（16秒
 
 街とNPCを含む通常プレイ版をWindows x64向けに配布します。プレリリース **0.1.1-alpha.2**（`pcvr-v0.1.1-alpha.2`）の配布情報は [GitHub Releases](https://github.com/piyohogeo/zantetsuken-vr/releases) を参照してください。人型キャラクターの切断・欠損表現を含みます。
 
-展開したフォルダーの `Zantetsu.exe` から起動します。日本語の `起動設定.exe` で描画方式を選べます。導入・操作・対応環境は [PCVR版の利用案内](docs/pcvr.md)、確認した構成と測定条件は [PCVR性能評価](docs/pcvr-performance-2026-11-08.md)、任意の統計送信は [PCVR版プライバシーポリシー](docs/pcvr-privacy-policy.md) にまとめています。
+展開したフォルダーの `CutWorldSandbox.exe` から起動します。日本語の `起動設定.exe` で描画方式を選べます。導入・操作・対応環境は [PCVR版の利用案内](docs/pcvr.md)、確認した構成と測定条件は [PCVR性能評価](docs/pcvr-performance-2026-11-08.md)、任意の統計送信は [PCVR版プライバシーポリシー](docs/pcvr-privacy-policy.md) にまとめています。
 
 起動用exeは未署名のため、SmartScreenの警告が表示される場合があります。配布元とアプリ名を確認したうえで「詳細情報」→「実行」を選ぶ手順は、[SmartScreenが表示された場合](docs/pcvr.md#smartscreenが表示された場合) を参照してください。
 
@@ -66,9 +66,9 @@ PowerShellで、リポジトリのルートから実行します。
 ```
 
 - `-Output` には、まだ何もない新しいフォルダを指定してください。
-- `CutWorldSandbox.exe`（Windows x64、IL2CPP、Development）と、起動用の `Zantetsu.exe`、日本語の `起動設定.exe` ができます。
+- `CutWorldSandbox.exe`（Windows x64、IL2CPP、Development）と、日本語の `起動設定.exe`、描画設定解決用の `Zantetsu.Graphics.exe` ができます。
   - 同じフォルダに、内容の監査 `zantetsu-content-audit.json` とStanfordの出典の通知が出力されます。
-- PlayerにはDirect3D 12とDirect3D 11の両方が入ります。`Zantetsu.exe` は、単一のRadeonを判定できた場合はDirect3D 11、それ以外はDirect3D 12を自動で選びます。`起動設定.exe` で手動選択もできます。
+- PlayerにはDirect3D 12とDirect3D 11の両方が入ります。`CutWorldSandbox.exe` は、単一のRadeonを判定できた場合はDirect3D 11、それ以外はDirect3D 12を自動で選びます。`起動設定.exe` で手動選択もできます。
   - `-Direct3D12` は既存のビルド手順との互換用に受け付けます。現在の既定もDirect3D 12、Direct3D 11の順です。
 - ビルドの間に、Unityが次の3つのファイルを書き換えます。
   - `Assets/NonCommercialDemo/StanfordBunny/StanfordBunnyDemo.unity`
@@ -84,7 +84,7 @@ git checkout -- Assets/NonCommercialDemo/StanfordBunny/StanfordBunnyDemo.unity A
 
 1. PCに Meta Horizon Link アプリを入れ、OpenXRの既定のランタイムを Meta Horizon Link にします。
 2. QuestをLinkで接続します（USBケーブルか Air Link）。ヘッドセットの中でLinkを有効にします。
-3. `Zantetsu.exe` を起動します。引数は要りません。
+3. `CutWorldSandbox.exe` を起動します。引数は要りません。
    - OpenXRは自動で始まります。
    - ログを残すなら `-logFile <ファイル>` を付けます。
 4. 遊び方

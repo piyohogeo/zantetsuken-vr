@@ -58,7 +58,7 @@ namespace Zantetsu.Sandbox
             _save = save;
             _report = report;
             _launchNote = string.IsNullOrEmpty(source)
-                ? "\nNext time, launch with Zantetsu.exe or the launch settings app."
+                ? "\nNext time, launch with CutWorldSandbox.exe or the launch settings app."
                 : source == "command-line" ? "\nLaunch arguments take precedence over saved preferences." : string.Empty;
             CurrentDescription = "Current: " + actual + " / " + SourceLabel(source);
             if (!string.IsNullOrEmpty(source) && !string.IsNullOrWhiteSpace(reason))

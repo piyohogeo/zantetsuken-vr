@@ -27,7 +27,7 @@ namespace Zantetsu.WindowsLauncher
             {
                 LaunchRequest request = LaunchRequest.Parse(arguments);
                 if (request.ShowSettings)
-                    throw new ArgumentException("Open 起動設定.exe or Zantetsu.exe --settings to change launch settings.");
+                    throw new ArgumentException("Open 起動設定.exe to change launch settings.");
                 string preference = request.ExplicitApi == null ? load() : WindowsGraphicsPreference.Auto;
                 Detection detection = request.ExplicitApi == null && preference == WindowsGraphicsPreference.Auto
                     ? detect() : new Detection(false, "hardware probe not needed");

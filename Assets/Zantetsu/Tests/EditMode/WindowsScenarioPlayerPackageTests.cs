@@ -9,8 +9,9 @@ namespace Zantetsu.Core.Tests
 {
     public class WindowsScenarioPlayerPackageTests
     {
-        [Test]
-        public void DistributionBuildPackagesDesktopEntriesAndThePreUnityPlayerWithoutStartingIt()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DistributionBuildPackagesDesktopEntriesAndThePreUnityPlayerWithoutStartingIt(bool existingLegacyLauncher)
         {
             if (UnityEngine.Application.platform != UnityEngine.RuntimePlatform.WindowsEditor)
                 Assert.Ignore("The desktop launcher is assembled on Windows.");
@@ -23,8 +24,9 @@ namespace Zantetsu.Core.Tests
                 Directory.CreateDirectory(folder);
                 string player = Path.Combine(folder, "CutWorldSandbox.exe");
                 File.Copy(template, player);
+                if (existingLegacyLauncher) File.WriteAllText(Path.Combine(folder, "Zantetsu.exe"), "old launcher");
                 WindowsScenarioPlayerPackage.BuildLauncher(folder + Path.DirectorySeparatorChar);
-                Assert.That(File.Exists(Path.Combine(folder, "Zantetsu.exe")), Is.True);
+                Assert.That(File.Exists(Path.Combine(folder, "Zantetsu.exe")), Is.False);
                 Assert.That(File.Exists(Path.Combine(folder, "起動設定.exe")), Is.True);
                 Assert.That(File.Exists(Path.Combine(folder, "Zantetsu.Graphics.exe")), Is.True);
                 Assert.That(File.ReadAllBytes(player), Is.Not.EqualTo(File.ReadAllBytes(template)),

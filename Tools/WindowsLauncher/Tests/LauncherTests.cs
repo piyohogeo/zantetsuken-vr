@@ -9,6 +9,7 @@ namespace Zantetsu.WindowsLauncher
 {
     internal static class LauncherTests
     {
+        private const string OuterFixture = "LauncherFixture.exe";
         private static int checks;
         private static void Check(bool valid, string what) { checks++; if (!valid) throw new Exception(what); }
         private static void Throws(Action action, string what)
@@ -117,7 +118,7 @@ namespace Zantetsu.WindowsLauncher
             reply = Resolve(new[] { "-force-d3d11" }, load, mustNotProbe);
             Check(reply.Status == 0 && reply.Source == "command-line", "damaged preference overrode explicit API");
             reply = Resolve(new[] { "--settings" }, mustNotLoad, mustNotProbe);
-            Check(reply.Status == 22 && reply.Error.Contains("起動設定.exe"), "resolver tried to show its own settings UI");
+            Check(reply.Status == 22 && reply.Error.Contains("起動設定.exe") && !reply.Error.Contains("Zantetsu.exe"), "resolver tried to show its own settings UI");
             reply = Resolve(new[] { "-force-d3d11", "-force-d3d12" }, mustNotLoad, mustNotProbe);
             Check(reply.Status == 22, "resolver accepted conflicting APIs");
             reply = Resolve(new[] { "-force-d3d11", "-zantetsuVp3cNative" }, mustNotLoad, mustNotProbe);
@@ -140,7 +141,7 @@ namespace Zantetsu.WindowsLauncher
             Check(reply.Source == "command-line" && reply.Command == CommandLine.Join(LaunchDecision.Select(LaunchRequest.Parse(explicitArguments), "auto", unknown).Arguments),
                 "actual resolver output changed arguments or trusted stale provenance");
             reply = RunResolverProcess(folder, new[] { "--settings" });
-            Check(reply.Status == 22 && reply.Error.Contains("起動設定.exe"), "actual resolver settings refusal");
+            Check(reply.Status == 22 && reply.Error.Contains("起動設定.exe") && !reply.Error.Contains("Zantetsu.exe"), "actual resolver settings refusal");
         }
         private static int Main(string[] args)
         {
@@ -283,7 +284,7 @@ namespace Zantetsu.WindowsLauncher
                 // A compiled fake child validates Windows' real argv parsing and exit propagation, without Unity/XR.
                 string record = Path.Combine(folder, "fake output.txt");
                 string[] forwarded = { "-force-d3d11", "-zantetsuVp3cUnityApi", "plain", "with space", "", "quote\"inside", @"C:\space path\", "\\\"", "\\\\\"", "日本語", "& %PATH% $() ;", "with\ttab", "-zantetsuScenario", "play" };
-                var start = new ProcessStartInfo(Path.Combine(folder, "Zantetsu.exe"), CommandLine.Join(forwarded));
+                var start = new ProcessStartInfo(Path.Combine(folder, OuterFixture), CommandLine.Join(forwarded));
                 start.UseShellExecute = false;
                 start.WorkingDirectory = folder;
                 start.EnvironmentVariables["ZANTETSU_LAUNCHER_TEST_OUTPUT"] = record;
@@ -302,7 +303,7 @@ namespace Zantetsu.WindowsLauncher
 
                 string rawRecord = Path.Combine(folder, "raw output.txt");
                 string[] rawArguments = { "plain", "with space", "", "日本語", "quote\"inside", @"ends\" };
-                var rawStart = new ProcessStartInfo(Path.Combine(folder, "Zantetsu.exe"), CommandLine.Join(rawArguments));
+                var rawStart = new ProcessStartInfo(Path.Combine(folder, OuterFixture), CommandLine.Join(rawArguments));
                 rawStart.UseShellExecute = false;
                 rawStart.EnvironmentVariables["ZANTETSU_LAUNCHER_TEST_OUTPUT"] = rawRecord;
                 using (Process launcher = Process.Start(rawStart))
@@ -318,11 +319,11 @@ namespace Zantetsu.WindowsLauncher
 
                 string moved = Path.Combine(folder, "copied folder 日本語");
                 Directory.CreateDirectory(moved);
-                foreach (string name in new[] { "Zantetsu.exe", "起動設定.exe", "Zantetsu.Graphics.exe", "CutWorldSandbox.exe" }) File.Copy(Path.Combine(folder, name), Path.Combine(moved, name));
+                foreach (string name in new[] { OuterFixture, "起動設定.exe", "Zantetsu.Graphics.exe", "CutWorldSandbox.exe" }) File.Copy(Path.Combine(folder, name), Path.Combine(moved, name));
                 // If the launcher remembered its build location this would now fail: only the copied folder has a child.
                 File.Move(Path.Combine(folder, "CutWorldSandbox.exe"), Path.Combine(folder, "FakePlayer.original.exe"));
                 string movedRecord = Path.Combine(moved, "moved output.txt");
-                var movedStart = new ProcessStartInfo(Path.Combine(moved, "Zantetsu.exe"), CommandLine.Join(forwarded));
+                var movedStart = new ProcessStartInfo(Path.Combine(moved, OuterFixture), CommandLine.Join(forwarded));
                 movedStart.UseShellExecute = false;
                 movedStart.WorkingDirectory = folder;
                 movedStart.EnvironmentVariables["ZANTETSU_LAUNCHER_TEST_OUTPUT"] = movedRecord;

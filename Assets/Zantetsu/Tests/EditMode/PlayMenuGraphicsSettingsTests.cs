@@ -67,7 +67,7 @@ namespace Zantetsu.Core.Tests
             var settings = Settings(() => WindowsGraphicsPreference.Auto, _ => { }, source: source, reason: "the reason");
             Assert.That(settings.CurrentDescription, Does.Contain("Direct3D11 / " + expected));
             Assert.That(settings.CurrentDescription.Contains("the reason"), Is.EqualTo(!string.IsNullOrEmpty(source)));
-            if (string.IsNullOrEmpty(source)) Assert.That(settings.Description, Does.Contain("Zantetsu.exe or the launch settings app"));
+            if (string.IsNullOrEmpty(source)) Assert.That(settings.Description, Does.Contain("CutWorldSandbox.exe or the launch settings app"));
             else Assert.That(settings.CurrentDescription, Does.Contain("Reason: the reason"));
             if (source == "command-line") Assert.That(settings.Description, Does.Contain("Launch arguments take precedence over saved preferences."));
             string line = SandboxLaunchRecord.DescribeGraphicsSelection(GraphicsDeviceType.Direct3D11, source, "the reason");
