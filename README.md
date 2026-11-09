@@ -25,7 +25,7 @@ PCVR（Meta Quest Link）でStanford Bunnyを切っている様子です（16秒
 
 ## PCVR版（Meta Quest Link）
 
-街とNPCを含む通常プレイ版をWindows x64向けに配布します。プレリリース **0.1.1-alpha.1**（`pcvr-v0.1.1-alpha.1`）の配布情報は [GitHub Releases](https://github.com/piyohogeo/zantetsuken-vr/releases) を参照してください。人型キャラクターの切断・欠損表現を含みます。
+街とNPCを含む通常プレイ版をWindows x64向けに配布します。プレリリース **0.1.1-alpha.2**（`pcvr-v0.1.1-alpha.2`）の配布情報は [GitHub Releases](https://github.com/piyohogeo/zantetsuken-vr/releases) を参照してください。人型キャラクターの切断・欠損表現を含みます。
 
 展開したフォルダーの `Zantetsu.exe` から起動します。日本語の `起動設定.exe` で描画方式を選べます。導入・操作・対応環境は [PCVR版の利用案内](docs/pcvr.md)、確認した構成と測定条件は [PCVR性能評価](docs/pcvr-performance-2026-11-08.md)、任意の統計送信は [PCVR版プライバシーポリシー](docs/pcvr-privacy-policy.md) にまとめています。
 

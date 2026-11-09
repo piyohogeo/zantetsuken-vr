@@ -15,7 +15,7 @@ if (!(Test-Path -LiteralPath (Join-Path $output ($settingsName + '.exe')))) { th
 if (Test-Path -LiteralPath (Join-Path $output ($settingsName + '.lnk'))) { throw 'Build unexpectedly created a nonportable settings shortcut.' }
 & $compiler /nologo /target:exe /platform:x64 /codepage:65001 /utf8output /warnaserror+ ("/out:" + (Join-Path $output 'CutWorldSandbox.exe')) (Join-Path $PSScriptRoot 'Tests\FakePlayer.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Fake child compilation failed.' }
-& $compiler /nologo /target:exe /platform:x64 /codepage:65001 /utf8output /warnaserror+ /main:Zantetsu.WindowsLauncher.LauncherTests ("/out:" + (Join-Path $output 'LauncherTests.exe')) /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Management.dll (Join-Path $PSScriptRoot 'Launcher.cs') $shared (Join-Path $PSScriptRoot 'Tests\LauncherTests.cs')
+& $compiler /nologo /target:exe /platform:x64 /codepage:65001 /utf8output /warnaserror+ /main:Zantetsu.WindowsLauncher.LauncherTests ("/out:" + (Join-Path $output 'LauncherTests.exe')) /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Management.dll (Join-Path $PSScriptRoot 'Launcher.cs') (Join-Path $PSScriptRoot 'GraphicsResolver.cs') $shared (Join-Path $PSScriptRoot 'Tests\LauncherTests.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Launcher test compilation failed.' }
 & (Join-Path $output 'LauncherTests.exe') $output
 if ($LASTEXITCODE -ne 0) { throw 'Launcher tests failed.' }

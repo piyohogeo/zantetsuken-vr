@@ -26,6 +26,122 @@ namespace Zantetsu.WindowsLauncher
             }
         }
 
+        private sealed class ResolverReply
+        {
+            internal uint Status;
+            internal string Command, Source, Reason, Error;
+        }
+
+        private static ResolverReply ReadReply(byte[] bytes, int exitCode)
+        {
+            Check(bytes.Length >= 24 && bytes.Length <= 128 * 1024, "resolver response size");
+            using (var stream = new MemoryStream(bytes))
+            using (var reader = new BinaryReader(stream, Encoding.Unicode))
+            {
+                Check(reader.ReadUInt32() == 0x3150475a, "resolver magic is not ZGP1");
+                uint status = reader.ReadUInt32();
+                uint[] lengths = { reader.ReadUInt32(), reader.ReadUInt32(), reader.ReadUInt32(), reader.ReadUInt32() };
+                Check(status == exitCode && (status == 0 || status == 22), "resolver payload and process status differ");
+                Check(lengths[0] <= 32766 && lengths[1] <= 32 && lengths[2] <= 2048 && lengths[3] <= 4096, "resolver field limit");
+                string[] fields = new string[4];
+                for (int field = 0; field < fields.Length; field++)
+                {
+                    var characters = new char[(int)lengths[field]];
+                    for (int i = 0; i < characters.Length; i++) characters[i] = (char)reader.ReadUInt16();
+                    fields[field] = new string(characters);
+                    Check(fields[field].IndexOf('\0') < 0, "resolver field contains NUL");
+                }
+                Check(stream.Position == stream.Length, "resolver has trailing output");
+                Check(status == 0 ? fields[3] == "" : fields[0] == "" && fields[1] == "" && fields[2] == "" && fields[3].Length > 0,
+                    "resolver success/failure payload shape");
+                return new ResolverReply { Status = status, Command = fields[0], Source = fields[1], Reason = fields[2], Error = fields[3] };
+            }
+        }
+
+        private static ResolverReply Resolve(string[] arguments, Func<string> load, Func<Detection> detect)
+        {
+            using (var output = new MemoryStream())
+            {
+                int exit = GraphicsResolver.Run(arguments, output, load, detect);
+                return ReadReply(output.ToArray(), exit);
+            }
+        }
+
+        private static ResolverReply RunResolverProcess(string folder, string[] arguments)
+        {
+            var start = new ProcessStartInfo(Path.Combine(folder, "Zantetsu.Graphics.exe"), CommandLine.Join(arguments));
+            start.UseShellExecute = false;
+            start.CreateNoWindow = true;
+            start.WorkingDirectory = Path.GetTempPath();
+            start.RedirectStandardOutput = true;
+            start.RedirectStandardError = true;
+            start.EnvironmentVariables[WindowsGraphicsPreference.SourceEnvironment] = "saved";
+            start.EnvironmentVariables[WindowsGraphicsPreference.ReasonEnvironment] = "stale inherited choice";
+            using (var output = new MemoryStream())
+            using (Process process = Process.Start(start))
+            {
+                var copy = process.StandardOutput.BaseStream.CopyToAsync(output);
+                var errors = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(10000)) { process.Kill(); throw new Exception("resolver process timed out"); }
+                copy.GetAwaiter().GetResult();
+                Check(errors.GetAwaiter().GetResult() == "", "resolver wrote non-protocol diagnostics");
+                return ReadReply(output.ToArray(), process.ExitCode);
+            }
+        }
+
+        private static void CheckResolver(string folder, string settings, Detection known, Detection unknown)
+        {
+            Func<string> load = () => WindowsGraphicsPreference.Load(settings);
+            Func<Detection> probe = () => known;
+            string[] original = { "plain", "with space", "", "quote\"inside", @"C:\space path\", "日本語", "with\ttab" };
+            WindowsGraphicsPreference.Save(settings, "d3d11");
+            ResolverReply reply = Resolve(original, load, probe);
+            Check(reply.Status == 0 && reply.Source == "saved", "saved resolver selection");
+            Check(reply.Command == CommandLine.Join(LaunchDecision.Select(LaunchRequest.Parse(original), "d3d11", known).Arguments),
+                "resolver selected command lost quoted/unicode/empty values");
+            WindowsGraphicsPreference.Save(settings, "d3d12");
+            reply = Resolve(original, load, probe);
+            Check(reply.Status == 0 && reply.Source == "saved" && reply.Command.EndsWith("\"-force-d3d12\""), "resolver reused old saved choice");
+            WindowsGraphicsPreference.Save(settings, "auto");
+            reply = Resolve(new string[0], load, probe);
+            Check(reply.Status == 0 && reply.Source == "auto" && reply.Command == "\"-force-d3d11\" \"-zantetsuVp3cUnityApi\"", "resolver Radeon automatic selection");
+            reply = Resolve(new string[0], load, () => unknown);
+            Check(reply.Status == 0 && reply.Source == "auto" && reply.Command == "\"-force-d3d12\"", "resolver standard automatic selection");
+            Func<string> mustNotLoad = delegate { throw new Exception("preference must not be loaded"); };
+            Func<Detection> mustNotProbe = delegate { throw new Exception("hardware must not be probed"); };
+            reply = Resolve(new[] { "-force-d3d12" }, mustNotLoad, mustNotProbe);
+            Check(reply.Status == 0 && reply.Source == "command-line" && reply.Command == "\"-force-d3d12\"", "explicit resolver priority");
+            File.WriteAllText(settings, "wrong");
+            reply = Resolve(new string[0], load, mustNotProbe);
+            Check(reply.Status == 22 && reply.Error.Contains("invalid"), "damaged preference was accepted");
+            reply = Resolve(new[] { "-force-d3d11" }, load, mustNotProbe);
+            Check(reply.Status == 0 && reply.Source == "command-line", "damaged preference overrode explicit API");
+            reply = Resolve(new[] { "--settings" }, mustNotLoad, mustNotProbe);
+            Check(reply.Status == 22 && reply.Error.Contains("起動設定.exe"), "resolver tried to show its own settings UI");
+            reply = Resolve(new[] { "-force-d3d11", "-force-d3d12" }, mustNotLoad, mustNotProbe);
+            Check(reply.Status == 22, "resolver accepted conflicting APIs");
+            reply = Resolve(new[] { "-force-d3d11", "-zantetsuVp3cNative" }, mustNotLoad, mustNotProbe);
+            Check(reply.Status == 22, "resolver accepted D11 native conflict");
+            reply = Resolve(new[] { "-force-vulkan" }, mustNotLoad, mustNotProbe);
+            Check(reply.Status == 22, "resolver accepted unsupported graphics API");
+            reply = Resolve(new[] { "-force-d3d12", "nul\0inside" }, mustNotLoad, mustNotProbe);
+            Check(reply.Status == 22, "resolver accepted NUL argument");
+            int overhead = CommandLine.Join(LaunchDecision.Select(LaunchRequest.Parse(new[] { "x" }), "d3d12", unknown).Arguments).Length - 1;
+            reply = Resolve(new[] { new string('x', 32766 - overhead) }, () => "d3d12", mustNotProbe);
+            Check(reply.Status == 0 && reply.Command.Length == 32766, "resolver command limit rejected boundary");
+            reply = Resolve(new[] { new string('x', 32767 - overhead) }, () => "d3d12", mustNotProbe);
+            Check(reply.Status == 22, "resolver accepted an overlong command");
+            reply = Resolve(new string[0], () => "auto", () => new Detection(true, new string('r', 2049)));
+            Check(reply.Status == 22, "resolver accepted an overlong reason");
+            reply = Resolve(new string[0], delegate { throw new IOException(new string('e', 5000) + "\0tail"); }, mustNotProbe);
+            Check(reply.Status == 22 && reply.Error.Length == 4096, "resolver failed to bound error payload");
+            string[] explicitArguments = { "-force-d3d11", "plain", "", "with space", "日本語", "quote\"inside", @"ends\" };
+            reply = RunResolverProcess(folder, explicitArguments);
+            Check(reply.Source == "command-line" && reply.Command == CommandLine.Join(LaunchDecision.Select(LaunchRequest.Parse(explicitArguments), "auto", unknown).Arguments),
+                "actual resolver output changed arguments or trusted stale provenance");
+            reply = RunResolverProcess(folder, new[] { "--settings" });
+            Check(reply.Status == 22 && reply.Error.Contains("起動設定.exe"), "actual resolver settings refusal");
+        }
         private static int Main(string[] args)
         {
             try
@@ -162,6 +278,8 @@ namespace Zantetsu.WindowsLauncher
                         "malformed PCI identity selected compatibility: " + invalidId);
                 }
 
+                CheckResolver(folder, settings, known, unknown);
+
                 // A compiled fake child validates Windows' real argv parsing and exit propagation, without Unity/XR.
                 string record = Path.Combine(folder, "fake output.txt");
                 string[] forwarded = { "-force-d3d11", "-zantetsuVp3cUnityApi", "plain", "with space", "", "quote\"inside", @"C:\space path\", "\\\"", "\\\\\"", "日本語", "& %PATH% $() ;", "with\ttab", "-zantetsuScenario", "play" };
@@ -169,6 +287,8 @@ namespace Zantetsu.WindowsLauncher
                 start.UseShellExecute = false;
                 start.WorkingDirectory = folder;
                 start.EnvironmentVariables["ZANTETSU_LAUNCHER_TEST_OUTPUT"] = record;
+                start.EnvironmentVariables[WindowsGraphicsPreference.SourceEnvironment] = "saved";
+                start.EnvironmentVariables[WindowsGraphicsPreference.ReasonEnvironment] = "stale inherited choice";
                 using (Process launcher = Process.Start(start))
                 {
                     if (!launcher.WaitForExit(10000)) { launcher.Kill(); throw new Exception("fake-child launcher timed out"); }
@@ -176,13 +296,29 @@ namespace Zantetsu.WindowsLauncher
                 }
                 string[] lines = File.ReadAllLines(record, Encoding.UTF8);
                 Check(File.ReadAllLines(record + ".launches").Length == 1, "child launched more than once");
-                Check(lines[0] == "command-line" && lines[1] == "explicit -force-d3d11", "child environment reason");
+                Check(lines[0] == "" && lines[1] == "", "outer launcher carried stale graphics provenance");
                 Check(lines.Length == forwarded.Length + 2, "argv count changed");
                 for (int i = 0; i < forwarded.Length; i++) Check(Encoding.UTF8.GetString(Convert.FromBase64String(lines[i + 2])) == forwarded[i], "argv differs at " + i);
 
+                string rawRecord = Path.Combine(folder, "raw output.txt");
+                string[] rawArguments = { "plain", "with space", "", "日本語", "quote\"inside", @"ends\" };
+                var rawStart = new ProcessStartInfo(Path.Combine(folder, "Zantetsu.exe"), CommandLine.Join(rawArguments));
+                rawStart.UseShellExecute = false;
+                rawStart.EnvironmentVariables["ZANTETSU_LAUNCHER_TEST_OUTPUT"] = rawRecord;
+                using (Process launcher = Process.Start(rawStart))
+                {
+                    if (!launcher.WaitForExit(10000)) { launcher.Kill(); throw new Exception("raw forwarding timed out"); }
+                    Check(launcher.ExitCode == 37, "raw forwarding child exit");
+                }
+                string[] rawLines = File.ReadAllLines(rawRecord, Encoding.UTF8);
+                Check(rawLines.Length == rawArguments.Length + 2, "outer launcher injected graphics arguments");
+                for (int i = 0; i < rawArguments.Length; i++) Check(Encoding.UTF8.GetString(Convert.FromBase64String(rawLines[i + 2])) == rawArguments[i], "raw argument differs at " + i);
+                string rawCommand = File.ReadAllText(rawRecord + ".commandline", Encoding.UTF8);
+                Check(!rawCommand.Contains("-force-") && !rawCommand.Contains("-zantetsuVp3cUnityApi"), "OS command line contains generated options");
+
                 string moved = Path.Combine(folder, "copied folder 日本語");
                 Directory.CreateDirectory(moved);
-                foreach (string name in new[] { "Zantetsu.exe", "起動設定.exe", "CutWorldSandbox.exe" }) File.Copy(Path.Combine(folder, name), Path.Combine(moved, name));
+                foreach (string name in new[] { "Zantetsu.exe", "起動設定.exe", "Zantetsu.Graphics.exe", "CutWorldSandbox.exe" }) File.Copy(Path.Combine(folder, name), Path.Combine(moved, name));
                 // If the launcher remembered its build location this would now fail: only the copied folder has a child.
                 File.Move(Path.Combine(folder, "CutWorldSandbox.exe"), Path.Combine(folder, "FakePlayer.original.exe"));
                 string movedRecord = Path.Combine(moved, "moved output.txt");
@@ -199,7 +335,9 @@ namespace Zantetsu.WindowsLauncher
                 Check(File.ReadAllLines(movedRecord + ".launches").Length == 1, "copied child launched more than once");
                 Check(movedLines.Length == forwarded.Length + 2, "copied-folder argv count");
                 for (int i = 0; i < forwarded.Length; i++) Check(Encoding.UTF8.GetString(Convert.FromBase64String(movedLines[i + 2])) == forwarded[i], "copied-folder argv differs at " + i);
-                Console.WriteLine("PASS " + checks + " checks; fake child only; no Unity, XR or real Player was started.");
+                ResolverReply movedReply = RunResolverProcess(moved, new[] { "-force-d3d12", "日本語", "" });
+                Check(movedReply.Status == 0 && movedReply.Source == "command-line", "copied-folder resolver failed");
+                Console.WriteLine("PASS " + checks + " checks; fake child and graphics resolver only; no Unity, XR or real Player was started.");
                 return 0;
             }
             catch (Exception e) { Console.Error.WriteLine(e); return 1; }

@@ -2,7 +2,7 @@
 
 Windowsで動く、街とNPCを含む通常プレイ版です。右手の刀で街の物や人物を切断できます。人型キャラクターの切断・欠損表現を含みます。
 
-この案内はプレリリース **0.1.1-alpha.1**（タグ `pcvr-v0.1.1-alpha.1`）向けです。配布情報と添付ファイルは [GitHub Releases](https://github.com/piyohogeo/zantetsuken-vr/releases) で確認してください。
+この案内はプレリリース **0.1.1-alpha.2**（タグ `pcvr-v0.1.1-alpha.2`）向けです。配布情報と添付ファイルは [GitHub Releases](https://github.com/piyohogeo/zantetsuken-vr/releases) で確認してください。
 
 ## 対応環境と確認範囲
 
@@ -22,11 +22,11 @@ Windowsで動く、街とNPCを含む通常プレイ版です。右手の刀で�
 3. QuestをUSB LinkまたはAir Linkで接続し、ヘッドセット内でLinkを開始します。
 4. 展開したフォルダーの `Zantetsu.exe` を起動します。
 
-`Zantetsu.exe` と `CutWorldSandbox.exe`、データフォルダー、DLLなどを同じ配置のまま使用します。通常の起動にはUnity Editorの導入は不要です。
+`Zantetsu.exe` と `CutWorldSandbox.exe`、設定解決用の `Zantetsu.Graphics.exe`、データフォルダー、DLLなどを同じ配置のまま使用します。通常の起動にはUnity Editorの導入は不要です。
 
 ### SmartScreenが表示された場合
 
-このプレリリースの `Zantetsu.exe`、`起動設定.exe`、`CutWorldSandbox.exe` はコード署名を付けていません。初回起動時などに、Microsoft Defender SmartScreenの「WindowsによってPCが保護されました」や「不明な発行元」という警告が表示される場合があります。[Microsoftの説明](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)
+このプレリリースの `Zantetsu.exe`、`起動設定.exe`、`CutWorldSandbox.exe`、`Zantetsu.Graphics.exe` はコード署名を付けていません。初回起動時などに、Microsoft Defender SmartScreenの「WindowsによってPCが保護されました」や「不明な発行元」という警告が表示される場合があります。[Microsoftの説明](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)
 
 このリポジトリのGitHub Releasesから入手したファイルであることを確かめ、実行する場合は次の手順で進めます。
 
@@ -54,7 +54,7 @@ Windowsで動く、街とNPCを含む通常プレイ版です。右手の刀で�
 
 ## 描画方式の設定
 
-通常は `Zantetsu.exe` が描画方式を自動選択します。
+起動時はPlayer本体のUnity初期化前に、保存設定とGPUの自動判定から描画方式を選びます。`Zantetsu.exe` からの起動と、Quest Linkのライブラリから `CutWorldSandbox.exe` を再起動した場合の両方で、毎回現在の設定を読み直します。
 
 | 条件 | 自動で選ぶ方式 |
 | --- | --- |

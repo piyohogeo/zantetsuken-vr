@@ -26,43 +26,34 @@ namespace Zantetsu.WindowsLauncher
             try
             {
                 LaunchRequest request = LaunchRequest.Parse(arguments);
-                string preference = WindowsGraphicsPreference.Auto;
-                string loadFailure = null;
-                // An explicit API remains usable even when a saved preference is damaged.
-                if (request.ShowSettings || request.ExplicitApi == null)
+                if (request.ShowSettings)
                 {
+                    string preference = WindowsGraphicsPreference.Auto;
+                    string loadFailure = null;
                     try { preference = WindowsGraphicsPreference.Load(); }
                     catch (Exception e)
                     {
-                        if (!request.ShowSettings) throw;
                         loadFailure = "保存した設定を読み込めません。選び直して保存してください。\r\n" + e.Message;
                     }
-                }
-
-                if (request.ShowSettings)
-                {
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
                     using (var form = new SettingsForm(preference, request.ExplicitApi, loadFailure))
                     {
                         if (form.ShowDialog() != DialogResult.OK) return 0;
-                        preference = form.Preference;
                     }
                 }
 
-                Detection detection = request.ExplicitApi == null && preference == WindowsGraphicsPreference.Auto
-                    ? MachineDetection.ReadBounded(1500) : new Detection(false, "hardware probe not needed");
-                LaunchDecision decision = LaunchDecision.Select(request, preference, detection);
                 string directory = AppDomain.CurrentDomain.BaseDirectory;
                 string player = Path.Combine(directory, "CutWorldSandbox.exe");
                 if (!File.Exists(player)) throw new FileNotFoundException("同じフォルダーに CutWorldSandbox.exe が見つかりません。", player);
 
-                var start = new ProcessStartInfo(player, CommandLine.Join(decision.Arguments));
+                var start = new ProcessStartInfo(player, CommandLine.Join(request.Arguments));
                 start.WorkingDirectory = directory;
                 start.UseShellExecute = false;
-                start.EnvironmentVariables[WindowsGraphicsPreference.SourceEnvironment] = decision.Source;
-                start.EnvironmentVariables[WindowsGraphicsPreference.ReasonEnvironment] = decision.Reason;
-                WriteLog("launch api=" + decision.Api + "; source=" + decision.Source + "; reason=" + decision.Reason);
+                // The actual Player resolves its API before loading Unity, including a Link-library restart.
+                start.EnvironmentVariables.Remove(WindowsGraphicsPreference.SourceEnvironment);
+                start.EnvironmentVariables.Remove(WindowsGraphicsPreference.ReasonEnvironment);
+                WriteLog("forward original arguments to the Player bootstrap");
                 using (Process child = Process.Start(start))
                 {
                     if (child == null) throw new IOException("Player を起動できませんでした。");
@@ -81,7 +72,7 @@ namespace Zantetsu.WindowsLauncher
             }
         }
 
-        private static void WriteLog(string message)
+        internal static void WriteLog(string message)
         {
             try
             {
@@ -300,8 +291,6 @@ namespace Zantetsu.WindowsLauncher
     internal sealed class SettingsForm : Form
     {
         private readonly ComboBox choice;
-        internal string Preference { get; private set; }
-
         internal SettingsForm(string current, string explicitApi, string loadFailure)
         {
             Text = "起動設定";
@@ -325,7 +314,7 @@ namespace Zantetsu.WindowsLauncher
             {
                 launch.Enabled = false;
                 string selected = choice.SelectedIndex == 2 ? WindowsGraphicsPreference.Direct3D11 : choice.SelectedIndex == 1 ? WindowsGraphicsPreference.Direct3D12 : WindowsGraphicsPreference.Auto;
-                try { WindowsGraphicsPreference.Save(selected); Preference = selected; DialogResult = DialogResult.OK; Close(); }
+                try { WindowsGraphicsPreference.Save(selected); DialogResult = DialogResult.OK; Close(); }
                 catch (Exception e) { launch.Enabled = true; MessageBox.Show(this, "設定を保存できませんでした。\r\n" + e.Message, "起動設定", MessageBoxButtons.OK, MessageBoxIcon.Error); }
             };
             Controls.AddRange(new Control[] { title, choice, explanation, note, launch, cancel });

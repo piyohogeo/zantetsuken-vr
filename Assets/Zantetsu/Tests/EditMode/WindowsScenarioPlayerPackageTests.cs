@@ -10,18 +10,36 @@ namespace Zantetsu.Core.Tests
     public class WindowsScenarioPlayerPackageTests
     {
         [Test]
-        public void DistributionBuildPackagesBothDesktopEntriesWithoutStartingAPlayer()
+        public void DistributionBuildPackagesDesktopEntriesAndThePreUnityPlayerWithoutStartingIt()
         {
             if (UnityEngine.Application.platform != UnityEngine.RuntimePlatform.WindowsEditor)
                 Assert.Ignore("The desktop launcher is assembled on Windows.");
+            string template = Path.Combine(EditorApplication.applicationContentsPath,
+                "PlaybackEngines/windowsstandalonesupport/Variations/win64_player_nondevelopment_il2cpp/WindowsPlayer.exe");
+            if (!File.Exists(template)) Assert.Ignore("The Windows IL2CPP build support is required.");
             string folder = Path.Combine(Path.GetTempPath(), "Zantetsu package test " + Guid.NewGuid().ToString("N"));
             try
             {
+                Directory.CreateDirectory(folder);
+                string player = Path.Combine(folder, "CutWorldSandbox.exe");
+                File.Copy(template, player);
                 WindowsScenarioPlayerPackage.BuildLauncher(folder + Path.DirectorySeparatorChar);
                 Assert.That(File.Exists(Path.Combine(folder, "Zantetsu.exe")), Is.True);
                 Assert.That(File.Exists(Path.Combine(folder, "起動設定.exe")), Is.True);
-                Assert.That(File.Exists(Path.Combine(folder, "CutWorldSandbox.exe")), Is.False);
+                Assert.That(File.Exists(Path.Combine(folder, "Zantetsu.Graphics.exe")), Is.True);
+                Assert.That(File.ReadAllBytes(player), Is.Not.EqualTo(File.ReadAllBytes(template)),
+                    "The generated Player must be replaced by the native pre-Unity entry.");
             }
+            finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
+        }
+
+        [Test]
+        public void DistributionBuildRefusesToPackageWithoutTheGeneratedPlayer()
+        {
+            if (UnityEngine.Application.platform != UnityEngine.RuntimePlatform.WindowsEditor)
+                Assert.Ignore("The desktop launcher is assembled on Windows.");
+            string folder = Path.Combine(Path.GetTempPath(), "Zantetsu missing Player test " + Guid.NewGuid().ToString("N"));
+            try { Assert.Throws<IOException>(() => WindowsScenarioPlayerPackage.BuildLauncher(folder)); }
             finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
         }
 
@@ -89,6 +107,7 @@ namespace Zantetsu.Core.Tests
             });
             Assert.That(PlayerSettings.bundleVersion, Is.EqualTo(before));
         }
+
 
         [TestCase("")]
         [TestCase(" ")]

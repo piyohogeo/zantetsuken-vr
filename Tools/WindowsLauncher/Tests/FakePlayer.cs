@@ -9,6 +9,7 @@ internal static class FakePlayer
         string output = Environment.GetEnvironmentVariable("ZANTETSU_LAUNCHER_TEST_OUTPUT");
         if (string.IsNullOrEmpty(output)) return 91;
         File.AppendAllText(output + ".launches", "launched\n");
+        File.WriteAllText(output + ".commandline", Environment.CommandLine, new UTF8Encoding(false));
         using (var writer = new StreamWriter(output, false, new UTF8Encoding(false)))
         {
             writer.WriteLine(Environment.GetEnvironmentVariable("ZANTETSU_GRAPHICS_SOURCE"));

@@ -75,7 +75,7 @@ namespace Zantetsu.EditorTools.Sandbox
             }
         }
 
-        /// <summary>Package the non-XR launcher without changing the Player's executable name or the existing tools.</summary>
+        /// <summary>Package the pre-Unity graphics entry and settings while keeping the Player executable name.</summary>
         public static void BuildLauncher(string directory)
         {
             if (Application.platform != RuntimePlatform.WindowsEditor)
@@ -87,7 +87,7 @@ namespace Zantetsu.EditorTools.Sandbox
                 "WindowsPowerShell/v1.0/powershell.exe");
             var start = new ProcessStartInfo(shell,
                 "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + script
-                + "\" -OutputDirectory \"" + Path.Combine(Path.GetFullPath(directory), ".") + "\"")
+                + "\" -OutputDirectory \"" + Path.Combine(Path.GetFullPath(directory), ".") + "\" -InstallPlayerBootstrap")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
