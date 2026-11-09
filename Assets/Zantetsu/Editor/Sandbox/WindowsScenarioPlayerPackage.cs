@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -13,9 +14,11 @@ namespace Zantetsu.EditorTools.Sandbox
     /// </summary>
     public static class WindowsScenarioPlayerPackage
     {
-        public static IDisposable BuildSettings()
+        public static IDisposable BuildSettings(string version = null)
         {
-            return new BuildSettingsScope();
+            if (version != null && !Regex.IsMatch(version, @"\A[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\z"))
+                throw new ArgumentException("The Windows Player version must have three numeric parts and an optional prerelease or build suffix.", nameof(version));
+            return new BuildSettingsScope(version);
         }
 
         private sealed class BuildSettingsScope : IDisposable
@@ -23,19 +26,28 @@ namespace Zantetsu.EditorTools.Sandbox
             private readonly bool automatic;
             private readonly GraphicsDeviceType[] apis;
             private readonly bool showSplashScreen;
+            private readonly string bundleVersion;
+            private readonly bool versionOverridden;
             private bool disposed;
 
-            public BuildSettingsScope()
+            public BuildSettingsScope(string version)
             {
                 automatic = PlayerSettings.GetUseDefaultGraphicsAPIs(BuildTarget.StandaloneWindows64);
                 apis = PlayerSettings.GetGraphicsAPIs(BuildTarget.StandaloneWindows64);
                 showSplashScreen = PlayerSettings.SplashScreen.show;
+                bundleVersion = PlayerSettings.bundleVersion;
+                versionOverridden = version != null;
                 try
                 {
                     PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.StandaloneWindows64, false);
                     PlayerSettings.SetGraphicsAPIs(BuildTarget.StandaloneWindows64,
                         new[] { GraphicsDeviceType.Direct3D12, GraphicsDeviceType.Direct3D11 });
                     PlayerSettings.SplashScreen.show = false;
+                    if (versionOverridden)
+                    {
+                        PlayerSettings.bundleVersion = version;
+                        UnityEngine.Debug.Log("WINDOWS PLAYER BUILD: version " + bundleVersion + " -> " + version + " for this build.");
+                    }
                     UnityEngine.Debug.Log("WINDOWS PLAYER BUILD: startup splash disabled.");
                 }
                 catch { Dispose(); throw; }
@@ -52,6 +64,7 @@ namespace Zantetsu.EditorTools.Sandbox
                 }
                 finally
                 {
+                    if (versionOverridden) PlayerSettings.bundleVersion = bundleVersion;
                     PlayerSettings.SplashScreen.show = showSplashScreen;
                 }
             }

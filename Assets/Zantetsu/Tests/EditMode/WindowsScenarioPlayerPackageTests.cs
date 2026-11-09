@@ -25,6 +25,71 @@ namespace Zantetsu.Core.Tests
             finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
         }
 
+        [TestCase("0.1.1")]
+        [TestCase("0.1.1-alpha.1")]
+        [TestCase("0.1.1-alpha.1+build.3")]
+        public void SuccessfulScenarioBuildUsesTheRequestedVersionAndRestoresIt(string version)
+        {
+            string before = PlayerSettings.bundleVersion;
+            using (WindowsScenarioPlayerPackage.BuildSettings(version))
+                Assert.That(PlayerSettings.bundleVersion, Is.EqualTo(version));
+            Assert.That(PlayerSettings.bundleVersion, Is.EqualTo(before));
+        }
+
+        [Test]
+        public void FailedScenarioBuildRestoresTheRequestedVersion()
+        {
+            string before = PlayerSettings.bundleVersion;
+            Assert.Throws<InvalidOperationException>(() =>
+            {
+                using (WindowsScenarioPlayerPackage.BuildSettings("0.1.1-alpha.1"))
+                {
+                    Assert.That(PlayerSettings.bundleVersion, Is.EqualTo("0.1.1-alpha.1"));
+                    throw new InvalidOperationException("Simulated build failure.");
+                }
+            });
+            Assert.That(PlayerSettings.bundleVersion, Is.EqualTo(before));
+        }
+
+        [TestCase("")]
+        [TestCase(" ")]
+        [TestCase("0.1")]
+        [TestCase("0.1.1 alpha.1")]
+        [TestCase("0.1.1-alpha..1")]
+        [TestCase("0.1.1\n")]
+        public void InvalidVersionIsRejectedBeforeChangingBuildSettings(string version)
+        {
+            const BuildTarget target = BuildTarget.StandaloneWindows64;
+            bool automatic = PlayerSettings.GetUseDefaultGraphicsAPIs(target);
+            GraphicsDeviceType[] apis = PlayerSettings.GetGraphicsAPIs(target);
+            bool splash = PlayerSettings.SplashScreen.show;
+            string before = PlayerSettings.bundleVersion;
+            Assert.Throws<ArgumentException>(() =>
+            {
+                using (WindowsScenarioPlayerPackage.BuildSettings(version)) { }
+            });
+            Assert.That(PlayerSettings.GetUseDefaultGraphicsAPIs(target), Is.EqualTo(automatic));
+            Assert.That(PlayerSettings.GetGraphicsAPIs(target), Is.EqualTo(apis));
+            Assert.That(PlayerSettings.SplashScreen.show, Is.EqualTo(splash));
+            Assert.That(PlayerSettings.bundleVersion, Is.EqualTo(before));
+        }
+
+        [Test]
+        public void AbsentVersionOverrideLeavesTheVersionUnderCallerControl()
+        {
+            string before = PlayerSettings.bundleVersion;
+            try
+            {
+                using (WindowsScenarioPlayerPackage.BuildSettings())
+                {
+                    Assert.That(PlayerSettings.bundleVersion, Is.EqualTo(before));
+                    PlayerSettings.bundleVersion = "0.0.0-caller";
+                }
+                Assert.That(PlayerSettings.bundleVersion, Is.EqualTo("0.0.0-caller"));
+            }
+            finally { PlayerSettings.bundleVersion = before; }
+        }
+
         [TestCase(true)]
         [TestCase(false)]
         public void FailedScenarioBuildRestoresTheApisAndSplashSetting(bool splashBefore)

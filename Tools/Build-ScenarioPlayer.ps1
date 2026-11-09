@@ -5,7 +5,9 @@ param(
     [string]$Output,
     [string]$Unity = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Unity.exe',
     # Direct3D 12 first, then 11, for this build only: the Player starts on Direct3D 12 and draws through the native plugin (VP3C-NATIVE)
-    [switch]$Direct3D12
+    [switch]$Direct3D12,
+    [switch]$Release,
+    [ValidateNotNullOrEmpty()][ValidatePattern('\A[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\z')][string]$Version
 )
 $ErrorActionPreference = 'Stop'
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -16,6 +18,8 @@ $logs = Join-Path $project 'Logs/scenarios'
 $log = Join-Path $logs ('build-' + $BuildMode.ToLowerInvariant() + '.log')
 $arguments = '-batchmode -quit -force-d3d11 -projectPath "' + $project + '" -buildTarget StandaloneWindows64 -executeMethod Zantetsu.EditorTools.Sandbox.ScenarioPlayerBuild.BuildPlayerFromCommandLine -logFile "' + $log + '" -zantetsuPlayerOut "' + $Output + '" -zantetsuBuildMode ' + $BuildMode.ToLowerInvariant()
 if ($Direct3D12) { $arguments += ' -zantetsuPlayerD3D12' }
+if ($Release) { $arguments += ' -zantetsuPlayerRelease' }
+if ($PSBoundParameters.ContainsKey('Version')) { $arguments += ' -zantetsuPlayerVersion "' + $Version + '"' }
 $process = Start-Process -FilePath $Unity -ArgumentList $arguments -WorkingDirectory $project -WindowStyle Hidden -PassThru
 $process.WaitForExit()
 if ($process.ExitCode -ne 0) { throw "Unity failed ($($process.ExitCode)); see $log" }

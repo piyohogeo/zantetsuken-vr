@@ -29,6 +29,7 @@ namespace Zantetsu.EditorTools.Sandbox
         public const string SkinBakeProbeScenePath = SkinBakeProbeSceneBuild.PcScenePath;
 
         private const string OutArgument = "-zantetsuPlayerOut";
+        private const string VersionArgument = "-zantetsuPlayerVersion";
 
         /// <summary>With this argument the Player is a Release (non-Development) build: the distribution kind, for the check of DESIGN 21.18.</summary>
         private const string ReleaseArgument = "-zantetsuPlayerRelease";
@@ -103,6 +104,7 @@ namespace Zantetsu.EditorTools.Sandbox
         public static void BuildPlayerFromCommandLine()
         {
             string directory = null;
+            string version = null, versionFailure = null;
             bool development = true;
             bool statsVerify = false, statsVerifyDevelopment = false;
             bool direct3D12 = false;
@@ -117,6 +119,15 @@ namespace Zantetsu.EditorTools.Sandbox
                 if (i < arguments.Length - 1 && string.Equals(arguments[i], OutArgument, StringComparison.OrdinalIgnoreCase))
                 {
                     directory = arguments[i + 1];
+                }
+
+                if (string.Equals(arguments[i], VersionArgument, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i == arguments.Length - 1 || string.IsNullOrWhiteSpace(arguments[i + 1])
+                        || arguments[i + 1].StartsWith("-", StringComparison.Ordinal))
+                        versionFailure = VersionArgument + " requires a nonempty version.";
+                    else
+                        version = arguments[i + 1];
                 }
 
                 if (string.Equals(arguments[i], ReleaseArgument, StringComparison.OrdinalIgnoreCase))
@@ -141,27 +152,30 @@ namespace Zantetsu.EditorTools.Sandbox
             bool built = false;
             try
             {
-                PlayerSettings.enableFrameTimingStats = true;
-                if (direct3D12)
+                if (versionFailure != null) throw new ArgumentException(versionFailure);
+                using (WindowsScenarioPlayerPackage.BuildSettings(version))
                 {
-                    Debug.Log("SCENARIO PLAYER BUILD: " + Direct3D12Argument + " selects "
-                        + string.Join(",", Direct3D12Apis) + ", also the scenario package's default API order");
-                }
+                    PlayerSettings.enableFrameTimingStats = true;
+                    if (direct3D12)
+                    {
+                        Debug.Log("SCENARIO PLAYER BUILD: " + Direct3D12Argument + " selects "
+                            + string.Join(",", Direct3D12Apis) + ", also the scenario package's default API order");
+                    }
 
-                if (statsVerifyDevelopment) development = true;   // whatever the order of the arguments
-                Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats " + before + " -> true for this build; kind "
-                    + (statsVerifyDevelopment ? "Development with " + StatsVerifySymbol + " (" + StatsVerifyDevelopmentArgument + "): the statistics' VERIFICATION build for the allocation check, not for distribution"
-                        : development ? "Development" : statsVerify ? "Release with " + StatsVerifySymbol + " (" + StatsVerifyArgument + "): the statistics' VERIFICATION build, not for distribution" : "Release (" + ReleaseArgument + ")"));
-                var privateList = new List<string> { CityScenePath, NpcScenePath };
-                if (File.Exists(SkinBenchScenePath)) privateList.Add(SkinBenchScenePath);
-                if (File.Exists(SkinBakeProbeScenePath)) privateList.Add(SkinBakeProbeScenePath);
-                string[] privateScenes = privateList.ToArray();
-                Debug.Log("SCENARIO PLAYER BUILD: scenes " + string.Join(", ", privateScenes) + (File.Exists(SkinBenchScenePath) ? "" : " (no NPC skin bench scene: npc-skin-bench is not in this Player)")
-                    + (File.Exists(SkinBakeProbeScenePath) ? "" : " (no skin bake probe scene: skin-bake-probe is not in this Player)"));
-                var scenes = DemoBuildPolicy.SelectScenes(privateScenes, out bool demo);
-                using (WindowsScenarioPlayerPackage.BuildSettings())
-                using (DemoBuildPolicy.Scope(demo, scenes))
-                    built = !string.IsNullOrEmpty(directory) && CutWorldSandboxPlayerBuild.Build(directory, scenes, statsVerify ? new[] { StatsVerifySymbol } : null, development);
+                    if (statsVerifyDevelopment) development = true;   // whatever the order of the arguments
+                    Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats " + before + " -> true for this build; kind "
+                        + (statsVerifyDevelopment ? "Development with " + StatsVerifySymbol + " (" + StatsVerifyDevelopmentArgument + "): the statistics' VERIFICATION build for the allocation check, not for distribution"
+                            : development ? "Development" : statsVerify ? "Release with " + StatsVerifySymbol + " (" + StatsVerifyArgument + "): the statistics' VERIFICATION build, not for distribution" : "Release (" + ReleaseArgument + ")"));
+                    var privateList = new List<string> { CityScenePath, NpcScenePath };
+                    if (File.Exists(SkinBenchScenePath)) privateList.Add(SkinBenchScenePath);
+                    if (File.Exists(SkinBakeProbeScenePath)) privateList.Add(SkinBakeProbeScenePath);
+                    string[] privateScenes = privateList.ToArray();
+                    Debug.Log("SCENARIO PLAYER BUILD: scenes " + string.Join(", ", privateScenes) + (File.Exists(SkinBenchScenePath) ? "" : " (no NPC skin bench scene: npc-skin-bench is not in this Player)")
+                        + (File.Exists(SkinBakeProbeScenePath) ? "" : " (no skin bake probe scene: skin-bake-probe is not in this Player)"));
+                    var scenes = DemoBuildPolicy.SelectScenes(privateScenes, out bool demo);
+                    using (DemoBuildPolicy.Scope(demo, scenes))
+                        built = !string.IsNullOrEmpty(directory) && CutWorldSandboxPlayerBuild.Build(directory, scenes, statsVerify ? new[] { StatsVerifySymbol } : null, development);
+                }
                 if (built) WindowsScenarioPlayerPackage.BuildLauncher(directory);
             }
             catch (Exception e)
@@ -174,6 +188,7 @@ namespace Zantetsu.EditorTools.Sandbox
                 PlayerSettings.enableFrameTimingStats = before;
                 AssetDatabase.SaveAssets();
                 Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats back to " + PlayerSettings.enableFrameTimingStats
+                    + "; version back to " + PlayerSettings.bundleVersion
                     + "; graphics APIs back to " + string.Join(",", PlayerSettings.GetGraphicsAPIs(BuildTarget.StandaloneWindows64))
                     + " (automatic " + PlayerSettings.GetUseDefaultGraphicsAPIs(BuildTarget.StandaloneWindows64) + ")");
             }
