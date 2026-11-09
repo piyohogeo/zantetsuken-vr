@@ -308,6 +308,9 @@ namespace Zantetsu.Rendering
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnSentinelEventId();
 
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnWarmPipelineEventId();
+
 #if UNITY_ANDROID && !UNITY_EDITOR
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnPrepareEventId();
@@ -318,8 +321,6 @@ namespace Zantetsu.Rendering
         private static extern int ZvnGroupPrepareEventId();
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnGroupPreparedEventId();
-        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
-        private static extern int ZvnWarmPipelineEventId();
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnZeroEventId();
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
@@ -439,14 +440,14 @@ namespace Zantetsu.Rendering
                         s_eventFunction = ZvnGetRenderEventAndDataFunc();
                         s_eventId = ZvnDrawEventId();
                         s_sentinelEventId = ZvnSentinelEventId();
+                        // Optional on both native backends. Older libraries retain their existing draw path.
+                        try { s_warmPipelineEventId = ZvnWarmPipelineEventId(); }
+                        catch (EntryPointNotFoundException) { s_warmPipelineEventId = 0; }
 #if UNITY_ANDROID && !UNITY_EDITOR
                         s_prepareEventId = ZvnPrepareEventId();
                         s_preparedDrawEventId = ZvnPreparedDrawEventId();
                         s_groupPrepareEventId = ZvnGroupPrepareEventId();
                         s_groupPreparedEventId = ZvnGroupPreparedEventId();
-                        // Optional export: libraries without warmup retain the existing contract-1 draw path.
-                        try { s_warmPipelineEventId = ZvnWarmPipelineEventId(); }
-                        catch (EntryPointNotFoundException) { s_warmPipelineEventId = 0; }
                         // Experiment (2026-10-10): the count slots' zero event and the count draw's readiness; absent in older libraries.
                         try { s_zeroEventId = ZvnZeroEventId(); s_indirectCountReady = ZvnIndirectCountReady() != 0; }
                         catch (EntryPointNotFoundException) { s_zeroEventId = 0; s_indirectCountReady = false; }

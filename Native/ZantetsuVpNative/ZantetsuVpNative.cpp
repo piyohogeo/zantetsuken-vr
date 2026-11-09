@@ -56,6 +56,7 @@ namespace
     // The one event id the managed side issues; configured once the device exists.
     const int kDrawEventId = 0x5A560001;
     const int kSentinelEventId = 0x5A560002;
+    const int kWarmPipelineEventId = 0x5A560003;
     const uint32_t kDefaultRegions = 4;
     const uint32_t kDefaultRegionBytes = 256 * 1024;
     const uint32_t kDefaultRegionDescriptors = 1024;
@@ -362,6 +363,13 @@ namespace
             sentinel.flags = 0;
             sentinel.ensureActiveRenderTextureIsBound = false;
             s_d3d12->ConfigureEvent(kSentinelEventId, &sentinel);
+
+            // Startup preparation changes the command list's bindings but records no draw and needs no target.
+            UnityD3D12PluginEventConfig warm = {};
+            warm.graphicsQueueAccess = kUnityD3D12GraphicsQueueAccess_DontCare;
+            warm.flags = kUnityD3D12EventConfigFlag_ModifiesCommandBuffersState;
+            warm.ensureActiveRenderTextureIsBound = false;
+            s_d3d12->ConfigureEvent(kWarmPipelineEventId, &warm);
 
             D3D12_FEATURE_DATA_D3D12_OPTIONS1 options1 = {};
             if (SUCCEEDED(s_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &options1, sizeof(options1))))
@@ -917,9 +925,55 @@ namespace
         return state;
     }
 
+    void WarmPipelineLocked(ZvnDraw* draw)
+    {
+        if (draw->version != ZVN_CONTRACT_VERSION)
+        {
+            Refuse(draw, ZvnResult_BadVersion);
+            return;
+        }
+
+        // The shared warm header carries a pipeline and a render-pass restart flag (unused on D3D12).
+        // No draw resources, constants or commands may reach this resource-free event.
+        if (draw->totalBytes < sizeof(ZvnDraw) || draw->resourceCount != 0 || draw->constantsCount != 0
+            || draw->commandCount != 0 || draw->argumentBuffer != nullptr || draw->indexBuffer != nullptr
+            || draw->indexBufferBytes != 0 || draw->argumentOffset > 1 || draw->viewportCount > ZVN_MAX_VIEWPORTS)
+        {
+            Refuse(draw, ZvnResult_BadResource);
+            return;
+        }
+
+        if (draw->pipeline >= s_pipelines.size() || !s_pipelines[draw->pipeline].alive || s_pipelines[draw->pipeline].released)
+        {
+            Refuse(draw, ZvnResult_NoPipeline);
+            return;
+        }
+
+        Pipeline& pipeline = s_pipelines[draw->pipeline];
+        UnityGraphicsD3D12RecordingState recording = {};
+        if (!s_d3d12->CommandRecordingState(&recording) || recording.commandList == nullptr)
+        {
+            Refuse(draw, ZvnResult_NoCommandList);
+            return;
+        }
+
+        if (!EnsureRingsLocked())
+        {
+            Refuse(draw, ZvnResult_RingFull);
+            return;
+        }
+
+        recording.commandList->SetGraphicsRootSignature(pipeline.rootSignature);
+        recording.commandList->SetPipelineState(pipeline.pipelineState);
+        ID3D12DescriptorHeap* heaps[] = { s_rings.descriptors };
+        recording.commandList->SetDescriptorHeaps(1, heaps);
+        pipeline.lastUsedFence = s_d3d12->GetNextFrameFenceValue();
+        Consume(draw, ZvnResult_Recorded);
+    }
+
     void UNITY_INTERFACE_API OnDrawEvent(int eventId, void* data)
     {
-        if (data == nullptr || (eventId != kDrawEventId && eventId != kSentinelEventId))
+        if (data == nullptr || (eventId != kDrawEventId && eventId != kSentinelEventId && eventId != kWarmPipelineEventId))
         {
             return;
         }
@@ -942,6 +996,12 @@ namespace
             // Consumed, nothing else: the order of the stream is what the managed side reads from it.
             s_counters.sentinelsRun++;
             Consume(draw, ZvnResult_Recorded);
+            return;
+        }
+
+        if (eventId == kWarmPipelineEventId)
+        {
+            WarmPipelineLocked(draw);
             return;
         }
 
@@ -1422,6 +1482,12 @@ extern "C"
     int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnSentinelEventId()
     {
         return kSentinelEventId;
+    }
+
+    // Optional export: older libraries keep returning no warm event on the managed side.
+    int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnWarmPipelineEventId()
+    {
+        return kWarmPipelineEventId;
     }
 
     void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnGetCounters(ZvnCounters* out)

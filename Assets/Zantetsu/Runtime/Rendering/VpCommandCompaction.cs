@@ -601,18 +601,31 @@ namespace Zantetsu.Rendering
         /// </summary>
         public static void Compact(CommandBuffer commands, GraphicsBuffer source, GraphicsBuffer target, GraphicsBuffer counts, int firstCommand, int commandCount, int slot)
         {
+            DispatchCompact(commands, source, target, counts, firstCommand, commandCount, slot, false);
+            Compactions++;
+            RunCommands += commandCount;
+        }
+
+        /// <summary>Records one group with no source commands. Wave operations execute with every lane invisible.</summary>
+        internal static void PrewarmEmpty(CommandBuffer commands, GraphicsBuffer source, GraphicsBuffer target, GraphicsBuffer counts)
+        {
+            DispatchCompact(commands, source, target, counts, 0, 0, 0, true);
+        }
+
+        private static void DispatchCompact(CommandBuffer commands, GraphicsBuffer source, GraphicsBuffer target, GraphicsBuffer counts,
+            int firstCommand, int commandCount, int slot, bool warmEmpty)
+        {
             if (!TryLoad(out string failure)) throw new InvalidOperationException(failure);
             if (slot < 0 || slot >= Slots) throw new ArgumentOutOfRangeException(nameof(slot));
-            if (firstCommand < 0 || commandCount <= 0) throw new ArgumentOutOfRangeException(nameof(commandCount));
+            if (firstCommand < 0 || commandCount < 0 || (commandCount == 0 && !warmEmpty))
+                throw new ArgumentOutOfRangeException(nameof(commandCount));
             commands.SetComputeIntParam(s_shader, FirstId, firstCommand);
             commands.SetComputeIntParam(s_shader, CountId, commandCount);
             commands.SetComputeIntParam(s_shader, SlotId, slot);
             commands.SetComputeBufferParam(s_shader, s_compact, SourceId, source);
             commands.SetComputeBufferParam(s_shader, s_compact, TargetId, target);
             commands.SetComputeBufferParam(s_shader, s_compact, CountsId, counts);
-            commands.DispatchCompute(s_shader, s_compact, (commandCount + 63) / 64, 1, 1);
-            Compactions++;
-            RunCommands += commandCount;
+            commands.DispatchCompute(s_shader, s_compact, Math.Max(1, (commandCount + 63) / 64), 1, 1);
         }
 
         /// <summary>

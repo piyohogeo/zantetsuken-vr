@@ -22,7 +22,12 @@ namespace Zantetsu.Quest
         private readonly MaterialPropertyBlock _initProperties = new MaterialPropertyBlock();
         private readonly MaterialPropertyBlock _volumeProperties = new MaterialPropertyBlock();
         private readonly MaterialPropertyBlock _capProperties = new MaterialPropertyBlock();
+        private readonly MaterialPropertyBlock _bodyProperties = new MaterialPropertyBlock();
+        private readonly MaterialPropertyBlock _shadowProperties = new MaterialPropertyBlock();
+        private readonly List<Material> _bodies = new List<Material>();
+        private readonly List<Material> _casters = new List<Material>();
         private GraphicsBuffer _vertices, _indices, _transforms, _clips, _arguments, _capVertices, _capPlacements;
+        private GraphicsBuffer _visible, _bounds, _shadowArguments;
         private readonly List<MeshRenderer> _replayVisualRenderers = new List<MeshRenderer>();
         private readonly List<Mesh> _replayVisualMeshes = new List<Mesh>();
         private GraphicsFence _fence;
@@ -34,6 +39,8 @@ namespace Zantetsu.Quest
 
         public int ReplayVisualRendererCount { get; private set; }
         public int ReplayVisualMaterialCount { get; private set; }
+        public int BodyMaterialCount => _bodies.Count;
+        public int CasterMaterialCount => _casters.Count;
 
         /// <summary>
         /// Four subsequent frames, including normal camera depth/stencil clears,
@@ -44,13 +51,16 @@ namespace Zantetsu.Quest
                 && _fenceFrame == _lastIssueFrame && _fence.passed);
 
         public static QuestNpcUnityPrewarm Create(Camera camera, VpStencilCapMaterials materials,
-            bool singlePassInstanced = false, int layer = 0, IReadOnlyList<MeshRenderer> replayVisualRenderers = null)
+            bool singlePassInstanced = false, int layer = 0, IReadOnlyList<MeshRenderer> replayVisualRenderers = null,
+            IReadOnlyList<Material> bodies = null, IReadOnlyList<Material> casters = null)
         {
             if (camera == null || materials == null || materials.ColorCount < 1)
                 throw new ArgumentException("The real camera and display stencil materials are required.");
+            bool pcvr = SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D11
+                || SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D12;
             if (!(GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset pipeline)
-                || (!Zantetsu.Core.PlayerPlatform.IsAndroidFlat && pipeline.name != "Quest_RPAsset"))
-                throw new InvalidOperationException("Unity prewarm requires URP with the Quest drawing conditions.");
+                || (!pcvr && !Zantetsu.Core.PlayerPlatform.IsAndroidFlat && pipeline.name != "Quest_RPAsset"))
+                throw new InvalidOperationException("Unity prewarm requires URP with the active platform's drawing conditions.");
             if (camera.TryGetComponent<UniversalAdditionalCameraData>(out var data) && data.renderType != CameraRenderType.Base)
                 throw new InvalidOperationException("Unity prewarm requires the Base camera's ordinary depth/stencil clear.");
             if (camera.clearFlags == CameraClearFlags.Nothing)
@@ -59,11 +69,11 @@ namespace Zantetsu.Quest
                 throw new ArgumentException("The warm draw layer must be visible to the real camera.");
             if (!SystemInfo.supportsGraphicsFence)
                 throw new InvalidOperationException("GPU completion fences are required for prewarm buffer retirement.");
-            return new QuestNpcUnityPrewarm(camera, materials, singlePassInstanced, layer, replayVisualRenderers);
+            return new QuestNpcUnityPrewarm(camera, materials, singlePassInstanced, layer, replayVisualRenderers, bodies, casters);
         }
 
         private QuestNpcUnityPrewarm(Camera camera, VpStencilCapMaterials materials, bool singlePassInstanced,
-            int layer, IReadOnlyList<MeshRenderer> replayVisualRenderers)
+            int layer, IReadOnlyList<MeshRenderer> replayVisualRenderers, IReadOnlyList<Material> bodies, IReadOnlyList<Material> casters)
         {
             _camera = camera;
             _layer = layer;
@@ -108,6 +118,7 @@ namespace Zantetsu.Quest
                 // Vulkan requires all reflected buffers, even a branch-disabled
                 // one. Index zero of this buffer is also a finite unit normal.
                 _capProperties.SetBuffer("_VpCapNormals", _capPlacements);
+                PrepareBodies(bodies, casters);
                 PrepareReplayVisuals(replayVisualRenderers);
                 RenderPipelineManager.endCameraRendering += AfterCamera;
             }
@@ -116,6 +127,30 @@ namespace Zantetsu.Quest
                 ReleaseBuffers(); // No draw has been issued by the constructor.
                 throw;
             }
+        }
+
+        private void PrepareBodies(IReadOnlyList<Material> bodies, IReadOnlyList<Material> casters)
+        {
+            if (bodies != null) _bodies.AddRange(bodies);
+            if (casters != null) _casters.AddRange(casters);
+            if (_bodies.Count == 0 && _casters.Count == 0) return;
+            _visible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, 1, sizeof(uint)) { name = "PCVR prewarm visible instance" };
+            _visible.SetData(new uint[] { 0 });
+            _bounds = new GraphicsBuffer(GraphicsBuffer.Target.Structured, 1, VpCullCommand.Stride) { name = "PCVR prewarm command bounds" };
+            _bounds.SetData(new[] { new VpCullCommand { indexCount = 3, instanceCount = 1, extents = Vector3.one } });
+            _shadowArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, 1, GraphicsBuffer.IndirectDrawIndexedArgs.size) { name = "PCVR prewarm shadow triangle" };
+            _shadowArguments.SetData(new[] { new GraphicsBuffer.IndirectDrawIndexedArgs { indexCountPerInstance = 3, instanceCount = 1 } });
+            foreach (MaterialPropertyBlock properties in new[] { _bodyProperties, _shadowProperties })
+            {
+                properties.SetBuffer("_VpVertices", _vertices);
+                properties.SetBuffer("_VpInstanceObjectToWorld", _transforms);
+                properties.SetBuffer("_VpInstanceClip", _clips);
+                properties.SetBuffer("_VpVisible", _visible);
+                properties.SetBuffer("_VpCullCommands", _bounds);
+            }
+            _bodyProperties.SetInteger("_VpInstanceMultiplier", _instances);
+            _shadowProperties.SetInteger("_VpInstanceMultiplier", 1);
+            _shadowProperties.SetFloat("_VpShadowSliceSelection", 1);
         }
 
         private void PrepareReplayVisuals(IReadOnlyList<MeshRenderer> sources)
@@ -240,6 +275,15 @@ namespace Zantetsu.Quest
                 MeshTopology.Triangles, _indices, _arguments, 1, 0);
             Graphics.RenderPrimitivesIndexed(Parameters(_cap, _capProperties, false),
                 MeshTopology.Triangles, _indices, 3, 0, _instances);
+            foreach (Material material in _bodies)
+                Graphics.RenderPrimitivesIndexedIndirect(Parameters(material, _bodyProperties, true),
+                    MeshTopology.Triangles, _indices, _arguments, 1, 0);
+            foreach (Material material in _casters)
+            {
+                RenderParams parameters = Parameters(material, _shadowProperties, false);
+                parameters.shadowCastingMode = ShadowCastingMode.On;
+                Graphics.RenderPrimitivesIndexedIndirect(parameters, MeshTopology.Triangles, _indices, _shadowArguments, 1, 0);
+            }
         }
 
         private RenderParams Parameters(Material material, MaterialPropertyBlock properties, bool receiveShadows) => new RenderParams(material)
@@ -310,7 +354,9 @@ namespace Zantetsu.Quest
         {
             _vertices?.Dispose(); _indices?.Dispose(); _transforms?.Dispose(); _clips?.Dispose();
             _arguments?.Dispose(); _capVertices?.Dispose(); _capPlacements?.Dispose();
+            _visible?.Dispose(); _bounds?.Dispose(); _shadowArguments?.Dispose();
             _vertices = _indices = _transforms = _clips = _arguments = _capVertices = _capPlacements = null;
+            _visible = _bounds = _shadowArguments = null;
             for (int i = 0; i < _replayVisualRenderers.Count; i++)
                 if (_replayVisualRenderers[i] != null) UnityEngine.Object.Destroy(_replayVisualRenderers[i].gameObject);
             for (int i = 0; i < _replayVisualMeshes.Count; i++)

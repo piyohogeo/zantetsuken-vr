@@ -713,6 +713,77 @@ namespace Zantetsu.Rendering.Tests
         }
 
         [Test]
+        public void CompactionPrewarm_RequiresEmptyCommandsAndTheCurrentZeroReservation_WithoutWritingEntries()
+        {
+            VpCommandCompaction.LayoutForTest = VpCommandCompaction.SetLayout.Direct3D12;
+            Assert.That(VpGpuCullSetup.TryCreate(1, true, out VpGpuCullSetup setup, out string failure), Is.True, failure);
+            using (var batch = new VpIndexedIndirectDrawBatch(4, 4, null, setup))
+            using (var commands = new CommandBuffer())
+            {
+                batch.WriteWholeOnce();
+                batch.NativeDrawBuffers(0, out GraphicsBuffer source, out _, out _, out _, out _, out _, out _);
+                var set = batch.CompactionOf(0, 10);
+                Assert.Throws<InvalidOperationException>(() => batch.PrewarmEmptyCompaction(commands, set, source, 0, 10));
+                set.MarkZeroReserved(1, 10);
+                Assert.Throws<InvalidOperationException>(() => batch.PrewarmEmptyCompaction(commands, set, source, 0, 10));
+                set.MarkZeroReserved(0, 9);
+                Assert.Throws<InvalidOperationException>(() => batch.PrewarmEmptyCompaction(commands, set, source, 0, 10));
+                set.MarkZeroReserved(0, 10);
+                if (VpCommandCompaction.TryLoad(out _))
+                {
+                    var expected = new uint[4 * 6];
+                    for (int i = 0; i < expected.Length; i++) expected[i] = 0x12340000u + (uint)i;
+                    set.Entries(0).SetData(expected);
+                    long compactions = VpCommandCompaction.Compactions, runCommands = VpCommandCompaction.RunCommands;
+                    batch.PrewarmEmptyCompaction(commands, set, source, 0, 10);
+                    Graphics.ExecuteCommandBuffer(commands);
+                    var actual = new uint[expected.Length];
+                    set.Entries(0).GetData(actual);
+                    Assert.That(actual, Is.EqualTo(expected), "empty warm dispatches never copy a command");
+                    var counts = new uint[VpCommandCompaction.Slots];
+                    set.Counts(0).GetData(counts);
+                    Assert.That(counts, Is.All.Zero, "no lane adds to a count");
+                    Assert.That(VpCommandCompaction.Compactions, Is.EqualTo(compactions));
+                    Assert.That(VpCommandCompaction.RunCommands, Is.EqualTo(runCommands));
+                }
+                var cube = new Bounds(Vector3.zero, Vector3.one);
+                Assert.That(batch.TryUpload(new[] { new VpIndirectCommand(new VpGeometryRange(0, 3, 0, 3), cube, 1) },
+                    new[] { Matrix4x4.identity }, false), Is.True);
+                Assert.Throws<InvalidOperationException>(() => batch.PrewarmEmptyCompaction(commands, set, source, 0, 10));
+                Assert.Throws<ArgumentOutOfRangeException>(() => batch.IssueCompaction(commands, set, source, 0, 0, 0, 0, 10),
+                    "ordinary compaction retains its nonempty run contract");
+            }
+        }
+
+        [Test]
+        public void ShadowSlicePrewarm_ReusesFourEmptyOutputsOfTheRegisteredView()
+        {
+            Assert.That(VpGpuCullSetup.TryCreate(2, true, out VpGpuCullSetup setup, out string failure), Is.True, failure);
+            using (var batch = new VpIndexedIndirectDrawBatch(4, 4, null, setup))
+            using (var commands = new CommandBuffer())
+            {
+                batch.WriteWholeOnce();
+                var matrices = new[] { Matrix4x4.identity, Matrix4x4.identity, Matrix4x4.identity, Matrix4x4.identity };
+                var biases = new Vector4[4];
+                var output = batch.IssueShadowSliceCull(commands, 1, matrices, biases, 4);
+                var expected = new uint[4 * 6];
+                for (int i = 0; i < expected.Length; i++) expected[i] = 0x43210000u + (uint)i;
+                for (int split = 0; split < 4; split++) output.Arguments(split).SetData(expected);
+                Assert.That(batch.IssueShadowSliceCull(commands, 1, matrices, biases, 4), Is.SameAs(output));
+                Assert.That(batch.IssueShadowSliceCull(commands, 0, matrices, biases, 4), Is.Not.SameAs(output));
+                Graphics.ExecuteCommandBuffer(commands);
+                for (int split = 0; split < 4; split++)
+                {
+                    var actual = new uint[expected.Length];
+                    output.Arguments(split).GetData(actual);
+                    Assert.That(actual, Is.EqualTo(expected), "empty cascade " + split + " reads and writes no commands");
+                    Assert.That(output.Visible(split), Is.Not.Null);
+                }
+                Assert.That(batch.CommandCount, Is.Zero);
+            }
+        }
+
+        [Test]
         public void Compaction_RefusesARun_WhoseColumnWasNotReservedForZeroingThisFrame()
         {
             // The experiment's gate (TL review, 2026-10-10): a frame whose zero event could not be taken for a column

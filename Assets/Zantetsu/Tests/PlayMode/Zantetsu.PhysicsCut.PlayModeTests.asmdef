@@ -11,6 +11,7 @@
         "Zantetsu.ConvexCut",
         "Zantetsu.Rendering",
         "Zantetsu.Rendering.Urp",
+        "Zantetsu.Quest",
         "Unity.Mathematics",
         "Unity.Collections",
         "Unity.Burst",

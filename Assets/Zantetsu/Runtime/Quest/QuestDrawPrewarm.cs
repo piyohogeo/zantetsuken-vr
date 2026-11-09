@@ -10,7 +10,7 @@ using Zantetsu.Sandbox;
 namespace Zantetsu.Quest
 {
     /// <summary>
-    /// The Quest's drawing preparation before the first cut (2026-10-18): what the scripted NPC slash and city walk did
+    /// Drawing preparation for Quest and PCVR before the first cut (2026-10-18): what the scripted NPC slash and city walk did
     /// before their replay (<c>PrewarmBeforeReplay</c>), made one piece so that play prepares the same way. With the
     /// real camera and the display's own materials it asks
     /// <list type="bullet">
@@ -20,8 +20,8 @@ namespace Zantetsu.Quest
     /// <item>Unity for three frames of the cut's stencil draws (init, volume, cap) and of the katana's and the slash
     /// waves' degenerate copies (<see cref="QuestNpcUnityPrewarm"/>);</item>
     /// </list>
-    /// and is complete only when the native warm events were consumed without failure AND the Unity draws were rendered
-    /// three times and their GPU fence passed after four more frames. A failure is a failure, never a completion.
+    /// and is complete only when the native warm events were consumed without failure, then the Unity draws were rendered
+    /// three times and their GPU fence passed after four more frames. This final fence also follows the native preparation. A failure is a failure, never a completion.
     /// <para>
     /// **Resources.** The Unity helper's buffers are freed only when its fence says the GPU is done with them; on a
     /// failure, a timeout or an abandonment they are handed to its own retirement, which waits for that, never freed at
@@ -39,7 +39,7 @@ namespace Zantetsu.Quest
         private readonly Camera _camera;
         private readonly CutWorldRoot _world;
         private readonly CutWorldCameraDrawing _drawing;
-        private readonly bool _native, _motion, _holdWhilePaused;
+        private readonly bool _native, _motion, _holdWhilePaused, _unityBodies;
         private readonly double _timeoutSeconds;
         private readonly Func<VpSkinModel> _skinModelForBake;
         private QuestNpcUnityPrewarm _unity;
@@ -51,7 +51,7 @@ namespace Zantetsu.Quest
         /// it (reported). The first Bake16 dispatch otherwise costs the first hit's frame about 40 ms on the Quest.
         /// </param>
         public QuestDrawPrewarm(Camera camera, CutWorldRoot world, CutWorldCameraDrawing drawing, bool native, bool motion, bool holdWhilePaused,
-            double timeoutSeconds = DefaultTimeoutSeconds, Func<VpSkinModel> skinModelForBake = null)
+            double timeoutSeconds = DefaultTimeoutSeconds, Func<VpSkinModel> skinModelForBake = null, bool unityBodies = false)
         {
             _camera = camera;
             _world = world;
@@ -61,6 +61,7 @@ namespace Zantetsu.Quest
             _holdWhilePaused = holdWhilePaused;
             _timeoutSeconds = timeoutSeconds;
             _skinModelForBake = skinModelForBake;
+            _unityBodies = unityBodies;
         }
 
         /// <summary>The bake warm's own report and outcome, when it ran (null otherwise).</summary>
@@ -118,9 +119,66 @@ namespace Zantetsu.Quest
                 }
             }
 
+            if (_native && nativeRoute != null)
+            {
+                bool complete = false;
+                // Preserve native completion evidence even when Unity's fence query failed.
+                try
+                {
+                    bool requested = nativeRoute.GetPrewarmStatus(_camera, out complete, out string failure);
+                    if (Failure == null && (!requested || failure != null)) Failure = failure ?? "native prewarm request disappeared";
+                }
+                catch (Exception e) { if (Failure == null) Failure = "native prewarm status: " + e.Message; }
+                while (Failure == null && !complete && !Finished)
+                {
+                    try
+                    {
+                        if (!nativeRoute.GetPrewarmStatus(_camera, out complete, out string failure)) Failure = "native prewarm request disappeared";
+                        else if (failure != null) Failure = failure;
+                    }
+                    catch (Exception e) { Failure = "native prewarm status: " + e.Message; }
+                    if (Failure == null && !complete && Clock >= deadline) Failure = "native prewarm did not complete within " + _timeoutSeconds + " s";
+                    if (Failure == null && !complete)
+                    {
+                        yield return null;
+                        while (_holdWhilePaused && Zantetsu.Core.GamePause.IsPaused) yield return null;
+                    }
+                }
+
+                if (Finished) yield break;
+                Report.Add("native complete=" + complete);
+                Report.Add(nativeRoute.DescribePrewarm(_camera));
+            }
+
             if (Failure == null)
             {
-                try { _unity = QuestNpcUnityPrewarm.Create(_camera, _world.Display.PrewarmStencilMaterials, _world.Display.SinglePassInstanced, _world.gameObject.layer, SandboxPropSlashPlayerCheck.ReplayVisualRenderers()); }
+                try
+                {
+                    var bodies = new List<Material>();
+                    var casters = new List<Material>();
+                    if (_unityBodies && !_native)
+                    {
+                        _world.Display.CopyUnityPrewarmMaterials(bodies, casters);
+                        _world.Display.NativePrewarmBuffers(out var batch, out _);
+                        int view = _world.Display.NativePrewarmView(_camera);
+                        if (batch.CullsOnGpu && view < 0) throw new InvalidOperationException("the display camera is not registered for GPU culling");
+                        if (batch.CullsOnGpu && batch.CommandCount == 0)
+                        {
+                            var commands = UnityEngine.Rendering.CommandBufferPool.Get("PCVR empty cull preparation");
+                            try
+                            {
+                                var conditions = new VpCullConditions();
+                                conditions.KeepEverything();
+                                batch.IssueCull(commands, view, conditions, true);
+                                Graphics.ExecuteCommandBuffer(commands);
+                                Report.Add("Unity empty cull dispatch=1");
+                            }
+                            finally { UnityEngine.Rendering.CommandBufferPool.Release(commands); }
+                        }
+                    }
+                    _unity = QuestNpcUnityPrewarm.Create(_camera, _world.Display.PrewarmStencilMaterials,
+                        _world.Display.SinglePassInstanced, _world.gameObject.layer, SandboxPropSlashPlayerCheck.ReplayVisualRenderers(), bodies, casters);
+                }
                 catch (Exception e) { Failure = "Unity prewarm creation: " + e.Message; }
             }
 
@@ -153,6 +211,7 @@ namespace Zantetsu.Quest
 
                 if (Finished) yield break;
                 Report.Add("Unity rendered warm frames=" + unity.RenderedWarmFrames);
+                Report.Add("Unity body materials=" + unity.BodyMaterialCount + "; caster materials=" + unity.CasterMaterialCount);
                 Report.Add("Unity replay visual renderers=" + unity.ReplayVisualRendererCount + "; material slots=" + unity.ReplayVisualMaterialCount);
                 Report.Add("Unity buffer retirement query succeeded=" + readyKnown + "; ready=" + ready);
                 if (unity.RenderedWarmFrames != UnityWarmFrames && Failure == null) Failure = "Unity prewarm did not render all " + UnityWarmFrames + " preparation frames";
@@ -164,37 +223,6 @@ namespace Zantetsu.Quest
                 }
 
                 RetireUnitySafely();   // never free an in-flight or unconfirmed buffer on failure
-            }
-
-            if (_native && nativeRoute != null)
-            {
-                bool complete = false;
-                // Preserve native completion evidence even when Unity's fence query failed.
-                try
-                {
-                    bool requested = nativeRoute.GetPrewarmStatus(_camera, out complete, out string failure);
-                    if (Failure == null && (!requested || failure != null)) Failure = failure ?? "native prewarm request disappeared";
-                }
-                catch (Exception e) { if (Failure == null) Failure = "native prewarm status: " + e.Message; }
-                while (Failure == null && !complete && !Finished)
-                {
-                    try
-                    {
-                        if (!nativeRoute.GetPrewarmStatus(_camera, out complete, out string failure)) Failure = "native prewarm request disappeared";
-                        else if (failure != null) Failure = failure;
-                    }
-                    catch (Exception e) { Failure = "native prewarm status: " + e.Message; }
-                    if (Failure == null && !complete && Clock >= deadline) Failure = "native prewarm did not complete within " + _timeoutSeconds + " s";
-                    if (Failure == null && !complete)
-                    {
-                        yield return null;
-                        while (_holdWhilePaused && Zantetsu.Core.GamePause.IsPaused) yield return null;
-                    }
-                }
-
-                if (Finished) yield break;
-                Report.Add("native complete=" + complete);
-                Report.Add(nativeRoute.DescribePrewarm(_camera));
             }
 
             // The GPU bake's warm (SKIN-GPU-FIRST-STARTUP-1): only where the world bakes on the GPU and a prepared model is given.

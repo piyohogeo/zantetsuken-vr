@@ -686,6 +686,18 @@ namespace Zantetsu.Rendering
             VpCommandCompaction.Compact(commands, source, compaction.Entries(column), compaction.Counts(column), firstCommand, commandCount, slot);
         }
 
+        /// <summary>Prepares the selected wave kernel on an empty batch after this frame's ordinary zero pass.</summary>
+        public void PrewarmEmptyCompaction(CommandBuffer commands, Compaction compaction, GraphicsBuffer source, int column, int frame)
+        {
+            ThrowIfDisposed(); ThrowIfNotCulled();
+            if (CommandCount != 0) throw new InvalidOperationException("Compaction prewarm requires an empty batch.");
+            if (commands == null) throw new ArgumentNullException(nameof(commands));
+            if (compaction == null) throw new ArgumentNullException(nameof(compaction));
+            if (!compaction.ZeroReserved(column, frame))
+                throw new InvalidOperationException("the prewarm column is not reserved for zeroing in this frame");
+            VpCommandCompaction.PrewarmEmpty(commands, source, compaction.Entries(column), compaction.Counts(column));
+        }
+
         // ---- the clip list (DESIGN 4.5.9) ----------------------------------------------------------------------
         // The clip route of a batch that selects on the GPU is drawn apart from the selection, so that the
         // selection's own draws need no clip at all: the owner says which COMMANDS are of it, with the commands

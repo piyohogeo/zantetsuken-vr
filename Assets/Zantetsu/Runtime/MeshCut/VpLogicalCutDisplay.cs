@@ -4863,6 +4863,26 @@ namespace Zantetsu.MeshCut
             buffers = _buffers;
         }
 
+        public int NativePrewarmView(Camera camera) => FindCamera(camera)?.view ?? -1;
+
+        /// <summary>The actual Unity body and clip-list material instances used by this display.</summary>
+        public void CopyUnityPrewarmMaterials(List<Material> bodies, List<Material> casters)
+        {
+            if (bodies == null) throw new ArgumentNullException(nameof(bodies));
+            if (casters == null) throw new ArgumentNullException(nameof(casters));
+            foreach (Material material in _materials.Values)
+            {
+                if (material != null && !bodies.Contains(material)) bodies.Add(material);
+                if (material != null && _clipMaterials != null && _clipMaterials.TryGetValue(material, out Material clip) && !bodies.Contains(clip)) bodies.Add(clip);
+            }
+            foreach (Material caster in new[] { _shadowMaterial, _provisionalShadowMaterial })
+            {
+                if (caster == null) continue;
+                if (!casters.Contains(caster)) casters.Add(caster);
+                if (_clipMaterials != null && _clipMaterials.TryGetValue(caster, out Material clip) && !casters.Contains(clip)) casters.Add(clip);
+            }
+        }
+
         /// <summary>Read-only access for the Quest startup's Unity procedural stencil preparation.</summary>
         public VpStencilCapMaterials PrewarmStencilMaterials => _stencilMaterials;
 
@@ -5167,8 +5187,7 @@ namespace Zantetsu.MeshCut
         /// <summary>Which of the body batch's views is <paramref name="camera"/>'s, for tests; -1 for a camera that is not registered.</summary>
         internal int CullViewForTest(Camera camera)
         {
-            CameraStencil slot = FindCamera(camera);
-            return slot != null ? slot.view : -1;
+            return NativePrewarmView(camera);
         }
 
         // ----- what is shown ---------------------------------------------------------------------------------------

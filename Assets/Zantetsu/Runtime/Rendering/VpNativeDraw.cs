@@ -300,6 +300,7 @@ namespace Zantetsu.Rendering
     {
         void CopyNativePrewarmMaterials(List<Material> bodies, out Material shadow, out Material provisionalShadow);
         void NativePrewarmBuffers(out VpIndexedIndirectDrawBatch batch, out VpGpuIndexedGeometryBuffers buffers);
+        int NativePrewarmView(Camera camera);
     }
 
     /// <summary>Per-draw constant values the plugin's draws are given as Unity would give them.</summary>

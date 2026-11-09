@@ -19,7 +19,7 @@ foreach ($p in $UnityPluginApi, $VcVars) { if (-not (Test-Path -LiteralPath $p))
 if (-not (Test-Path -LiteralPath $OutDirectory -PathType Container)) { New-Item -ItemType Directory -Path $OutDirectory | Out-Null }
 $source = Join-Path $PSScriptRoot 'ZantetsuVpNative.cpp'
 $out = (Resolve-Path -LiteralPath $OutDirectory).ProviderPath
-$command = "`"$VcVars`" >nul && cl /nologo /LD /MT /O2 /Zi /EHsc /W4 /WX /std:c++17 /utf-8 /DUNICODE /I `"$UnityPluginApi`" `"$source`" /Fo`"$out\ZantetsuVpNative.obj`" /Fd`"$out\ZantetsuVpNative.pdb`" /Fe`"$out\ZantetsuVpNative.dll`" /link /DEBUG /OPT:REF /OPT:ICF d3d12.lib d3dcompiler.lib dxguid.lib"
+$command = "`"$VcVars`" >nul && cl /nologo /LD /MT /O2 /Zi /EHsc /W4 /WX /std:c++17 /utf-8 /DUNICODE /I `"$UnityPluginApi`" `"$source`" /Fo`"$out\ZantetsuVpNative.obj`" /Fd`"$out\ZantetsuVpNative.pdb`" /Fe`"$out\ZantetsuVpNative.dll`" /link /DEBUG /PDBALTPATH:ZantetsuVpNative.pdb /OPT:REF /OPT:ICF d3d12.lib d3dcompiler.lib dxguid.lib"
 & cmd.exe /c $command
 if ($LASTEXITCODE -ne 0) { throw "the build failed with $LASTEXITCODE" }
 $dll = Join-Path $out 'ZantetsuVpNative.dll'

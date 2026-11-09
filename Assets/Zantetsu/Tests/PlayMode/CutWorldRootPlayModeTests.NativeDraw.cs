@@ -20,6 +20,130 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     public unsafe partial class CutWorldRootPlayModeTests
     {
         [UnityTest]
+        public IEnumerator NativeDraw_EmptyStartup_PreparesTheActualViewVariantsAndSelectedWaveBeforeAnyCut()
+        {
+            return CheckNativeStartupPrewarm(LightType.Directional, LightShadows.Hard, false);
+        }
+
+        [UnityTest]
+        public IEnumerator NativeDraw_EmptyStartup_WithoutMainLightShadows_PreparesOnlyTheBodyVariants()
+        {
+            return CheckNativeStartupPrewarm(LightType.Directional, LightShadows.None, false);
+        }
+
+        [UnityTest]
+        public IEnumerator NativeDraw_EmptyStartup_WithANondirectionalLight_PreparesOnlyTheBodyVariants()
+        {
+            return CheckNativeStartupPrewarm(LightType.Point, LightShadows.Hard, false);
+        }
+
+        [UnityTest]
+        public IEnumerator NativeDraw_StartupPopulatedAfterTheRequest_SkipsEmptyCompactionAndDrawsTheCommands()
+        {
+            return CheckNativeStartupPrewarm(LightType.Directional, LightShadows.Hard, true);
+        }
+
+        private IEnumerator CheckNativeStartupPrewarm(LightType lightType, LightShadows shadows, bool populateBeforeRender)
+        {
+            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D12)
+                Assert.Ignore("native startup preparation requires a Direct3D 12 Editor");
+            if (!VpNativeDrawPlugin.TryLoad(out string pluginFailure) || VpNativeDrawPlugin.WarmPipelineEventId == 0)
+                Assert.Ignore("the native startup event is unavailable: " + pluginFailure);
+            bool shadowed = lightType == LightType.Directional && shadows != LightShadows.None;
+            string bodyVariant = shadowed ? "cascade" : "noshadow";
+            var variants = new List<string> { "forward-list-" + bodyVariant, "forward-plugin-" + bodyVariant + "-noclip" };
+            if (shadowed) variants.AddRange(new[] { "caster-list", "caster-plugin-compute-slices-noclip" });
+            foreach (string variant in variants)
+                if (Resources.Load<TextAsset>(VpNativeShaderBinary.ResourceFolder + "/" + variant) == null)
+                    Assert.Ignore("the startup test needs the baked shader binary " + variant);
+
+            VpBodyRouteRequest nativeBefore = VpNativeDrawSetup.Request;
+            bool cullBefore = VpGpuCullSetup.Requested;
+            bool compactBefore = VpNativeDrawPlugin.Direct3D12IndirectCount, computeBefore = VpGpuCullSetup.ComputeShadowSlices;
+            bool slicesBefore = VpGpuCullSetup.ShadowSliceSelection, castersFixedBefore = VpCommandCompaction.CastersFixed;
+            ShadowStage stage = null;
+            VpNativeDrawSetup.Requested = true;
+            VpGpuCullSetup.Requested = true;
+            VpNativeDrawPlugin.Direct3D12IndirectCount = true;
+            VpGpuCullSetup.ShadowSliceSelection = true;
+            VpGpuCullSetup.ComputeShadowSlices = true;
+            VpCommandCompaction.CastersFixed = false;
+            try
+            {
+                if (!VpCommandCompaction.TrySelect(out string reason)) Assert.Ignore("the selected wave path is unavailable: " + reason);
+                DrawCompareScene scene = NewDrawCompareScene();
+                CutWorldRoot root = scene.root;
+                yield return null;
+                Assert.That(root.NativeDrawFailure, Is.Null, root.NativeDrawFailure);
+                Assert.That(root.Display.CommandCount, Is.Zero, "no cut geometry is registered for preparation");
+                Camera unused = TrackActor(new GameObject("native prewarm first camera slot")).AddComponent<Camera>();
+                unused.enabled = false;
+                Assert.That(root.Display.TryRegisterCamera(unused), Is.True);
+                stage = NewShadowStage();
+                stage.light.type = lightType;
+                Assert.That(RenderPipeline.SupportsRenderRequest(stage.camera, new RenderPipeline.StandardRequest { destination = stage.target }), Is.True,
+                    "create the render pipeline before the fixture enqueues its first passes");
+                yield return DrawStageAfterTheCollection(root, stage, shadows, _ => { });
+                var route = stage.nativeRoute;
+                Assert.That(root.Display.NativePrewarmView(stage.camera), Is.EqualTo(1), "startup follows the actual camera slot");
+                Assert.That(route.RequestPrewarm(stage.camera, root.Display, out string failure, false), Is.True, failure);
+                SceneDrawInventory inventory = SceneDrawInventory.Collect(scene.instances, root.MaterialBindings, new SceneDrawMeshBank());
+                Assert.That(inventory.Refusals, Is.Empty);
+                var shown = new SceneDrawVpDisplay(root);
+                if (populateBeforeRender)
+                {
+                    foreach (SceneDrawTarget target in inventory.Targets) Assert.That(shown.TryShow(target, out string why), Is.True, why);
+                    yield return null;
+                    Assert.That(root.Display.CommandCount, Is.GreaterThan(0), "commands arrive after the accepted empty request and before its first render");
+                    Assert.That(route.PrewarmRecorded, Is.Zero, "the pending request has not rendered yet");
+                }
+                bool complete = false;
+                for (int frame = 0; frame < 8 && !complete; frame++)
+                {
+                    yield return DrawStageAfterTheCollection(root, stage, shadows, _ => { });
+                    Assert.That(route.GetPrewarmStatus(stage.camera, out complete, out failure), Is.True);
+                    Assert.That(failure, Is.Null, failure);
+                }
+                string description = route.DescribePrewarm(stage.camera);
+                TestContext.Out.WriteLine(description);
+                Assert.That(complete, Is.True, description);
+                Assert.That(route.PrewarmRecorded, Is.GreaterThan(0));
+                Assert.That(route.PrewarmCompleted, Is.EqualTo(route.PrewarmRecorded), "every warm event was consumed successfully");
+                Assert.That(route.PrewarmCullDispatches, Is.EqualTo(populateBeforeRender ? 0 : 1));
+                Assert.That(route.PrewarmConstantDispatches, Is.EqualTo(1));
+                Assert.That(route.PrewarmShadowSliceDispatches, Is.EqualTo(shadowed && !populateBeforeRender ? route.LastSplitCount : 0));
+                Assert.That(route.PrewarmCompactionDispatches, Is.EqualTo(populateBeforeRender ? 0 : shadowed ? 5 : 2));
+                foreach (string variant in variants) Assert.That(description, Does.Contain(variant));
+                if (!shadowed) Assert.That(description, Does.Not.Contain("caster-"), "this camera has no main-light shadow pass");
+                if (populateBeforeRender)
+                {
+                    Assert.That(route.BodiesIssued, Is.GreaterThan(0), "ordinary drawing continues through the populated request");
+                    Assert.That(route.IndirectCountCompactions, Is.GreaterThan(0), "the populated batch prepares compaction through ordinary drawing");
+                }
+                else Assert.That(root.Display.CommandCount, Is.Zero);
+                int warmedPipelines = route.PipelineCount;
+                if (!populateBeforeRender)
+                    foreach (SceneDrawTarget target in inventory.Targets) Assert.That(shown.TryShow(target, out string why), Is.True, why);
+                yield return null;
+                yield return DrawStageAfterTheCollection(root, stage, shadows, _ => { });
+                Assert.That(route.BodiesIssued, Is.GreaterThan(0), "the prepared material draws actual bodies");
+                Assert.That(route.PipelineCount, Is.EqualTo(warmedPipelines), "ordinary body drawing uses the prepared pipeline keys");
+                yield return EndWorld(root);
+            }
+            finally
+            {
+                stage?.nativeRoute?.Dispose();
+                stage?.cullRoute.Forget(stage.camera);
+                VpNativeDrawSetup.Request = nativeBefore;
+                VpGpuCullSetup.Requested = cullBefore;
+                VpNativeDrawPlugin.Direct3D12IndirectCount = compactBefore;
+                VpGpuCullSetup.ShadowSliceSelection = slicesBefore;
+                VpGpuCullSetup.ComputeShadowSlices = computeBefore;
+                VpCommandCompaction.CastersFixed = castersFixedBefore;
+            }
+        }
+
+        [UnityTest]
         public IEnumerator NativeDraw_TheSameView_ByTheRenderers_AndByTheDisplayThroughThePlugin_IsTheSamePicture()
         {
             if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D12)
