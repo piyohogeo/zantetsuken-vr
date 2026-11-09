@@ -29,6 +29,8 @@ PCVR（Meta Quest Link）でStanford Bunnyを切っている様子です（16秒
 
 展開したフォルダーの `Zantetsu.exe` から起動します。日本語の `起動設定.exe` で描画方式を選べます。導入・操作・対応環境は [PCVR版の利用案内](docs/pcvr.md)、確認した構成と測定条件は [PCVR性能評価](docs/pcvr-performance-2026-11-08.md)、任意の統計送信は [PCVR版プライバシーポリシー](docs/pcvr-privacy-policy.md) にまとめています。
 
+起動用exeは未署名のため、SmartScreenの警告が表示される場合があります。配布元とアプリ名を確認したうえで「詳細情報」→「実行」を選ぶ手順は、[SmartScreenが表示された場合](docs/pcvr.md#smartscreenが表示された場合) を参照してください。
+
 ## Android版（非VR）
 
 Android 12L（API 32）以降・ARM64・Vulkan対応端末向けの署名付きAPKを公開しています。現在のプレリリースは [0.1.0-alpha.1（versionCode 7）](https://github.com/piyohogeo/zantetsuken-vr/releases/tag/android-v0.1.0-alpha.1) です。[APKをダウンロード](https://github.com/piyohogeo/zantetsuken-vr/releases/download/android-v0.1.0-alpha.1/android-github-0.1.0-alpha.1-7.apk)できます。

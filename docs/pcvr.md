@@ -24,6 +24,18 @@ Windowsで動く、街とNPCを含む通常プレイ版です。右手の刀で�
 
 `Zantetsu.exe` と `CutWorldSandbox.exe`、データフォルダー、DLLなどを同じ配置のまま使用します。通常の起動にはUnity Editorの導入は不要です。
 
+### SmartScreenが表示された場合
+
+このプレリリースの `Zantetsu.exe`、`起動設定.exe`、`CutWorldSandbox.exe` はコード署名を付けていません。初回起動時などに、Microsoft Defender SmartScreenの「WindowsによってPCが保護されました」や「不明な発行元」という警告が表示される場合があります。[Microsoftの説明](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)
+
+このリポジトリのGitHub Releasesから入手したファイルであることを確かめ、実行する場合は次の手順で進めます。
+
+1. 警告画面の「詳細情報（More info）」をクリックします。
+2. 表示されたアプリ名が、起動したexeまたは同梱の `CutWorldSandbox.exe` であることを確認します。
+3. 「実行（Run anyway）」をクリックします。[Microsoftの実行手順](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/publish-first-app#step-6-handle-smartscreen-for-new-apps)
+
+「実行」が表示されない場合は、PCの管理者または [GitHub Issues](https://github.com/piyohogeo/zantetsuken-vr/issues) へ、表示されたメッセージを連絡してください。
+
 ## 遊び方
 
 | 操作 | 内容 |
