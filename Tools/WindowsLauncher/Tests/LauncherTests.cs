@@ -69,16 +69,33 @@ namespace Zantetsu.WindowsLauncher
                 LaunchRequest dedicatedSettings = LaunchRequest.Parse(SettingsLauncher.WithSettings(new[] { "-force-d3d11", "one two" }));
                 Check(dedicatedSettings.ShowSettings && dedicatedSettings.Arguments.Length == 2 && dedicatedSettings.Arguments[1] == "one two", "settings executable entry forwards all arguments");
 
-                var gpu = new Adapter { Name = "Radeon RX570 Series", PnpId = @"PCI\VEN_1002&DEV_67DF&SUBSYS_00000000", Driver = "31.0.21925.1001" };
-                string meta = @"C:\Program Files\Meta Horizon\Support\oculus-runtime\oculus_openxr_64.json";
-                Check(MachineDetection.Evaluate(new[] { gpu }, meta, null).Compatibility, "known hardware");
-                var monitor = new Adapter { Name = "Meta Virtual Monitor", PnpId = @"ROOT\DISPLAY\0000", Driver = "unrelated virtual driver" };
-                var rx5500 = new Adapter { Name = "AMD Radeon RX 5500 XT", PnpId = @"PCI\VEN_1002&DEV_7340&SUBSYS_00000000", Driver = "32.0.21045.16010" };
+                var gpu = new Adapter { Name = "Radeon RX570 Series", PnpId = @"PCI\VEN_1002&DEV_67DF&SUBSYS_00000000" };
+                var monitor = new Adapter { Name = "Meta Virtual Monitor", PnpId = @"ROOT\DISPLAY\0000" };
+                var rx5500 = new Adapter { Name = "AMD Radeon RX 5500 XT", PnpId = @"PCI\VEN_1002&DEV_7340&SUBSYS_00000000" };
+                // Automatic selection uses adapter identity alone, with no driver or XR runtime inputs.
+                foreach (Adapter radeon in new[] {
+                    gpu,
+                    rx5500,
+                    new Adapter { Name = "AMD Radeon RX 5700 XT", PnpId = @"PCI\VEN_1002&DEV_731F&SUBSYS_00000000" },
+                    new Adapter { Name = "AMD Radeon RX 7900 XTX", PnpId = @"PCI\VEN_1002&DEV_744C&SUBSYS_00000000" },
+                    new Adapter { Name = "Radeon Pro WX 7100", PnpId = @"PCI\VEN_1002&DEV_67C4&SUBSYS_00000000" },
+                    new Adapter { Name = "AMD Radeon(TM) Graphics", PnpId = @"PCI\VEN_1002&DEV_164E&SUBSYS_00000000" },
+                    new Adapter { Name = "ATI Radeon HD 5700 Series", PnpId = @"PCI\VEN_1002&DEV_68B8" },
+                    new Adapter { Name = "amd radeon rx 5500 xt", PnpId = @"pci\ven_1002&dev_7340&subsys_00000000" } })
+                {
+                    Detection detected = MachineDetection.Evaluate(new[] { radeon });
+                    Check(detected.Compatibility, "Radeon model did not select compatibility: " + radeon.Name);
+                    LaunchDecision automatic = select(new string[0], "auto", detected);
+                    Check(automatic.Api == "d3d11" && automatic.Source == "auto" && automatic.Reason == detected.Reason,
+                        "Radeon automatic API, source or reason differs: " + radeon.Name);
+                    Check(automatic.Arguments.Length == 2 && automatic.Arguments[0] == "-force-d3d11"
+                        && automatic.Arguments[1] == "-zantetsuVp3cUnityApi", "Radeon automatic launch omitted D11 or Unity API arguments");
+                }
                 foreach (Adapter[] records in new[] { new[] { monitor, gpu }, new[] { gpu, monitor }, new[] { monitor, monitor, gpu } })
                 {
                     List<Adapter> candidates = MachineDetection.CollectCandidates(records);
                     Check(candidates.Count == 1 && candidates[0] == gpu, "known virtual monitor affected the bounded candidate loop");
-                    Detection detected = MachineDetection.Evaluate(candidates, meta, null);
+                    Detection detected = MachineDetection.Evaluate(candidates);
                     Check(select(new string[0], "auto", detected).Api == "d3d11", "RX570 plus known virtual monitor did not select compatibility");
                     LaunchDecision saved = select(new string[0], "d3d12", detected);
                     Check(saved.Api == "d3d12" && saved.Source == "saved", "saved API lost priority after virtual monitor exclusion");
@@ -89,7 +106,7 @@ namespace Zantetsu.WindowsLauncher
                 List<Adapter> multiple = MachineDetection.CollectCandidates(ObserveRecords(new[] { monitor, gpu, rx5500, monitor }, visited));
                 Check(visited.Count == 3 && multiple.Count == 2 && multiple[0] == gpu && multiple[1] == rx5500,
                     "the WMI candidate loop must read the second physical GPU after a virtual-first record");
-                Check(!MachineDetection.Evaluate(multiple, meta, null).Compatibility, "virtual-first enumeration hid a second physical GPU");
+                Check(!MachineDetection.Evaluate(multiple).Compatibility, "virtual-first enumeration hid a second physical GPU");
                 visited.Clear();
                 multiple = MachineDetection.CollectCandidates(ObserveRecords(new[] { gpu, monitor, rx5500, monitor }, visited));
                 Check(visited.Count == 3 && multiple.Count == 2, "virtual-second enumeration stopped before the second physical GPU");
@@ -110,29 +127,40 @@ namespace Zantetsu.WindowsLauncher
                     new Adapter { Name = "Meta Virtual Monitor", PnpId = @"PCI\VEN_1002&DEV_67DF" } })
                 {
                     List<Adapter> candidates = MachineDetection.CollectCandidates(new[] { gpu, uncertain });
-                    Check(candidates.Count == 2 && !MachineDetection.Evaluate(candidates, meta, null).Compatibility,
+                    Check(candidates.Count == 2 && !MachineDetection.Evaluate(candidates).Compatibility,
                         "unknown or non-matching adapter was discarded from ambiguity");
                 }
-                Check(!MachineDetection.Evaluate(MachineDetection.CollectCandidates(new[] { monitor }), meta, null).Compatibility,
+                Check(!MachineDetection.Evaluate(MachineDetection.CollectCandidates(new[] { monitor })).Compatibility,
                     "a virtual monitor alone was treated as a known GPU");
-                Check(select(new string[0], "auto", MachineDetection.Evaluate(MachineDetection.CollectCandidates(new[] { monitor, rx5500 }), meta, null)).Api == "d3d12",
-                    "RX5500 XT plus virtual monitor did not retain the standard API");
-                Check(!MachineDetection.Evaluate(new[] { gpu, gpu }, meta, null).Compatibility, "multiple GPUs");
-                Check(!MachineDetection.Evaluate(new Adapter[0], meta, null).Compatibility, "no GPU");
-                Check(!MachineDetection.Evaluate(new[] { gpu }, meta, @"C:\other.json").Compatibility, "runtime override");
-                Check(!MachineDetection.Evaluate(new[] { gpu }, @"C:\Steam\steamxr_win64.json", null).Compatibility, "other runtime");
-                Check(!MachineDetection.Evaluate(new[] { gpu }, @"C:\Unrelated\oculus_openxr_64.json", null).Compatibility, "unrelated manifest directory");
-                Check(!MachineDetection.Evaluate(new[] { gpu }, @"C:Oculus\oculus_openxr_64.json", null).Compatibility, "drive-relative manifest");
-                gpu.Driver = "31.0.21925.1002";
-                Check(!MachineDetection.Evaluate(new[] { gpu }, meta, null).Compatibility, "unmeasured driver");
-                gpu.Driver = "31.0.21925.1001"; gpu.Name = "Radeon RX 5700 XT";
-                Check(!MachineDetection.Evaluate(new[] { gpu }, meta, null).Compatibility, "RX5700 misidentified");
-                gpu.Name = "Radeon RX 570 Series"; gpu.PnpId = @"PCI\VEN_10DE&DEV_67DF";
-                Check(!MachineDetection.Evaluate(new[] { gpu }, meta, null).Compatibility, "other vendor");
-                gpu.PnpId = @"PCI\VEN_1002&DEV_67DF0";
-                Check(!MachineDetection.Evaluate(new[] { gpu }, meta, null).Compatibility, "device prefix is not exact ID");
-                gpu.PnpId = null;
-                Check(!MachineDetection.Evaluate(new[] { gpu }, meta, null).Compatibility, "missing device ID");
+                Check(select(new string[0], "auto", MachineDetection.Evaluate(MachineDetection.CollectCandidates(new[] { monitor, rx5500 }))).Api == "d3d11",
+                    "RX5500 XT plus virtual monitor did not select compatibility");
+                Check(!MachineDetection.Evaluate(new[] { gpu, gpu }).Compatibility, "multiple GPUs");
+                var nvidia = new Adapter { Name = "NVIDIA GeForce RTX 3090", PnpId = @"PCI\VEN_10DE&DEV_2204" };
+                foreach (Adapter[] mixed in new[] { new[] { gpu, nvidia }, new[] { nvidia, gpu } })
+                    Check(!MachineDetection.Evaluate(MachineDetection.CollectCandidates(mixed)).Compatibility, "mixed GPU order selected compatibility");
+                Check(!MachineDetection.Evaluate(new Adapter[0]).Compatibility, "no GPU");
+                Check(!MachineDetection.Evaluate(null).Compatibility, "unknown GPU list");
+                foreach (Adapter other in new[] {
+                    new Adapter { Name = "AMD Instinct MI100", PnpId = @"PCI\VEN_1002&DEV_738C" },
+                    nvidia,
+                    new Adapter { Name = "Intel(R) UHD Graphics 630", PnpId = @"PCI\VEN_8086&DEV_3E92" },
+                    new Adapter { Name = "Radeon RX 570 Series", PnpId = @"PCI\VEN_10DE&DEV_67DF" },
+                    new Adapter { Name = "NotRadeon RX 570", PnpId = @"PCI\VEN_1002&DEV_67DF" },
+                    new Adapter { Name = "RadeonExtra RX 570", PnpId = @"PCI\VEN_1002&DEV_67DF" },
+                    new Adapter { Name = null, PnpId = @"PCI\VEN_1002&DEV_67DF" } })
+                {
+                    Detection detected = MachineDetection.Evaluate(new[] { other });
+                    Check(!detected.Compatibility && select(new string[0], "auto", detected).Api == "d3d12",
+                        "non-Radeon adapter selected compatibility: " + other.Name);
+                }
+                foreach (string invalidId in new[] {
+                    null, "", @"PCI\VEN_1002", @"PCI\VEN_10020&DEV_67DF", @"PCI\VEN_1002&DEV_67DF0",
+                    @"PCI\VEN_1002&DEV_67D", @"PCI\VEN_1002&DEV_67DG", @"ROOT\VEN_1002&DEV_67DF",
+                    @"PREFIXPCI\VEN_1002&DEV_67DF", @"PCI\VEN_1002&DEV_67DFjunk" })
+                {
+                    Check(!MachineDetection.Evaluate(new[] { new Adapter { Name = "AMD Radeon RX 570", PnpId = invalidId } }).Compatibility,
+                        "malformed PCI identity selected compatibility: " + invalidId);
+                }
 
                 // A compiled fake child validates Windows' real argv parsing and exit propagation, without Unity/XR.
                 string record = Path.Combine(folder, "fake output.txt");

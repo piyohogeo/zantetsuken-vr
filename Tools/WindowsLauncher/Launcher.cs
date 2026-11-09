@@ -8,7 +8,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
-using Microsoft.Win32;
 using Zantetsu.Core;
 
 namespace Zantetsu.WindowsLauncher
@@ -206,7 +205,6 @@ namespace Zantetsu.WindowsLauncher
     {
         internal string Name;
         internal string PnpId;
-        internal string Driver;
     }
 
     internal static class MachineDetection
@@ -218,18 +216,14 @@ namespace Zantetsu.WindowsLauncher
             {
                 try
                 {
-                    string runtime = null;
-                    using (RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
-                    using (RegistryKey key = machine.OpenSubKey(@"SOFTWARE\Khronos\OpenXR\1", false))
-                        runtime = key == null ? null : key.GetValue("ActiveRuntime") as string;
                     List<Adapter> adapters;
                     var options = new EnumerationOptions { ReturnImmediately = false, Timeout = TimeSpan.FromMilliseconds(milliseconds) };
-                    using (var searcher = new ManagementObjectSearcher(@"root\CIMV2", "SELECT Name, PNPDeviceID, DriverVersion FROM Win32_VideoController", options))
+                    using (var searcher = new ManagementObjectSearcher(@"root\CIMV2", "SELECT Name, PNPDeviceID FROM Win32_VideoController", options))
                     using (ManagementObjectCollection records = searcher.Get())
                     {
                         adapters = CollectCandidates(ReadAdapters(records));
                     }
-                    result = Evaluate(adapters, runtime, Environment.GetEnvironmentVariable("XR_RUNTIME_JSON"));
+                    result = Evaluate(adapters);
                 }
                 catch (Exception) { result = new Detection(false, "standard: graphics environment probe unavailable"); }
             });
@@ -246,7 +240,7 @@ namespace Zantetsu.WindowsLauncher
             {
                 Adapter adapter;
                 using (record)
-                    adapter = new Adapter { Name = record["Name"] as string, PnpId = record["PNPDeviceID"] as string, Driver = record["DriverVersion"] as string };
+                    adapter = new Adapter { Name = record["Name"] as string, PnpId = record["PNPDeviceID"] as string };
                 yield return adapter;
             }
         }
@@ -266,21 +260,15 @@ namespace Zantetsu.WindowsLauncher
             return adapters;
         }
 
-        internal static Detection Evaluate(IList<Adapter> adapters, string runtime, string runtimeOverride)
+        internal static Detection Evaluate(IList<Adapter> adapters)
         {
-            if (!string.IsNullOrEmpty(runtimeOverride)) return new Detection(false, "standard: explicit XR runtime override; no automatic compatibility match");
             if (adapters == null || adapters.Count != 1) return new Detection(false, "standard: graphics adapter is unknown or ambiguous");
             Adapter adapter = adapters[0];
-            bool name = adapter.Name != null && Regex.IsMatch(adapter.Name, @"\bRX\s*570\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            bool ids = adapter.PnpId != null && Regex.IsMatch(adapter.PnpId, @"^PCI\\VEN_1002&DEV_67DF(?:&|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            bool driver = adapter.Driver == "31.0.21925.1001";
-            string runtimeDirectory = runtime == null ? null : Path.GetDirectoryName(runtime);
-            bool meta = runtimeDirectory != null && Regex.IsMatch(runtime, @"^[A-Za-z]:[\\/]", RegexOptions.CultureInvariant)
-                && string.Equals(Path.GetFileName(runtime), "oculus_openxr_64.json", StringComparison.OrdinalIgnoreCase)
-                && (runtimeDirectory.IndexOf("Oculus", StringComparison.OrdinalIgnoreCase) >= 0 || runtimeDirectory.IndexOf("Meta Horizon", StringComparison.OrdinalIgnoreCase) >= 0);
-            if (name && ids && driver && meta)
-                return new Detection(true, "compatibility: single AMD RX 570 (1002:67DF), driver 31.0.21925.1001, registered Meta OpenXR runtime");
-            return new Detection(false, "standard: no known RX 570 / driver / Meta runtime compatibility match");
+            bool name = adapter.Name != null && Regex.IsMatch(adapter.Name, @"\bRadeon\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            bool ids = adapter.PnpId != null && Regex.IsMatch(adapter.PnpId, @"^PCI\\VEN_1002&DEV_[0-9A-F]{4}(?:&|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (name && ids)
+                return new Detection(true, "compatibility: single AMD Radeon adapter; automatic Direct3D 11 policy");
+            return new Detection(false, "standard: no AMD Radeon adapter match");
         }
     }
 
@@ -328,7 +316,7 @@ namespace Zantetsu.WindowsLauncher
             choice.Items.AddRange(new object[] { "自動（推奨）", "標準 Direct3D 12", "互換 Direct3D 11" });
             choice.SelectedIndex = current == WindowsGraphicsPreference.Direct3D11 ? 2 : current == WindowsGraphicsPreference.Direct3D12 ? 1 : 0;
             var explanation = new Label { AutoSize = false, Location = new Point(22, 91), Size = new Size(510, 100), Text =
-                "自動は通常 Direct3D 12 を使い、確認済みの RX 570・ドライバーと Meta の設定では Direct3D 11 を使います。\r\n画面が黒くなる場合は「互換 Direct3D 11」を選んでください。\r\n画質設定は変更しません。変更は次の起動から反映されます。" };
+                "自動は Radeon 全モデルで Direct3D 11、それ以外は Direct3D 12 を使います。GPU が複数または判定できない場合は Direct3D 12 です。\r\n画面が黒くなる場合は「互換 Direct3D 11」を選んでください。\r\n画質設定は変更しません。変更は次の起動から反映されます。" };
             var note = new Label { AutoSize = false, Location = new Point(22, 191), Size = new Size(510, 45), ForeColor = loadFailure != null || explicitApi != null ? Color.DarkRed : SystemColors.ControlText,
                 Text = loadFailure ?? (explicitApi != null ? "今回は起動引数の " + explicitApi.ToUpperInvariant() + " が、保存する設定より優先されます。" : "この画面はヘッドセットを使わず操作できます。") };
             var launch = new Button { Text = "保存して起動", Location = new Point(290, 245), Size = new Size(130, 32) };
