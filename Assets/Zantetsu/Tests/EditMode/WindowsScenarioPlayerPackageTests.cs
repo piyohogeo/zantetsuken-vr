@@ -25,6 +25,45 @@ namespace Zantetsu.Core.Tests
             finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
         }
 
+        [TestCase("")]
+        [TestCase("--compiler-flags=/DPLAYER_BUILD_TEST")]
+        [TestCase("--compiler-flags=/DPLAYER_BUILD_TEST --linker-flags=/OPT:REF --linker-flags=/DEBUG")]
+        public void SuccessfulScenarioBuildUsesBasenamePdbMetadataAndRestoresIl2CppArgs(string existingArgs)
+        {
+            string before = PlayerSettings.GetAdditionalIl2CppArgs();
+            try
+            {
+                PlayerSettings.SetAdditionalIl2CppArgs(existingArgs);
+                using (WindowsScenarioPlayerPackage.BuildSettings())
+                    Assert.That(PlayerSettings.GetAdditionalIl2CppArgs(),
+                        Is.EqualTo(existingArgs + " --linker-flags=/PDBALTPATH:GameAssembly.pdb"));
+                Assert.That(PlayerSettings.GetAdditionalIl2CppArgs(), Is.EqualTo(existingArgs));
+            }
+            finally { PlayerSettings.SetAdditionalIl2CppArgs(before); }
+        }
+
+        [Test]
+        public void FailedScenarioBuildRestoresTheCallersIl2CppArgs()
+        {
+            string before = PlayerSettings.GetAdditionalIl2CppArgs();
+            const string existingArgs = "--compiler-flags=/DPLAYER_BUILD_TEST --linker-flags=/OPT:REF";
+            try
+            {
+                PlayerSettings.SetAdditionalIl2CppArgs(existingArgs);
+                Assert.Throws<InvalidOperationException>(() =>
+                {
+                    using (WindowsScenarioPlayerPackage.BuildSettings("0.1.1-alpha.1"))
+                    {
+                        Assert.That(PlayerSettings.GetAdditionalIl2CppArgs(),
+                            Is.EqualTo(existingArgs + " --linker-flags=/PDBALTPATH:GameAssembly.pdb"));
+                        throw new InvalidOperationException("Simulated build failure.");
+                    }
+                });
+                Assert.That(PlayerSettings.GetAdditionalIl2CppArgs(), Is.EqualTo(existingArgs));
+            }
+            finally { PlayerSettings.SetAdditionalIl2CppArgs(before); }
+        }
+
         [TestCase("0.1.1")]
         [TestCase("0.1.1-alpha.1")]
         [TestCase("0.1.1-alpha.1+build.3")]
@@ -63,6 +102,7 @@ namespace Zantetsu.Core.Tests
             bool automatic = PlayerSettings.GetUseDefaultGraphicsAPIs(target);
             GraphicsDeviceType[] apis = PlayerSettings.GetGraphicsAPIs(target);
             bool splash = PlayerSettings.SplashScreen.show;
+            string il2CppArgs = PlayerSettings.GetAdditionalIl2CppArgs();
             string before = PlayerSettings.bundleVersion;
             Assert.Throws<ArgumentException>(() =>
             {
@@ -71,6 +111,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(PlayerSettings.GetUseDefaultGraphicsAPIs(target), Is.EqualTo(automatic));
             Assert.That(PlayerSettings.GetGraphicsAPIs(target), Is.EqualTo(apis));
             Assert.That(PlayerSettings.SplashScreen.show, Is.EqualTo(splash));
+            Assert.That(PlayerSettings.GetAdditionalIl2CppArgs(), Is.EqualTo(il2CppArgs));
             Assert.That(PlayerSettings.bundleVersion, Is.EqualTo(before));
         }
 

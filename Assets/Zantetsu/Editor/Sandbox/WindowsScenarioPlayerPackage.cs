@@ -27,6 +27,7 @@ namespace Zantetsu.EditorTools.Sandbox
             private readonly GraphicsDeviceType[] apis;
             private readonly bool showSplashScreen;
             private readonly string bundleVersion;
+            private readonly string additionalIl2CppArgs;
             private readonly bool versionOverridden;
             private bool disposed;
 
@@ -36,6 +37,7 @@ namespace Zantetsu.EditorTools.Sandbox
                 apis = PlayerSettings.GetGraphicsAPIs(BuildTarget.StandaloneWindows64);
                 showSplashScreen = PlayerSettings.SplashScreen.show;
                 bundleVersion = PlayerSettings.bundleVersion;
+                additionalIl2CppArgs = PlayerSettings.GetAdditionalIl2CppArgs();
                 versionOverridden = version != null;
                 try
                 {
@@ -43,6 +45,8 @@ namespace Zantetsu.EditorTools.Sandbox
                     PlayerSettings.SetGraphicsAPIs(BuildTarget.StandaloneWindows64,
                         new[] { GraphicsDeviceType.Direct3D12, GraphicsDeviceType.Direct3D11 });
                     PlayerSettings.SplashScreen.show = false;
+                    // IL2CPP accumulates repeated linker-flags options. Keep the caller's flags and hide the build machine's PDB path.
+                    PlayerSettings.SetAdditionalIl2CppArgs(additionalIl2CppArgs + " --linker-flags=/PDBALTPATH:GameAssembly.pdb");
                     if (versionOverridden)
                     {
                         PlayerSettings.bundleVersion = version;
@@ -64,6 +68,7 @@ namespace Zantetsu.EditorTools.Sandbox
                 }
                 finally
                 {
+                    PlayerSettings.SetAdditionalIl2CppArgs(additionalIl2CppArgs);
                     if (versionOverridden) PlayerSettings.bundleVersion = bundleVersion;
                     PlayerSettings.SplashScreen.show = showSplashScreen;
                 }
