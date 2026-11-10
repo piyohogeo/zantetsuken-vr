@@ -220,7 +220,8 @@ namespace Zantetsu.PhysicsCut
                 text.Append("; the last: ").Append(LastBone.verdict).Append(" (").Append(LastBone.reason).Append("), clusters ").Append(LastBone.clusters)
                     .Append(" of ").Append(LastBone.bones).Append(" bones, mesh components ").Append(LastBone.meshComponents).Append(", groups ").Append(LastBone.groups)
                     .Append(", bones held ").Append(LastBone.pieceBones).Append(", weights on bones no longer held ").Append(LastBone.removedWeights)
-                    .Append(" (").Append(LastBone.fullGroups).Append(" with a convex and triangles)");
+                    .Append(" (").Append(LastBone.fullGroups).Append(" with a convex and triangles), connections kept ").Append(LastBone.connectionsKept)
+                    .Append(", left out by the support rule ").Append(LastBone.connectionsDropped);
             }
 
             text.Append("; fallback to the method as before (NPC-BONE-FALLBACK-1) ").Append(BoneFallback ? "on" : "off").Append(": fell back ").Append(BoneFellBack)

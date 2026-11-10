@@ -53,6 +53,13 @@ namespace Zantetsu.PhysicsCut
         public long removedWeights;
         public int unboundGroups;
 
+        /// <summary>
+        /// NPC-BONE-SUPPORT-1: of the connections from a mesh component to a bone cluster it supports (a vertex of the component weighted,
+        /// through its origins, to a bone of the cluster), how many were used -- the cluster's supporting vertices at least 3/10 of the
+        /// component's most supported cluster's -- and how many were left out as a bridge of few vertices.
+        /// </summary>
+        public int connectionsKept, connectionsDropped;
+
         /// <summary>The decision's own time on the worker (development builds; 0 otherwise).</summary>
         public double seconds;
 
@@ -80,14 +87,26 @@ namespace Zantetsu.PhysicsCut
     /// <para>
     /// **The connections**, one union-find over the clusters, the convexes and the lineage's vertices: a convex joins its bone's
     /// cluster; the three corners of a triangle are joined (a mesh component is triangles that share a vertex; one is never
-    /// divided); a vertex joins the cluster of every bone it has a positive weight on -- a base vertex its model's weights, a
+    /// divided); a vertex supports the cluster of every bone it has a positive weight on -- a base vertex its model's weights, a
     /// vertex a cut made the weights of the vertices it interpolates (both where it lies strictly between them, the one where
     /// it lies on it), walked back to the base, a cap's auxiliary vertex none -- **among the bones the piece holds**: a weight on
-    /// a bone not held connects nothing (no other bone is chosen for it); a held bone connects whether it is held by its convex or by
-    /// its joint. So a convex and a
-    /// convex of one cluster are connected, a convex and a mesh component weighted to a bone of that cluster, two mesh components
-    /// weighted to the bones of one cluster -- and a mesh component weighted to several clusters connects them. Nothing of the
-    /// weights is removed: the others are only left out of the connections, and counted.
+    /// a bone not held supports nothing (no other bone is chosen for it); a held bone counts whether it is held by its convex or by
+    /// its joint. **The support rule (NPC-BONE-SUPPORT-1, 2026-11-10):** a mesh component M is connected to a cluster c where the
+    /// vertices of M that support c, s(M, c), are at least three tenths of the vertices supporting M's most supported cluster,
+    /// peak(M): s &gt; 0 and 10 s &gt;= 3 peak (in long; clusters tied at the peak all stay) -- so a bridge of few vertices between
+    /// a limb and a trunk, a seam's or a cut's weights, no longer holds the two together, while a component weighted to several
+    /// clusters in earnest still connects them. A vertex counts once for a cluster however many of its origins, bones of that
+    /// cluster or triangles reach it (the support is counted per vertex and cluster; the clusters are numbered before any component
+    /// joins them). So a convex and a convex of one cluster are connected, a convex and a mesh component supporting that cluster,
+    /// two mesh components supporting the bones of one cluster -- and a mesh component supporting several clusters in that measure
+    /// connects them. Nothing of the weights is removed: the others are only left out of the connections, and counted
+    /// (<see cref="NpcBoneSplitRecord.connectionsKept"/>, <see cref="NpcBoneSplitRecord.connectionsDropped"/>).
+    /// </para>
+    /// <para>
+    /// **The scratch of the support rule**, beside the decision's own: 2 L + 2 (T + 1) + 4 N ints (L the lineage's vertices, T the
+    /// triangles, N the rig's bones) -- each vertex's component, the referenced vertices grouped by component, the components' ends
+    /// and the placing cursors, each held bone's cluster, and a component's counts, stamps and touched clusters -- taken with the
+    /// rest and given back before the decision returns (counted in <see cref="NpcBoneSplitRecord.nativeBytes"/>).
     /// </para>
     /// <para>
     /// **The placement.** Every group (a connected set holding a convex or triangles) must be known: triangles weighted to no
@@ -204,7 +223,7 @@ namespace Zantetsu.PhysicsCut
             int e = (int)elements;
             int convexBase = n;
             int vertexBase = n + c;
-            NativeArray<int> uf = default, tally = default, triangleFirst = default, stack = default, parts = default;
+            NativeArray<int> uf = default, tally = default, triangleFirst = default, stack = default, parts = default, support = default;
             NativeArray<byte> marks = default, piece = default;
             try
             {
@@ -222,8 +241,20 @@ namespace Zantetsu.PhysicsCut
                 parts = new NativeArray<int>(Math.Max(1, 2 * n), Allocator.Persistent, NativeArrayOptions.ClearMemory);
                 int* convexesOfBone = (int*)parts.GetUnsafePtr();
                 int* held = convexesOfBone + n;
+                // The support rule's scratch (NPC-BONE-SUPPORT-1): each lineage vertex's component (L), the referenced vertices grouped by
+                // component (L), the components' ends and the placing cursors (T + 1 each), each held bone's cluster (N), and a component's
+                // counts, stamps and touched clusters (3 N).
+                support = new NativeArray<int>(checked((2 * l) + (2 * (t + 1)) + (4 * n)), Allocator.Persistent, NativeArrayOptions.ClearMemory);
+                int* componentOf = (int*)support.GetUnsafePtr();
+                int* order = componentOf + l;
+                int* ends = order + l;
+                int* cursor = ends + t + 1;
+                int* clusterOf = cursor + t + 1;
+                int* supportCount = clusterOf + n;
+                int* stamp = supportCount + n;
+                int* touched = stamp + n;
                 record.nativeBytes = ((long)uf.Length * sizeof(int)) + ((long)tally.Length * sizeof(int)) + ((long)triangleFirst.Length * sizeof(int)) + marks.Length + ((long)stack.Length * sizeof(int))
-                    + piece.Length + ((long)parts.Length * sizeof(int));
+                    + piece.Length + ((long)parts.Length * sizeof(int)) + ((long)support.Length * sizeof(int));
                 int* parent = (int*)uf.GetUnsafePtr();
                 for (int i = 0; i < e; i++) parent[i] = i;
 
@@ -267,6 +298,9 @@ namespace Zantetsu.PhysicsCut
                 // Every convex to its bone (held by it).
                 for (int i = 0; i < c; i++) Union(parent, convexBase + i, input.convexBones[i]);
 
+                // Each held bone's cluster (its root, a bone: the lowest index stays), numbered here, before any mesh component joins clusters.
+                for (int k = 0; k < n; k++) clusterOf[k] = held[k] != 0 ? Find(parent, k) : -1;
+
                 // 3. The mesh components: the corners of each triangle joined, every vertex in the lineage's own numbering.
                 byte* referenced = (byte*)marks.GetUnsafePtr();
                 for (int k = 0; k < t; k++)
@@ -288,91 +322,136 @@ namespace Zantetsu.PhysicsCut
                     referenced[d] = 1;
                 }
 
+                int m = 0;   // the mesh components
                 {
-                    // The components' count, before the bones join them (a mark a root, cleared after).
+                    // The components numbered (a mark a root, cleared after), each referenced vertex's component, and the referenced vertices
+                    // grouped by component (a counting sort into order; ends[k] is where component k ends, component 0 starts at 0).
                     int* seen = (int*)tally.GetUnsafePtr();
-                    for (int k = 0; k < t; k++)
+                    for (int v = 0; v < l; v++)
                     {
-                        int r = Find(parent, triangleFirst[k]);
-                        if (seen[r] == 0) { seen[r] = 1; record.meshComponents++; }
+                        if (referenced[v] == 0) { componentOf[v] = -1; continue; }
+                        int r = Find(parent, vertexBase + v);
+                        if (seen[r] == 0) seen[r] = ++m;
+                        componentOf[v] = seen[r] - 1;
+                        ends[componentOf[v]]++;
                     }
 
                     UnsafeUtility.MemClear(seen, (long)e * sizeof(int));
+                    record.meshComponents = m;
+                    for (int k = 1; k < m; k++) ends[k] += ends[k - 1];   // each component's end in order
+                    for (int k = 0; k < m; k++) cursor[k] = k == 0 ? 0 : ends[k - 1];   // and where its vertices are placed from
+                    for (int v = 0; v < l; v++)
+                    {
+                        if (componentOf[v] >= 0) order[cursor[componentOf[v]]++] = v;
+                    }
                 }
 
-                // 4. Every vertex the triangles name to the clusters of the bones it is weighted to, walked back to the base.
+                // 4. Every vertex the triangles name, walked back to the base, supports the clusters of the held bones it is weighted to (once
+                //    a cluster a vertex); then, component by component, the connections the support rule keeps (NPC-BONE-SUPPORT-1).
                 int* walk = (int*)stack.GetUnsafePtr();
                 long steps = 0;
-                for (int v = 0; v < l; v++)
+                for (int component = 0; component < m; component++)
                 {
-                    if (referenced[v] == 0) continue;
-                    record.referencedVertices++;
-                    int top = 0;
-                    walk[top++] = v;
-                    while (top > 0)
+                    int start = component == 0 ? 0 : ends[component - 1], end = ends[component];
+                    int touchedCount = 0;
+                    for (int at = start; at < end; at++)
                     {
-                        int x = walk[--top];
-                        if (++steps > input.maxOriginSteps)
+                        int v = order[at];
+                        record.referencedVertices++;
+                        int top = 0;
+                        walk[top++] = v;
+                        while (top > 0)
                         {
-                            End(ref record, NpcBoneSplitVerdict.OverTheLimits, ReasonSteps);
-                            return;
-                        }
-
-                        if (x < input.lineage.baseCount)
-                        {
-                            ulong entry = input.lineage.baseBones[x];
-                            for (int q = 0; q < 4; q++)
+                            int x = walk[--top];
+                            if (++steps > input.maxOriginSteps)
                             {
-                                int bone = (int)((entry >> (16 * q)) & 0xFFFF);
-                                if (bone == NpcVertexBones.None) continue;
-                                if (bone >= n || !input.lineage.present[bone])
-                                {
-                                    End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonWeight);
-                                    return;
-                                }
-
-                                // A known bone: the vertex is weighted. It connects only through a bone the piece holds (NPC-BONE-HELD-1); a weight
-                                // on a bone not held is left out of the connections (the model's weights are not changed).
-                                weighted[v] = 1;
-                                if (held[bone] == 0)
-                                {
-                                    record.removedWeights++;
-                                    continue;
-                                }
-
-                                Union(parent, vertexBase + v, bone);
+                                End(ref record, NpcBoneSplitVerdict.OverTheLimits, ReasonSteps);
+                                return;
                             }
 
-                            continue;
-                        }
+                            if (x < input.lineage.baseCount)
+                            {
+                                ulong entry = input.lineage.baseBones[x];
+                                for (int q = 0; q < 4; q++)
+                                {
+                                    int bone = (int)((entry >> (16 * q)) & 0xFFFF);
+                                    if (bone == NpcVertexBones.None) continue;
+                                    if (bone >= n || !input.lineage.present[bone])
+                                    {
+                                        End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonWeight);
+                                        return;
+                                    }
 
-                        if (!TryOrigin(in input.lineage, x, out uint2 origin))
+                                    // A known bone: the vertex is weighted. It supports only a bone the piece holds (NPC-BONE-HELD-1); a weight on a
+                                    // bone not held is left out of the connections (the model's weights are not changed).
+                                    weighted[v] = 1;
+                                    if (held[bone] == 0)
+                                    {
+                                        record.removedWeights++;
+                                        continue;
+                                    }
+
+                                    // One support a vertex and a cluster, whatever the origins, bones or triangles that reach it.
+                                    int cluster = clusterOf[bone];
+                                    if (stamp[cluster] != v + 1)
+                                    {
+                                        stamp[cluster] = v + 1;
+                                        if (supportCount[cluster]++ == 0) touched[touchedCount++] = cluster;
+                                    }
+                                }
+
+                                continue;
+                            }
+
+                            if (!TryOrigin(in input.lineage, x, out uint2 origin))
+                            {
+                                End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonVertex);
+                                return;
+                            }
+
+                            if (origin.x == MeshCutOutput.NoVertexOrigin)
+                            {
+                                continue;   // a cap's auxiliary vertex: weighted to nothing of its own
+                            }
+
+                            int first = Local(in input.lineage, origin.x);
+                            int second = origin.y == origin.x ? first : Local(in input.lineage, origin.y);
+                            if (first < 0 || second < 0)
+                            {
+                                End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonVertex);
+                                return;
+                            }
+
+                            if (top + 2 > stackRoom)
+                            {
+                                End(ref record, NpcBoneSplitVerdict.OverTheLimits, ReasonSteps);
+                                return;
+                            }
+
+                            walk[top++] = first;
+                            if (second != first) walk[top++] = second;
+                        }
+                    }
+
+                    // The connections of this component: the clusters it supports with at least 3/10 of its most supported cluster's vertices
+                    // (10 s >= 3 peak, in long; ties at the peak all stay). The rest are left out as bridges of few vertices, and counted.
+                    int peak = 0;
+                    for (int i = 0; i < touchedCount; i++) peak = Math.Max(peak, supportCount[touched[i]]);
+                    int anchor = vertexBase + order[start];
+                    for (int i = 0; i < touchedCount; i++)
+                    {
+                        int cluster = touched[i];
+                        if (10L * supportCount[cluster] >= 3L * peak)
                         {
-                            End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonVertex);
-                            return;
+                            Union(parent, anchor, cluster);
+                            record.connectionsKept++;
                         }
-
-                        if (origin.x == MeshCutOutput.NoVertexOrigin)
+                        else
                         {
-                            continue;   // a cap's auxiliary vertex: weighted to nothing of its own
+                            record.connectionsDropped++;
                         }
 
-                        int first = Local(in input.lineage, origin.x);
-                        int second = origin.y == origin.x ? first : Local(in input.lineage, origin.y);
-                        if (first < 0 || second < 0)
-                        {
-                            End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonVertex);
-                            return;
-                        }
-
-                        if (top + 2 > stackRoom)
-                        {
-                            End(ref record, NpcBoneSplitVerdict.OverTheLimits, ReasonSteps);
-                            return;
-                        }
-
-                        walk[top++] = first;
-                        if (second != first) walk[top++] = second;
+                        supportCount[cluster] = 0;
                     }
                 }
 
@@ -479,6 +558,7 @@ namespace Zantetsu.PhysicsCut
                 if (marks.IsCreated) marks.Dispose();
                 if (piece.IsCreated) piece.Dispose();
                 if (parts.IsCreated) parts.Dispose();
+                if (support.IsCreated) support.Dispose();
             }
         }
 
