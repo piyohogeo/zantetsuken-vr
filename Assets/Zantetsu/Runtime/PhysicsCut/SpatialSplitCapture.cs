@@ -112,6 +112,12 @@ namespace Zantetsu.PhysicsCut
         internal long bytes;
         internal double copySeconds;
 
+        /// <summary>
+        /// NPC-PIECE-PICK-1: told once by the writer thread whether the file was committed (true) or not (false, with why: a write that
+        /// failed, the session's disk bound, or the writer gone). Null for the issued inputs' capture, which reads the sink's counts.
+        /// </summary>
+        internal Action<bool, string> done;
+
         internal void Free()
         {
             if (data != null)
@@ -655,6 +661,28 @@ namespace Zantetsu.PhysicsCut
         }
     }
 
+    /// <summary>The numbers a sample keeps beside its arrays (the attempt's settings and frames), as one value.</summary>
+    internal struct SpatialSplitCaptureParameters
+    {
+        internal float margin, supportEpsilon, anchorEpsilon;
+        internal int vertexLimit, submeshCount, minCutSideTriangles, maxConvexVertices;
+        internal double parentMass;
+        internal SpatialSplitSearchLimits limits;
+        internal bool cutConvexes, bentSearch;
+        internal SpatialSplitBentLimits bentLimits;
+        internal float4x4 geometryToOwner, shapeToOwner;
+
+        internal static SpatialSplitCaptureParameters Of(CutSpatialSplit.Attempt a)
+        {
+            return new SpatialSplitCaptureParameters
+            {
+                margin = a.margin, supportEpsilon = a.supportEpsilon, anchorEpsilon = a.anchorEpsilon, vertexLimit = a.vertexLimit, submeshCount = a.submeshCount,
+                parentMass = a.parentMass, limits = a.limits, cutConvexes = a.cutConvexes, minCutSideTriangles = a.minCutSideTriangles,
+                bentSearch = a.bentSearch, bentLimits = a.bentLimits, maxConvexVertices = a.maxConvexVertices, geometryToOwner = a.geometryToOwner, shapeToOwner = a.shapeToOwner,
+            };
+        }
+    }
+
     /// <summary>
     /// Main's part of the capture: one pass over the indices for the span of vertices they name, then one copy of
     /// everything the numbers read into a block of the capture's own -- the submeshes, the anchors, the indices as
@@ -666,6 +694,18 @@ namespace Zantetsu.PhysicsCut
     {
         internal static SpatialSplitCaptureSample TryTake(SpatialSplitCaptureSink sink, CutSpatialSplit.Attempt a, in SpatialSplitCaptureIdentity identity)
         {
+            return TryTake(sink, in identity, SpatialSplitCaptureParameters.Of(a), a.submeshOffsets, a.submeshCounts, a.materials, a.anchors,
+                a.indices, a.indexCount, a.vertices, a.vertexViewLength, a.convexCount, a.ranges, a.banks);
+        }
+
+        /// <summary>
+        /// The copy from its parts (NPC-PIECE-PICK-1: the piece collection copies a fragment the same way with no attempt): the
+        /// submeshes, the anchors (null: none), the indices as issued, the storage's vertices and each convex's range and bank.
+        /// </summary>
+        internal static SpatialSplitCaptureSample TryTake(SpatialSplitCaptureSink sink, in SpatialSplitCaptureIdentity identity, in SpatialSplitCaptureParameters p,
+            int* submeshOffsets, int* submeshCounts, int[] materials, float3[] anchorPoints, uint* indices, int indexCount, VpRenderVertex* vertices, int vertexViewLength,
+            int convexCount, ConvexBrepRange* ranges, ConvexBrepBank* banks)
+        {
             if (!sink.IsCapturing)
             {
                 sink.NoteRefused(sink.IsClosed ? SpatialSplitCaptureRefusal.Closed : SpatialSplitCaptureRefusal.Stopped);
@@ -673,12 +713,12 @@ namespace Zantetsu.PhysicsCut
             }
 
             int vertexBytes = UnsafeUtility.SizeOf<VpRenderVertex>();
-            uint view = (uint)Math.Max(0, a.vertexViewLength);
+            uint view = (uint)Math.Max(0, vertexViewLength);
             uint lo = uint.MaxValue;
             uint hi = 0;
-            for (int i = 0; i < a.indexCount; i++)
+            for (int i = 0; i < indexCount; i++)
             {
-                uint v = a.indices[i];
+                uint v = indices[i];
                 if (v >= view) continue;   // the search refuses such an input; the index is kept as it is
                 if (v < lo) lo = v;
                 if (v > hi) hi = v;
@@ -686,12 +726,12 @@ namespace Zantetsu.PhysicsCut
 
             int spanCount = lo <= hi ? checked((int)(hi - lo + 1)) : 0;
             if (spanCount == 0) lo = 0;
-            int s = a.submeshCount;
-            int anchors = a.anchors != null ? a.anchors.Length : 0;
-            long bytes = (3L * s * sizeof(int)) + ((long)anchors * sizeof(float3)) + ((long)a.indexCount * sizeof(uint)) + ((long)spanCount * vertexBytes);
-            for (int c = 0; c < a.convexCount; c++)
+            int s = p.submeshCount;
+            int anchors = anchorPoints != null ? anchorPoints.Length : 0;
+            long bytes = (3L * s * sizeof(int)) + ((long)anchors * sizeof(float3)) + ((long)indexCount * sizeof(uint)) + ((long)spanCount * vertexBytes);
+            for (int c = 0; c < convexCount; c++)
             {
-                ConvexBrepRange r = a.ranges[c];
+                ConvexBrepRange r = ranges[c];
                 bytes += sizeof(ConvexBrepRange) + ((long)r.vertexCount * sizeof(float3)) + ((long)(r.faceCount + 1) * sizeof(int))
                     + (2L * r.faceIndexCount * sizeof(int)) + ((long)r.edgeCount * sizeof(BrepEdge));
             }
@@ -706,31 +746,31 @@ namespace Zantetsu.PhysicsCut
             {
                 data = (byte*)UnsafeUtility.Malloc(Math.Max(1, bytes), 16, Allocator.Persistent);
                 var w = new SpatialSplitRawWriter(data, bytes);
-                w.Bytes(a.submeshOffsets, (long)s * sizeof(int));
-                w.Bytes(a.submeshCounts, (long)s * sizeof(int));
-                fixed (int* materials = a.materials)
+                w.Bytes(submeshOffsets, (long)s * sizeof(int));
+                w.Bytes(submeshCounts, (long)s * sizeof(int));
+                fixed (int* m = materials)
                 {
-                    w.Bytes(materials, (long)s * sizeof(int));
+                    w.Bytes(m, (long)s * sizeof(int));
                 }
 
                 if (anchors > 0)
                 {
-                    fixed (float3* p = a.anchors)
+                    fixed (float3* q = anchorPoints)
                     {
-                        w.Bytes(p, (long)anchors * sizeof(float3));
+                        w.Bytes(q, (long)anchors * sizeof(float3));
                     }
                 }
 
-                w.Bytes(a.indices, (long)a.indexCount * sizeof(uint));
+                w.Bytes(indices, (long)indexCount * sizeof(uint));
                 if (spanCount > 0)
                 {
-                    w.Bytes(a.vertices + lo, (long)spanCount * vertexBytes);
+                    w.Bytes(vertices + lo, (long)spanCount * vertexBytes);
                 }
 
-                for (int c = 0; c < a.convexCount; c++)
+                for (int c = 0; c < convexCount; c++)
                 {
-                    ConvexBrepRange r = a.ranges[c];
-                    ConvexBrepBank b = a.banks[c];
+                    ConvexBrepRange r = ranges[c];
+                    ConvexBrepBank b = banks[c];
                     w.Bytes(&r, sizeof(ConvexBrepRange));
                     w.Bytes(b.vertices + r.vertexBase, (long)r.vertexCount * sizeof(float3));
                     w.Bytes(b.faceOffsets + r.faceBase, (long)(r.faceCount + 1) * sizeof(int));
@@ -756,24 +796,24 @@ namespace Zantetsu.PhysicsCut
             return new SpatialSplitCaptureSample
             {
                 identity = identity,
-                margin = a.margin,
-                supportEpsilon = a.supportEpsilon,
-                anchorEpsilon = a.anchorEpsilon,
-                vertexLimit = a.vertexLimit,
-                parentMass = a.parentMass,
-                limits = a.limits,
-                cutConvexes = a.cutConvexes,
-                minCutSideTriangles = a.minCutSideTriangles,
-                bentSearch = a.bentSearch,
-                bentLimits = a.bentLimits,
-                maxConvexVertices = a.maxConvexVertices,
-                geometryToOwner = a.geometryToOwner,
-                shapeToOwner = a.shapeToOwner,
+                margin = p.margin,
+                supportEpsilon = p.supportEpsilon,
+                anchorEpsilon = p.anchorEpsilon,
+                vertexLimit = p.vertexLimit,
+                parentMass = p.parentMass,
+                limits = p.limits,
+                cutConvexes = p.cutConvexes,
+                minCutSideTriangles = p.minCutSideTriangles,
+                bentSearch = p.bentSearch,
+                bentLimits = p.bentLimits,
+                maxConvexVertices = p.maxConvexVertices,
+                geometryToOwner = p.geometryToOwner,
+                shapeToOwner = p.shapeToOwner,
                 submeshCount = s,
-                anchorCount = a.anchors != null ? anchors : -1,
-                indexCount = a.indexCount,
-                vertexViewLength = a.vertexViewLength,
-                convexCount = a.convexCount,
+                anchorCount = anchorPoints != null ? anchors : -1,
+                indexCount = indexCount,
+                vertexViewLength = vertexViewLength,
+                convexCount = convexCount,
                 vertexStructBytes = vertexBytes,
                 spanLo = lo,
                 spanCount = spanCount,
@@ -1275,6 +1315,7 @@ namespace Zantetsu.PhysicsCut
                 Interlocked.Increment(ref _lost);
                 sample.Free();
                 Unreserve(sample.bytes);
+                sample.done?.Invoke(false, "dropped: the writer is gone");
             }
             else if (item is SpatialSplitCaptureResult result)
             {
@@ -1285,6 +1326,7 @@ namespace Zantetsu.PhysicsCut
             {
                 Interlocked.Increment(ref _bonesLost);
                 Unreserve(bone.bytes);
+                bone.done?.Invoke(false, "dropped: the writer is gone");
             }
         }
 
@@ -1320,9 +1362,10 @@ namespace Zantetsu.PhysicsCut
                 if (item is SpatialSplitCaptureSample sample)
                 {
                     long begin = Stopwatch.GetTimestamp();
+                    bool committed;
                     try
                     {
-                        WriteSample(sample);
+                        committed = WriteSample(sample);
                     }
                     finally
                     {
@@ -1330,6 +1373,8 @@ namespace Zantetsu.PhysicsCut
                         Interlocked.Add(ref _writeTicks, ticks);
                         Most(ref _mostWriteTicks, ticks);
                     }
+
+                    sample.done?.Invoke(committed, committed ? null : "not committed: " + StopReason + " (" + StopDetail + ")");
                 }
                 else if (item is SpatialSplitCaptureResult result)
                 {
@@ -1338,12 +1383,13 @@ namespace Zantetsu.PhysicsCut
                 else if (item is SpatialSplitBoneItem bone)
                 {
                     WriteBone(bone);
+                    bone.done?.Invoke(true, null);
                 }
             }
             catch (Exception e)
             {
-                if (item is SpatialSplitCaptureSample) Interlocked.Increment(ref _lost);
-                else if (item is SpatialSplitBoneItem) Interlocked.Increment(ref _bonesLost);
+                if (item is SpatialSplitCaptureSample failedSample) { Interlocked.Increment(ref _lost); failedSample.done?.Invoke(false, e.GetType().Name + ": " + e.Message); }
+                else if (item is SpatialSplitBoneItem failedBone) { Interlocked.Increment(ref _bonesLost); failedBone.done?.Invoke(false, e.GetType().Name + ": " + e.Message); }
                 else Interlocked.Increment(ref _resultsLost);
                 Fail(e.GetType().Name + ": " + e.Message);
             }
@@ -1403,7 +1449,8 @@ namespace Zantetsu.PhysicsCut
         // What the lines and the summary may still take once a sample would reach the session's bound.
         private long LineReserve => Math.Min(8L << 20, limits.maxSessionBytes / 16);
 
-        private void WriteSample(SpatialSplitCaptureSample sample)
+        // True where the sample's file was committed (with or without its index line); false where the session's bound refused it.
+        private bool WriteSample(SpatialSplitCaptureSample sample)
         {
             if (FailWriteAtSampleForTest >= 0 && Interlocked.Read(ref _saved) >= FailWriteAtSampleForTest)
             {
@@ -1434,7 +1481,7 @@ namespace Zantetsu.PhysicsCut
                 {
                     Stop(SpatialSplitCaptureRefusal.SessionDisk, "a sample of " + length + " bytes over " + Interlocked.Read(ref _diskBytes) + " on disk (bound " + limits.maxSessionBytes + ")");
                     Interlocked.Increment(ref _lost);
-                    return;
+                    return false;
                 }
 
                 // Nothing is overwritten: a file of that name that appeared in the meantime makes this fail.
@@ -1462,10 +1509,11 @@ namespace Zantetsu.PhysicsCut
                 {
                     Interlocked.Increment(ref _unindexed);
                     Fail("the index line of " + name + " (the file is committed): " + e.GetType().Name + ": " + e.Message);
-                    return;
+                    return true;
                 }
 
                 Interlocked.Increment(ref _saved);
+                return true;
             }
             finally
             {
@@ -1930,6 +1978,23 @@ namespace Zantetsu.PhysicsCut
 
             CaptureNpcOnly = System.Array.FindIndex(arguments, a => string.Equals(a, NpcOnlyArgument, StringComparison.OrdinalIgnoreCase)) >= 0;
             CaptureBones = CaptureNpcOnly || System.Array.FindIndex(arguments, a => string.Equals(a, BoneArgument, StringComparison.OrdinalIgnoreCase)) >= 0;
+            string version = DescribeBuild(arguments);
+            string[] notes = LaunchNotes(arguments, at);
+            string folder = NewSessionFolder(arguments[at + 1], "split-capture-");
+            var sink = new SpatialSplitCaptureSink(folder, SpatialSplitCaptureLimits.Default, version, notes);
+            UnityEngine.Debug.Log("SPLIT CAPTURE: on, session " + sink.sessionId + " into a new folder " + Path.GetFileName(folder) + "; " + version
+                + (CaptureBones ? "; the NPCs' bone-aware attempts too, with their bones (" + BoneArgument + ")" : "")
+                + (CaptureNpcOnly ? "; ONLY the attempts of an NPC's lineage (" + NpcOnlyArgument + ")" : ""));
+            return sink;
+        }
+
+        /// <summary>
+        /// What this build is, for a session's code version: the application's version and build id, Unity, the scripting backend, the kind
+        /// of Player, the platform, and the code the launch named by <see cref="CodeArgument"/> ("(not given)" without it).
+        /// </summary>
+        internal static string DescribeBuild(string[] arguments)
+        {
+            arguments ??= System.Array.Empty<string>();
             int codeAt = System.Array.FindIndex(arguments, a => string.Equals(a, CodeArgument, StringComparison.OrdinalIgnoreCase));
             string code = codeAt >= 0 && codeAt + 1 < arguments.Length ? arguments[codeAt + 1] : "(not given)";
 #if ENABLE_IL2CPP
@@ -1937,25 +2002,29 @@ namespace Zantetsu.PhysicsCut
 #else
             const string backend = "Mono";
 #endif
-            string version = "app " + Application.version + "; build " + Application.buildGUID + "; Unity " + Application.unityVersion + "; " + backend
+            return "app " + Application.version + "; build " + Application.buildGUID + "; Unity " + Application.unityVersion + "; " + backend
                 + "; " + (Application.isEditor ? "Editor" : UnityEngine.Debug.isDebugBuild ? "Development Player" : "Player") + "; " + Application.platform + "; code " + code;
+        }
 
-            // The launch's own switches, without the capture's directory (the private place it writes to).
+        /// <summary>The launch's own switches, the directory of the argument at <paramref name="hiddenAt"/> left out (the private place a session writes to).</summary>
+        internal static string[] LaunchNotes(string[] arguments, int hiddenAt)
+        {
+            arguments ??= System.Array.Empty<string>();
             var notes = new System.Collections.Generic.List<string>();
             for (int i = 0; i < arguments.Length; i++)
             {
                 if (!arguments[i].StartsWith("-zantetsu", StringComparison.OrdinalIgnoreCase) && !arguments[i].StartsWith("-sandbox", StringComparison.OrdinalIgnoreCase)) continue;
                 bool valued = i + 1 < arguments.Length && !arguments[i + 1].StartsWith("-", StringComparison.Ordinal);
-                notes.Add(i == at ? arguments[i] + " <directory>" : valued ? arguments[i] + " " + arguments[i + 1] : arguments[i]);
+                notes.Add(i == hiddenAt ? arguments[i] + " <directory>" : valued ? arguments[i] + " " + arguments[i + 1] : arguments[i]);
             }
 
-            string folder = Path.Combine(arguments[at + 1], "split-capture-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)
-                + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
-            var sink = new SpatialSplitCaptureSink(folder, SpatialSplitCaptureLimits.Default, version, notes.ToArray());
-            UnityEngine.Debug.Log("SPLIT CAPTURE: on, session " + sink.sessionId + " into a new folder " + Path.GetFileName(folder) + "; " + version
-                + (CaptureBones ? "; the NPCs' bone-aware attempts too, with their bones (" + BoneArgument + ")" : "")
-                + (CaptureNpcOnly ? "; ONLY the attempts of an NPC's lineage (" + NpcOnlyArgument + ")" : ""));
-            return sink;
+            return notes.ToArray();
+        }
+
+        /// <summary>A new folder's path under <paramref name="parent"/>: the prefix, the local time and a short random part.</summary>
+        internal static string NewSessionFolder(string parent, string prefix)
+        {
+            return Path.Combine(parent, prefix + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
         }
 
         private static void OnQuitting()

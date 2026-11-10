@@ -17,8 +17,9 @@ namespace Zantetsu.Sandbox
     /// piece before the floor or anything else; a short pulse on the left controller says it was taken. Reads only; nothing is written
     /// to the world (the line is no collider).
     /// <para>On only with the Player argument <see cref="Argument"/> (a normal launch creates nothing).</para>
+    /// <para>NPC-PIECE-PICK-1: the piece collection (PieceCollector, development builds) is this probe with the press doing more.</para>
     /// </summary>
-    public sealed class PieceProbe : MonoBehaviour
+    public class PieceProbe : MonoBehaviour
     {
         public const string Prefix = "PIECE PROBE: ";
 
@@ -29,7 +30,7 @@ namespace Zantetsu.Sandbox
         private static readonly InputFeatureUsage<Vector3> PointerPosition = new InputFeatureUsage<Vector3>("PointerPosition");
         private static readonly InputFeatureUsage<Quaternion> PointerRotation = new InputFeatureUsage<Quaternion>("PointerRotation");
 
-        public static PieceProbe Instance { get; private set; }
+        public static PieceProbe Instance { get; protected set; }
 
         public static PieceProbe InstallIfAsked()
         {
@@ -49,7 +50,16 @@ namespace Zantetsu.Sandbox
         private bool _wasPressed;
         private int _probes;
 
-        private void OnDestroy()
+        /// <summary>The cut world found (null until there is one).</summary>
+        protected CutWorldRoot World => _world;
+
+        /// <summary>Presses so far (the probe's numbering of its lines).</summary>
+        protected int Probes => _probes;
+
+        /// <summary>Whether <see cref="Log"/> pulses the controller (true; the collection pulses on its own and sets it false).</summary>
+        protected bool Pulse { get; set; } = true;
+
+        protected virtual void OnDestroy()
         {
             if (_material != null) Destroy(_material);
         }
@@ -65,9 +75,12 @@ namespace Zantetsu.Sandbox
             Draw(aimed, origin, found ? hit.point : origin + (direction * Reach), onPiece);
 
             bool pressed = left.isValid && left.TryGetFeatureValue(CommonUsages.primaryButton, out bool down) && down;
-            if (pressed && !_wasPressed) Log(left, aimed, found, hit, onPiece);
+            if (pressed && !_wasPressed) Pressed(left, aimed, origin, direction, found, hit, onPiece);
             _wasPressed = pressed;
         }
+
+        /// <summary>One press of the left X button (up to down): the probe logs the piece the line rests on; the collection does more.</summary>
+        protected virtual void Pressed(InputDevice left, bool aimed, Vector3 origin, Vector3 direction, bool found, RaycastHit hit, bool onPiece) => Log(left, aimed, found, hit, onPiece);
 
         /// <summary>The left controller's pointer as a ray of the world: tracked in the rig's tracking space (the camera's parent).</summary>
         private static bool TryAim(InputDevice left, out Vector3 origin, out Vector3 direction)
@@ -142,7 +155,8 @@ namespace Zantetsu.Sandbox
             _line.SetPosition(1, to);
         }
 
-        private void Log(InputDevice left, bool aimed, bool found, RaycastHit hit, bool onPiece)
+        /// <summary>The probe's line on what the press met, numbered; a pulse on the left controller where something was hit.</summary>
+        protected void Log(InputDevice left, bool aimed, bool found, RaycastHit hit, bool onPiece)
         {
             CultureInfo inv = CultureInfo.InvariantCulture;
             _probes++;
@@ -163,7 +177,7 @@ namespace Zantetsu.Sandbox
             if (!found)
             {
                 Debug.Log(text.Append(": nothing within ").Append(Reach.ToString("F0", inv)).Append(" m along the line").ToString());
-                left.SendHapticImpulse(0, 0.2f, 0.05f);
+                if (Pulse) left.SendHapticImpulse(0, 0.2f, 0.05f);
                 return;
             }
 
@@ -191,7 +205,7 @@ namespace Zantetsu.Sandbox
             }
 
             Debug.Log(text.ToString());
-            left.SendHapticImpulse(0, 0.5f, 0.08f);
+            if (Pulse) left.SendHapticImpulse(0, 0.5f, 0.08f);
         }
     }
 }

@@ -26,6 +26,9 @@ namespace Zantetsu.PhysicsCut
         internal string file, index, line;
         internal byte[] content;
         internal long bytes;
+
+        /// <summary>NPC-PIECE-PICK-1: told once by the writer thread whether the item was written (true) or not (false, with why); null for the capture's own.</summary>
+        internal Action<bool, string> done;
     }
 
     internal sealed class SpatialSplitBoneSample
@@ -127,15 +130,28 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         internal static unsafe bool Write(SpatialSplitCaptureSink sink, long world, CutSpatialSplit.Attempt a, NpcBonePiece piece, in CutSpatialSplitSettings settings, bool graphPrepared)
         {
-            NpcBoneLineage lineage = a.boneLineage;
-            string name = FileName(world, a.serial);
+            return Write(sink, world, a.serial, a.fragment.value, a.input.epoch, a.boneLineage, piece, a.boneInput.convexBones, a.boneInput.insufficient, a.boneInput.maxOriginSteps,
+                a.boneInput.lineage.baseBones, a.boneInput.lineage.chunks, a.boneInput.lineage.localCount, in settings, graphPrepared, null);
+        }
+
+        /// <summary>
+        /// The sidecar from its parts (NPC-PIECE-PICK-1: the piece collection writes a fragment's bones with no attempt, numbered by its
+        /// pick): the lineage's rig and joints, the piece, the convexes' bones, and what a decision over the lineage would read (the base
+        /// vertices' bones, the cuts' chunks, the lineage's vertex count), as given. <paramref name="done"/>, when given, is told by the
+        /// writer thread whether the item was written.
+        /// </summary>
+        internal static unsafe bool Write(SpatialSplitCaptureSink sink, long world, long serial, int fragment, int epoch, NpcBoneLineage lineage, NpcBonePiece piece,
+            int[] convexBones, string insufficient, long maxOriginSteps, ulong* baseBones, NpcVertexChunk[] lineageChunks, int localCount,
+            in CutSpatialSplitSettings settings, bool graphPrepared, Action<bool, string> done)
+        {
+            string name = FileName(world, serial);
             try
             {
                 string hash;
                 long raw;
                 byte[] content;
-                int[] bones = a.boneInput.convexBones ?? Array.Empty<int>();
-                NpcVertexChunk[] chunks = a.boneInput.lineage.chunks ?? Array.Empty<NpcVertexChunk>();
+                int[] bones = convexBones ?? Array.Empty<int>();
+                NpcVertexChunk[] chunks = lineageChunks ?? Array.Empty<NpcVertexChunk>();
                 int n = lineage.NodeCount;
                 using (var memory = new MemoryStream())
                 {
@@ -146,9 +162,9 @@ namespace Zantetsu.PhysicsCut
                         w.Int(FormatVersion);
                         w.String(sink.sessionId);
                         w.Long(world);
-                        w.Long(a.serial);
-                        w.Int(a.fragment.value);
-                        w.Int(a.input.epoch);
+                        w.Long(serial);
+                        w.Int(fragment);
+                        w.Int(epoch);
                         w.Byte(settings.graphSearch);
                         w.Byte(settings.graphFirst);
                         w.Byte(graphPrepared);
@@ -157,9 +173,9 @@ namespace Zantetsu.PhysicsCut
                         w.Long(g.maxGraphBytes); w.Long(g.workBudget); w.Int(g.deferFirstFrames); w.Int(g.deferMaxFrames);
                         w.Int(bones.Length);
                         fixed (int* p = bones) w.Bytes(p, (long)bones.Length * sizeof(int));
-                        w.Byte(a.boneInput.insufficient != null);
-                        if (a.boneInput.insufficient != null) w.String(a.boneInput.insufficient);
-                        w.Long(a.boneInput.maxOriginSteps);
+                        w.Byte(insufficient != null);
+                        if (insufficient != null) w.String(insufficient);
+                        w.Long(maxOriginSteps);
                         w.Int(n);
                         fixed (int* p = lineage.Parent) w.Bytes(p, (long)n * sizeof(int));
                         for (int i = 0; i < n; i++) w.Byte(lineage.Present[i]);
@@ -180,10 +196,9 @@ namespace Zantetsu.PhysicsCut
                         fixed (float* p = hi) w.Bytes(p, (long)hi.Length * sizeof(float));
                         w.UInt(lineage.BaseStart);
                         w.Int(lineage.BaseCount);
-                        ulong* baseBones = a.boneInput.lineage.baseBones;
                         w.Byte(baseBones != null);
                         if (baseBones != null) w.Bytes(baseBones, (long)lineage.BaseCount * sizeof(ulong));
-                        w.Int(a.boneInput.lineage.localCount);
+                        w.Int(localCount);
                         w.Int(chunks.Length);
                         for (int c = 0; c < chunks.Length; c++)
                         {
@@ -206,9 +221,10 @@ namespace Zantetsu.PhysicsCut
                     file = name,
                     content = content,
                     index = "bones.jsonl",
-                    line = "{\"world\":" + world + ",\"attempt\":" + a.serial + ",\"file\":\"" + name + "\",\"sha256\":\"" + hash + "\",\"rawBytes\":" + raw + ",\"fileBytes\":" + content.Length
-                        + ",\"fragment\":" + a.fragment.value + ",\"convexes\":" + bones.Length + ",\"bones\":" + n + ",\"chunks\":" + chunks.Length
-                        + ",\"localCount\":" + a.boneInput.lineage.localCount + ",\"insufficient\":" + (a.boneInput.insufficient != null ? "true" : "false") + "}",
+                    line = "{\"world\":" + world + ",\"attempt\":" + serial + ",\"file\":\"" + name + "\",\"sha256\":\"" + hash + "\",\"rawBytes\":" + raw + ",\"fileBytes\":" + content.Length
+                        + ",\"fragment\":" + fragment + ",\"convexes\":" + bones.Length + ",\"bones\":" + n + ",\"chunks\":" + chunks.Length
+                        + ",\"localCount\":" + localCount + ",\"insufficient\":" + (insufficient != null ? "true" : "false") + "}",
+                    done = done,
                 };
                 item.bytes = content.Length + SpatialSplitCaptureResult.Overhead;
                 if (!sink.TryReserve(item.bytes, false))

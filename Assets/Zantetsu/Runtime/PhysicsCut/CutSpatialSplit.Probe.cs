@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text;
 using UnityEngine;
 using Zantetsu.MeshCut;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut
 {
@@ -15,7 +16,12 @@ namespace Zantetsu.PhysicsCut
     public sealed partial class CutSpatialSplit
     {
 #if ZANTETSU_OBSERVE
-        private struct PieceNote
+        /// <summary>
+        /// What the additional split last did with one fragment (diagnosis only): its last attempt's end and the bones' decision, whether it
+        /// fell back, and -- for a piece a split made -- its source and the route. NPC-PIECE-PICK-1: the attempt's input is named too (the
+        /// geometry it was issued for and the settings' epoch), so that a saved piece can tell whether the note is of its own geometry.
+        /// </summary>
+        internal struct PieceNote
         {
             internal bool attempted, boneLed, fellBack;
             internal int endFrame, madeFrame;
@@ -23,7 +29,22 @@ namespace Zantetsu.PhysicsCut
             internal NpcBoneSplitRecord bone;
             internal LogicalFragmentId madeFrom;
             internal string madeBy;
+
+            /// <summary>The last attempt's input (NPC-PIECE-PICK-1): the geometry's identity and the settings' epoch; meaningful where attempted.</summary>
+            internal int inputVertexStart, inputVertexCount, inputSubmeshStart, inputSubmeshCount, inputBlockStart, inputBlockCount, inputTopologyVertexCount, inputEpoch;
+
+            /// <summary>Whether the last attempt was issued for this very geometry (the identity fields equal), and in this settings' epoch.</summary>
+            internal bool IsOf(in VpStoredGeometry geometry, int epoch) =>
+                attempted && inputVertexStart == geometry.vertexStart && inputVertexCount == geometry.vertexCount && inputSubmeshStart == geometry.submeshStart
+                && inputSubmeshCount == geometry.submeshCount && inputBlockStart == geometry.blockStart && inputBlockCount == geometry.blockCount
+                && inputTopologyVertexCount == geometry.topologyVertexCount && inputEpoch == epoch;
         }
+
+        /// <summary>The note of <paramref name="fragment"/>, if the table holds one (NPC-PIECE-PICK-1: read by the piece collection). Reads only.</summary>
+        internal bool TryGetPieceNote(LogicalFragmentId fragment, out PieceNote note) => _pieceNotes.TryGetValue(fragment, out note);
+
+        /// <summary>The settings' epoch an input of now would carry (the mark epoch; NPC-PIECE-PICK-1).</summary>
+        internal int MarkEpoch => _markEpoch;
 
         private const int PieceNoteRoom = 16384;
         private readonly Dictionary<LogicalFragmentId, PieceNote> _pieceNotes = new Dictionary<LogicalFragmentId, PieceNote>();
@@ -38,6 +59,15 @@ namespace Zantetsu.PhysicsCut
             note.boneLed = attempt.boneLed;
             note.fellBack = attempt.boneFellBack;
             note.bone = attempt.bone;
+            VpStoredGeometry g = attempt.input.geometry;
+            note.inputVertexStart = g.vertexStart;
+            note.inputVertexCount = g.vertexCount;
+            note.inputSubmeshStart = g.submeshStart;
+            note.inputSubmeshCount = g.submeshCount;
+            note.inputBlockStart = g.blockStart;
+            note.inputBlockCount = g.blockCount;
+            note.inputTopologyVertexCount = g.topologyVertexCount;
+            note.inputEpoch = attempt.input.epoch;
             _pieceNotes[attempt.fragment] = note;
         }
 

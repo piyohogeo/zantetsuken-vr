@@ -19,6 +19,12 @@ namespace Zantetsu.PhysicsCut
     /// palette's -- the renderer's own (shortened, DESIGN 9 D-195) bone list -- which is the index space of the NPC's bone rig
     /// for every weighted bone (<see cref="NpcBoneRig"/>).
     /// </para>
+    /// <para>
+    /// NPC-PIECE-PICK-1: in the piece collection's mode (<see cref="KeepWeights"/>, set by the collection's launch argument before any
+    /// model is prepared) the table also keeps each kept influence's weight as the mesh holds it (a float, every bit; the same place as
+    /// its bone), so that the collection can save the model's weights for the vertices of its base geometry. The product keeps the bones
+    /// alone, as before; nothing reads the weights but the collection.
+    /// </para>
     /// </summary>
     public sealed unsafe class NpcVertexBones
     {
@@ -27,16 +33,33 @@ namespace Zantetsu.PhysicsCut
 
         private static readonly Dictionary<Mesh, NpcVertexBones> s_ofMesh = new Dictionary<Mesh, NpcVertexBones>();
 
+        /// <summary>NPC-PIECE-PICK-1: whether tables made from here on keep the weights too (the piece collection's mode; false in the product).</summary>
+        public static bool KeepWeights { get; set; }
+
         private NativeArray<ulong> _bones;
+        private NativeArray<float> _weights;   // 4 a vertex, the kept influences' weights in their bones' places; not created in the product
         private readonly Mesh _key;
         private int _holds;
 
-        private NpcVertexBones(NativeArray<ulong> bones, int paletteCount, Mesh key)
+        private NpcVertexBones(NativeArray<ulong> bones, int paletteCount, Mesh key, NativeArray<float> weights, string modelName)
         {
             _bones = bones;
             PaletteCount = paletteCount;
             _key = key;
+            _weights = weights;
+            ModelName = modelName ?? "";
         }
+
+        /// <summary>The mesh's name the table was made from (the collection's model identification), or the caller's for a table of entries.</summary>
+        public string ModelName { get; }
+
+        /// <summary>NPC-PIECE-PICK-1: whether this table keeps the weights (made in the collection's mode).</summary>
+        public bool HasWeights => _weights.IsCreated;
+
+        /// <summary>The weight of one kept influence of one vertex (0 where none, or where the table keeps no weights).</summary>
+        public float Weight(int vertex, int influence) => _weights.IsCreated ? _weights[(4 * vertex) + influence] : 0f;
+
+        internal float* WeightsPointer => _weights.IsCreated ? (float*)_weights.GetUnsafeReadOnlyPtr() : null;
 
         /// <summary>How many vertices the model has.</summary>
         public int VertexCount => _bones.IsCreated ? _bones.Length : 0;
@@ -44,8 +67,8 @@ namespace Zantetsu.PhysicsCut
         /// <summary>How many bones the palette has (the mesh's bind poses).</summary>
         public int PaletteCount { get; }
 
-        /// <summary>The native bytes held (8 a vertex).</summary>
-        public long NativeBytes => _bones.IsCreated ? 8L * _bones.Length : 0;
+        /// <summary>The native bytes held (8 a vertex; 16 more a vertex where the weights are kept).</summary>
+        public long NativeBytes => (_bones.IsCreated ? 8L * _bones.Length : 0) + (_weights.IsCreated ? 4L * _weights.Length : 0);
 
         /// <summary>How many models' tables are held now (accounting).</summary>
         public static int LiveCount => s_ofMesh.Count;
@@ -90,6 +113,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             var bones = new NativeArray<ulong>(vertexCount, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            float[] keptWeights = KeepWeights ? new float[4 * vertexCount] : null;   // NPC-PIECE-PICK-1: the collection's mode only
             try
             {
                 using (NativeArray<byte> perVertex = mesh.GetBonesPerVertex())
@@ -139,6 +163,7 @@ namespace Zantetsu.PhysicsCut
 
                             entry &= ~(0xFFFFUL << (16 * kept));
                             entry |= (ulong)(ushort)w.boneIndex << (16 * kept);
+                            if (keptWeights != null) keptWeights[(4 * v) + kept] = w.weight;
                             kept++;
                         }
 
@@ -152,17 +177,23 @@ namespace Zantetsu.PhysicsCut
                 throw;
             }
 
-            made = new NpcVertexBones(bones, palette, mesh) { _holds = 1 };
+            NativeArray<float> weightTable = keptWeights != null ? new NativeArray<float>(keptWeights, Allocator.Persistent) : default;
+            made = new NpcVertexBones(bones, palette, mesh, weightTable, mesh.name) { _holds = 1 };
             s_ofMesh[mesh] = made;
             table = made;
             return true;
         }
 
-        /// <summary>A table of the caller's entries (tests and fixtures that have no skinned mesh), held once, shared with nobody.</summary>
-        internal static NpcVertexBones FromEntries(ulong[] entries, int paletteCount)
+        /// <summary>
+        /// A table of the caller's entries (tests and fixtures that have no skinned mesh), held once, shared with nobody; with
+        /// <paramref name="weights"/> (4 a vertex, in the entries' places) it keeps the weights as a collection-mode table does.
+        /// </summary>
+        internal static NpcVertexBones FromEntries(ulong[] entries, int paletteCount, float[] weights = null, string modelName = null)
         {
+            if (weights != null && weights.Length != 4 * entries.Length) throw new ArgumentException("four weights a vertex", nameof(weights));
             var bones = new NativeArray<ulong>(entries, Allocator.Persistent);
-            return new NpcVertexBones(bones, paletteCount, null) { _holds = 1 };
+            NativeArray<float> kept = weights != null ? new NativeArray<float>(weights, Allocator.Persistent) : default;
+            return new NpcVertexBones(bones, paletteCount, null, kept, modelName ?? "(entries)") { _holds = 1 };
         }
 
         /// <summary>One more holder.</summary>
@@ -180,6 +211,8 @@ namespace Zantetsu.PhysicsCut
             if (_key != null && s_ofMesh.TryGetValue(_key, out NpcVertexBones made) && ReferenceEquals(made, this)) s_ofMesh.Remove(_key);
             if (_bones.IsCreated) _bones.Dispose();
             _bones = default;
+            if (_weights.IsCreated) _weights.Dispose();
+            _weights = default;
         }
 
         public bool IsReleased => !_bones.IsCreated;
