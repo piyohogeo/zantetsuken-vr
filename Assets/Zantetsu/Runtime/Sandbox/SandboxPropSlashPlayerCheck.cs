@@ -1308,6 +1308,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 _timelineBegun = true;
+                if (Zantetsu.Rendering.VpNativeDrawPlugin.DetailTiming) Log("timeline begins at frame " + Time.frameCount + ": " + Zantetsu.Rendering.VpNativeDrawPlugin.DescribeLockStats());
                 if (runParts.metrics)
                 {
                     if (!_observationPreparedBeforeCountdown) StartTimeline();
@@ -1529,6 +1530,7 @@ namespace Zantetsu.Sandbox
                 if (SaveReportsAcrossFrames)
                 {
                     // Stop observation at the same completion boundary before waiting on the diagnostic writer.
+                    if (_timing && Zantetsu.Rendering.VpNativeDrawPlugin.DetailTiming) Log("timeline ends at frame " + Time.frameCount + ": " + Zantetsu.Rendering.VpNativeDrawPlugin.DescribeLockStats());
                     _timing = false;
                     _timelineBegun = false;
                     yield return SaveTimelineAcrossFrames(true);
@@ -1548,6 +1550,7 @@ namespace Zantetsu.Sandbox
                 {
                     Application.quitting -= MultiQuitting;
                     if (_recorder != null) _recorder.RealtimeSampleEvaluated -= CaptureRealtimeEvaluation;
+                    if (_timing && Zantetsu.Rendering.VpNativeDrawPlugin.DetailTiming) Log("timeline ends at frame " + Time.frameCount + ": " + Zantetsu.Rendering.VpNativeDrawPlugin.DescribeLockStats());
                     _timing = false;
                     _timelineBegun = false;
                     var steps = new List<CheckEnding.Part>
@@ -1649,12 +1652,20 @@ namespace Zantetsu.Sandbox
             private void StartTimeline(bool startRecording = true)
             {
                 var markers = new List<(ProfilerCategory, string)>(TimelineMarkers);
+                _timelineHandles.Clear();
                 foreach (string entry in (extraMarkers ?? string.Empty).Split(';'))
                 {
-                    // "Category:Name" (a ProfilerCategory property, such as Render or Scripts), or a name in Internal.
+                    // "Category:Name" (a ProfilerCategory property, such as Render or Scripts), or a name in Internal;
+                    // or "~text": every recorder there is now whose name holds the text, whatever its category.
                     string text = entry.Trim();
                     if (text.Length == 0)
                     {
+                        continue;
+                    }
+
+                    if (text[0] == '~')
+                    {
+                        AddMarkersHolding(text.Substring(1), markers);
                         continue;
                     }
 
@@ -1734,7 +1745,15 @@ namespace Zantetsu.Sandbox
                 _timelineRecorders = new ProfilerRecorder[_timelineMarkers.Length];
                 for (int i = 0; i < _timelineMarkers.Length; i++)
                 {
-                    _timelineRecorders[i] = ProfilerRecorder.StartNew(_timelineMarkers[i].category, _timelineMarkers[i].name);
+                    if (_timelineHandles.TryGetValue(_timelineMarkers[i].name, out Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle found))
+                    {
+                        _timelineRecorders[i] = new ProfilerRecorder(found, 1, ProfilerRecorderOptions.Default);
+                        _timelineRecorders[i].Start();
+                    }
+                    else
+                    {
+                        _timelineRecorders[i] = ProfilerRecorder.StartNew(_timelineMarkers[i].category, _timelineMarkers[i].name);
+                    }
                 }
 
                 string[] appSw = Zantetsu.Rendering.Urp.VpAppSwMarkers.Names;
@@ -1750,6 +1769,45 @@ namespace Zantetsu.Sandbox
 
                 PrepareTimelineRoom();
                 _timing = startRecording;
+            }
+
+            // Measurement: the recorders asked for by a part of their name ("~text" in the markers' argument), found among
+            // those there are when the timeline starts and kept by their handles (their categories are not all among
+            // ProfilerCategory's own). A name already in the timeline is not taken twice; at most MostMarkersHolding
+            // a text, the rest named in the log.
+            private const int MostMarkersHolding = 160;
+            private readonly Dictionary<string, Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle> _timelineHandles =
+                new Dictionary<string, Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle>();
+
+            private void AddMarkersHolding(string text, List<(ProfilerCategory, string)> markers)
+            {
+                var handles = new List<Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle>();
+                Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle.GetAvailable(handles);
+                var taken = new List<string>();
+                var left = new List<string>();
+                foreach (Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle handle in handles)
+                {
+                    Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderDescription description = Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle.GetDescription(handle);
+                    string name = description.Name;
+                    if (text.Length == 0 || name.IndexOf(text, StringComparison.Ordinal) < 0 || name.IndexOf(',') >= 0 || name.IndexOf('"') >= 0
+                        || _timelineHandles.ContainsKey(name) || markers.Exists(marker => marker.Item2 == name))
+                    {
+                        continue;
+                    }
+
+                    if (taken.Count >= MostMarkersHolding)
+                    {
+                        left.Add(name);
+                        continue;
+                    }
+
+                    _timelineHandles.Add(name, handle);
+                    markers.Add((description.Category, name));
+                    taken.Add(name);
+                }
+
+                Log("markers holding '" + text + "': " + taken.Count + " of " + handles.Count + " recorders [" + string.Join(" | ", taken) + "]"
+                    + (left.Count > 0 ? "; NOT taken (over " + MostMarkersHolding + "): " + string.Join(" | ", left) : string.Empty));
             }
 
             /// <summary>The display's room as it stands: how it was prepared, the most it has drawn from, its bytes by kind and its GPU buffers.</summary>

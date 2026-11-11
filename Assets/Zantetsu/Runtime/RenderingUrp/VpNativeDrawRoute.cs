@@ -2681,6 +2681,7 @@ namespace Zantetsu.Rendering.Urp
 
             public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
             {
+                using ProfilerMarker.AutoScope marked = VpAppSwMarkers.PassRecord.Auto();
                 UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
                 if (!ReferenceEquals(cameraData.camera, _passes.camera))
                 {
@@ -3164,6 +3165,7 @@ namespace Zantetsu.Rendering.Urp
 
             public override void RecordRenderGraph(RenderGraph graph, ContextContainer frameData)
             {
+                using ProfilerMarker.AutoScope marked = VpAppSwMarkers.PassRecord.Auto();
                 var camera = frameData.Get<UniversalCameraData>();
                 if (!ReferenceEquals(camera.camera, _passes.camera)) return;
                 using (var builder = graph.AddUnsafePass<Data>(passName, out var data, profilingSampler, file: RenderGraphFile))
@@ -3319,6 +3321,7 @@ namespace Zantetsu.Rendering.Urp
             }
             public override void RecordRenderGraph(RenderGraph graph, ContextContainer frameData)
             {
+                using ProfilerMarker.AutoScope marked = VpAppSwMarkers.PassRecord.Auto();
                 var camera = frameData.Get<UniversalCameraData>();
                 if (!ReferenceEquals(camera.camera, _passes.camera)) return;
                 var resources = frameData.Get<UniversalResourceData>();
@@ -3402,6 +3405,7 @@ namespace Zantetsu.Rendering.Urp
 
             public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
             {
+                using ProfilerMarker.AutoScope marked = VpAppSwMarkers.PassRecord.Auto();
                 UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
                 if (!ReferenceEquals(cameraData.camera, _passes.camera)) return;
                 PrewarmRequest request = _passes.prewarm;

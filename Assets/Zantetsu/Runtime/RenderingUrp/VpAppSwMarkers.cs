@@ -33,6 +33,12 @@ namespace Zantetsu.Rendering.Urp
         internal static readonly ProfilerMarker NativeCullRecord = new ProfilerMarker(NativeCullRecordName);
         internal static readonly ProfilerMarker MotionClipKeep = new ProfilerMarker(MotionClipKeepName);
 
+        /// <summary>
+        /// Not of the AppSW four (2026-11-11, the Main time of the two routes): every VP pass's RecordRenderGraph, the
+        /// plugin route's and the Unity route's alike, so that the recording of one route can be set against the other's.
+        /// </summary>
+        internal static readonly ProfilerMarker PassRecord = new ProfilerMarker("Zantetsu.Pass.Record");
+
         /// <summary>Makes the four markers exist (a recorder started before its marker is made may not find it).</summary>
         public static int Ensure() => UnityCull.Handle != System.IntPtr.Zero && Record.Handle != System.IntPtr.Zero
             && NativeCullRecord.Handle != System.IntPtr.Zero && MotionClipKeep.Handle != System.IntPtr.Zero ? Names.Length : 0;

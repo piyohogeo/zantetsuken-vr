@@ -771,6 +771,7 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
+            using Unity.Profiling.ProfilerMarker.AutoScope marked = AvailableMarker.Auto();
             if (!DetailTiming)
             {
                 // The default: the query alone, as it was before the observation existed.
@@ -837,6 +838,25 @@ namespace Zantetsu.Rendering
         }
 
         private const int LockStatValues = 20;
+
+        // Measurement: the state query as the main thread sees it (it takes the plugin's mutex, which the rendering
+        // thread holds for the whole of each of its events).
+        private static readonly Unity.Profiling.ProfilerMarker AvailableMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.NativeDraw.IsAvailable");
+
+        /// <summary>
+        /// For a record: the mutex's statistics as they stand (cumulative; a reader takes differences of two records).
+        /// The times are of the detailed observation (<see cref="DetailTimingArgument"/>) and stay zero without it.
+        /// </summary>
+        public static string DescribeLockStats()
+        {
+            LockStats s = ReadLockStats();
+            System.Globalization.CultureInfo inv = System.Globalization.CultureInfo.InvariantCulture;
+            return "plugin mutex (timing " + (s.timingOn ? "on" : "off") + "): main queries " + s.availabilityCalls + ", contended " + s.availabilityContended
+                + ", waited " + s.Ms(s.availabilityWaitTicks).ToString("F3", inv) + " ms (longest " + s.Ms(s.availabilityWaitMaxTicks).ToString("F3", inv)
+                + "), held " + s.Ms(s.availabilityHeldTicks).ToString("F3", inv) + " ms; rendering thread events " + s.drawEvents + ", contended " + s.drawContended
+                + ", waited " + s.Ms(s.drawWaitTicks).ToString("F3", inv) + " ms (longest " + s.Ms(s.drawWaitMaxTicks).ToString("F3", inv)
+                + "), held " + s.Ms(s.drawHeldTicks).ToString("F3", inv) + " ms (longest " + s.Ms(s.drawHeldMaxTicks).ToString("F3", inv) + ")";
+        }
 
         public static LockStats ReadLockStats()
         {

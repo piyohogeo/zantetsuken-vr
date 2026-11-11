@@ -212,8 +212,13 @@ namespace Zantetsu.PhysicsCut
             _cullDisplay = null;
         }
 
+        // Measurement: this component's share of a camera's rendering on the main thread, whichever route draws.
+        private static readonly Unity.Profiling.ProfilerMarker BeginCameraMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.Camera.Begin");
+        private static readonly Unity.Profiling.ProfilerMarker EndCameraMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.Camera.End");
+
         private void OnEndCameraRendering(ScriptableRenderContext context, Camera camera)
         {
+            using Unity.Profiling.ProfilerMarker.AutoScope marked = EndCameraMarker.Auto();
             if (!IsOneOfOurs(camera))
             {
                 return;
@@ -259,6 +264,7 @@ namespace Zantetsu.PhysicsCut
 #if VP_DIAGNOSTIC_SCENE_AB
             using var measured = SceneAbCounters.Measure(2);
 #endif
+            using Unity.Profiling.ProfilerMarker.AutoScope marked = BeginCameraMarker.Auto();
             if (!IsOneOfOurs(camera) || !TryRegister())
             {
                 return;

@@ -164,6 +164,7 @@ namespace Zantetsu.Rendering.Urp
 
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
+            using ProfilerMarker.AutoScope marked = VpAppSwMarkers.PassRecord.Auto();
             RecordCount++;
             LastSplitCount = 0;
             LastSkipLosesShadows = false;

@@ -268,6 +268,7 @@ namespace Zantetsu.Rendering.Urp
 
             public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
             {
+                using ProfilerMarker.AutoScope marked = VpAppSwMarkers.PassRecord.Auto();
                 UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
                 if (!ReferenceEquals(cameraData.camera, camera) || target == null)
                 {
@@ -440,4 +441,5 @@ namespace Zantetsu.Rendering.Urp
             }
         }
     }
+
 }

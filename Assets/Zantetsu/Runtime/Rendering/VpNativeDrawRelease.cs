@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Plugin = Zantetsu.Rendering.VpNativeDrawPlugin;
@@ -409,6 +410,7 @@ namespace Zantetsu.Rendering
         /// </summary>
         public static int Tick()
         {
+            using ProfilerMarker.AutoScope marked = TickMarker.Auto();
             bool detail = Detail;
             ref FrameWork work = ref Work();
             work.tickCalls++;
@@ -467,6 +469,7 @@ namespace Zantetsu.Rendering
         /// </summary>
         public static void OnEndCameraRendering(ScriptableRenderContext context, Camera camera)
         {
+            using ProfilerMarker.AutoScope marked = EndCameraMarker.Auto();
             // The camera's name is read only for a journal line or a warning: a string a frame is an allocation
             // (natP11, 2026-10-08: +48 B a frame against natP10).
             Work().endCameraCalls++;
@@ -638,6 +641,11 @@ namespace Zantetsu.Rendering
                 if (s_sentinelSerials[i] > s_consumedSentinel) s_consumedSentinel = s_sentinelSerials[i];
             }
         }
+
+        // Measurement: the keeper's two entries a frame (Tick is inside EndCamera too, and runs once more at the end of
+        // the context's rendering).
+        private static readonly ProfilerMarker EndCameraMarker = new ProfilerMarker("Zantetsu.NativeRelease.EndCamera");
+        private static readonly ProfilerMarker TickMarker = new ProfilerMarker("Zantetsu.NativeRelease.Tick");
 
         private static bool DeviceAvailable()
         {

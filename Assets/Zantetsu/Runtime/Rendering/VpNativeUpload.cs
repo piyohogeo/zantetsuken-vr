@@ -35,6 +35,7 @@ namespace Zantetsu.Rendering
         /// <summary>The Player argument that keeps GraphicsBuffer.SetData for every write (and the pointers asked again after each).</summary>
         public const string UnityUploadsArgument = "-zantetsuVpNativeUnityUploads";
 
+        private static readonly Unity.Profiling.ProfilerMarker SubmitMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.NativeUpload.Submit");
         private static bool? s_asked;
         private static CommandBuffer s_commands;
 
@@ -100,8 +101,15 @@ namespace Zantetsu.Rendering
         /// Puts every write handed over since the last call in the rendering thread's order, here: seals them and
         /// issues the upload event. Does nothing when there are none.
         /// </summary>
+        /// <remarks>
+        /// The event is a Graphics.ExecuteCommandBuffer of its own. Leaving it to the next rendering's start instead
+        /// (one event in the commands that rendering submits anyway) was built and measured on 2026-11-11 and is not
+        /// adopted: the Release Player's main thread time did not change, and it obliges every other reader of the
+        /// buffers to flush first (DESIGN.md 4.5.8).
+        /// </remarks>
         public static void Submit()
         {
+            using Unity.Profiling.ProfilerMarker.AutoScope marked = SubmitMarker.Auto();
             ulong sequence = Plugin.UploadSeal();
             if (sequence == 0) return;
             if (s_commands == null) s_commands = new CommandBuffer { name = "VP native upload" };
