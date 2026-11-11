@@ -3,6 +3,7 @@
 #endif
 using System;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -95,6 +96,13 @@ namespace Zantetsu.Rendering
         private readonly GraphicsBuffer _instanceBuffer;
         private readonly GraphicsBuffer _instanceClipBuffer;
         private VpInstanceClip[] _instanceClips;
+
+        // The plugin's own writes (DESIGN 4.5.8, D-261): a batch the Direct3D 12 plugin draws writes its transforms
+        // and its clips through the plugin -- always, from its first write -- so Unity's API never writes these two
+        // buffers, their native pointers stand, and no generation is raised. Decided once, when the batch is made.
+        private readonly bool _pluginWrites;
+        private IntPtr _instanceNative, _instanceClipNative;
+        private bool _pluginWritesHandedOver;
 
         // Selecting on the GPU: the commands as the selection reads them take the arguments' place -- staged as the
         // arguments are, sent when they would be -- and each view holds what the selection writes for it. The two
@@ -263,6 +271,7 @@ namespace Zantetsu.Rendering
             _shadowArgumentBuffer = shadowArgumentBuffer;
             _instanceBuffer = instanceBuffer;
             _instanceClipBuffer = instanceClipBuffer;
+            _pluginWrites = culling != null && culling.NativeArguments && instanceBuffer != null && VpNativeUpload.Ready;
             _cull = culling;
             _cullStaging = cullStaging;
             _cullCommandBuffer = cullCommandBuffer;
@@ -1302,7 +1311,9 @@ namespace Zantetsu.Rendering
         /// The CPU-write generations of the buffers the plugin's draws bind (DESIGN 4.5.8): raised at every SetData
         /// into the instance transforms, the clips, the commands, and any view's lists or arguments. The plugin's
         /// route keeps a native pointer only while the generation it was taken at stands (Unity may change the native
-        /// buffer when its data is written through its APIs). A write by the selection's compute pass raises nothing.
+        /// buffer when its data is written through its APIs). A write by the selection's compute pass raises nothing,
+        /// and neither does a write of the transforms or the clips by the plugin (<see cref="PluginWrites"/>): Unity's
+        /// API is not what wrote.
         /// </summary>
         public uint InstanceGeneration { get; private set; }
 
@@ -1338,6 +1349,162 @@ namespace Zantetsu.Rendering
             {
                 ThrowIfDisposed();
                 return _instanceClipBuffer;
+            }
+        }
+
+        /// <summary>
+        /// Whether this batch's transforms and clips are written by the plugin (<see cref="VpNativeUpload"/>; DESIGN
+        /// 4.5.8, D-261) and never through Unity's API: a batch the plugin draws, made where the plugin's upload is
+        /// ready. Such a batch raises <see cref="InstanceGeneration"/> and <see cref="ClipGeneration"/> only for a write
+        /// the plugin did not take.
+        /// </summary>
+        public bool PluginWrites => _pluginWrites;
+
+        /// <summary>Observation: writes of transforms or clips handed to the plugin.</summary>
+        public long PluginWriteCalls { get; private set; }
+
+        /// <summary>
+        /// Observation: writes of a <see cref="PluginWrites"/> batch the plugin did not take (its device gone), made
+        /// through Unity's API instead, with the generation raised as for any such write and the pointer kept for the
+        /// plugin's writes of that buffer dropped.
+        /// </summary>
+        public long PluginWritesNotTaken { get; private set; }
+
+        /// <summary>
+        /// Observation: times a buffer's native pointer was asked for the plugin's writes: once a buffer, and once
+        /// more after each write of it that went through Unity's API (<see cref="PluginWritesNotTaken"/>).
+        /// </summary>
+        public long PluginPointersAsked { get; private set; }
+
+        // One write of instance records -- the transforms, or the clips -- `count` of them from `first` on, to the same
+        // place in the buffer. By Unity's SetData with the buffer's generation raised (Unity may have changed the
+        // native buffer), or, for a batch of the plugin's writes, handed to the plugin with nothing raised: what was
+        // handed over reaches the buffer at SubmitWrites, which every sender calls once it has handed over its last.
+        private unsafe void SendRecords<T>(bool clips, NativeArray<T> data, int first, int count, string site, VpUploadKind kind = VpUploadKind.Frame) where T : unmanaged
+        {
+            GraphicsBuffer buffer = clips ? _instanceClipBuffer : _instanceBuffer;
+            if (_pluginWrites)
+            {
+                if (first < 0 || count < 0 || first > data.Length - count)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(count), count, "the records to send are not all in the view");
+                }
+
+                if (PluginWrite(clips, (T*)NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(data) + first, first, count, sizeof(T), site, kind))
+                {
+                    return;
+                }
+
+                // Not taken: Unity's write, counted as the write it is (the stop stages were asked in PluginWrite).
+                buffer.SetData(data, first, first, count);
+                if (VpUploadMeter.Enabled) VpUploadMeter.Note(site, (long)count * sizeof(T));
+            }
+            else
+            {
+                buffer.SetData(data, first, first, count, site, kind);
+            }
+
+            if (clips) ClipGeneration++; else InstanceGeneration++;
+        }
+
+        // The same from a managed array.
+        private unsafe void SendRecords<T>(bool clips, T[] data, int first, int count, string site, VpUploadKind kind = VpUploadKind.Frame) where T : unmanaged
+        {
+            GraphicsBuffer buffer = clips ? _instanceClipBuffer : _instanceBuffer;
+            if (_pluginWrites)
+            {
+                if (first < 0 || count < 0 || first > data.Length - count)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(count), count, "the records to send are not all in the array");
+                }
+
+                bool taken;
+                fixed (T* source = data)
+                {
+                    taken = PluginWrite(clips, source + first, first, count, sizeof(T), site, kind);
+                }
+
+                if (taken)
+                {
+                    return;
+                }
+
+                // Not taken: Unity's write, counted as the write it is (the stop stages were asked in PluginWrite).
+                buffer.SetData(data, first, first, count);
+                if (VpUploadMeter.Enabled) VpUploadMeter.Note(site, (long)count * sizeof(T));
+            }
+            else
+            {
+                buffer.SetData(data, first, first, count, site, kind);
+            }
+
+            if (clips) ClipGeneration++; else InstanceGeneration++;
+        }
+
+        // Hands one write to the plugin, under the stop stages and the upload meter as SetData is. True when there is
+        // nothing left to do: handed over, or not to be made at all (a stop stage, or nothing to send). False when the
+        // plugin took nothing, which is counted: the caller writes through Unity's API and raises the generation.
+        private unsafe bool PluginWrite(bool clips, void* source, int first, int count, int recordBytes, string site, VpUploadKind kind)
+        {
+            int stride = clips ? InstanceClipStride : InstanceStride;
+            if (recordBytes != stride || first > InstanceCapacity - count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count), count, "the records to send are not the buffer's, or not all in it");
+            }
+
+            long bytes = (long)count * stride;
+            if (!VpGpuStop.Upload(kind, bytes) || count == 0)
+            {
+                return true;
+            }
+
+            // Asked once a buffer: nothing but the plugin writes it, so by Unity's contract the pointer stands.
+            ref IntPtr native = ref (clips ? ref _instanceClipNative : ref _instanceNative);
+            if (native == IntPtr.Zero)
+            {
+                native = (clips ? _instanceClipBuffer : _instanceBuffer).GetNativeBufferPtr();
+                PluginPointersAsked++;
+            }
+
+            if (!VpNativeUpload.Write(native, (long)first * stride, source, bytes))
+            {
+                // The caller writes this buffer through Unity's API now, which may change its native buffer: the
+                // pointer kept is no longer known to be the buffer's, and is asked again at the next write handed over.
+                native = IntPtr.Zero;
+                PluginWritesNotTaken++;
+                return false;
+            }
+
+            _pluginWritesHandedOver = true;
+            PluginWriteCalls++;
+            if (VpUploadMeter.Enabled) VpUploadMeter.Note(site, bytes);
+            return true;
+        }
+
+        // Puts what was handed to the plugin in the rendering thread's order, here: where the SetData calls stand for
+        // any other batch. Nothing to do when nothing was handed over.
+        private void SubmitWrites()
+        {
+            if (_pluginWritesHandedOver)
+            {
+                _pluginWritesHandedOver = false;
+                VpNativeUpload.Submit();
+            }
+        }
+
+        // The transforms and the clips of one range, a write each, and the two put in order together.
+        private void SendInstanceRecords(
+            NativeArray<Matrix4x4> objectToWorlds, NativeArray<VpInstanceClip> clips, int first, int count,
+            string transformSite, string clipSite, VpUploadKind kind = VpUploadKind.Frame)
+        {
+            try
+            {
+                SendRecords(false, objectToWorlds, first, count, transformSite, kind);
+                SendRecords(true, clips, first, count, clipSite, kind);
+            }
+            finally
+            {
+                SubmitWrites();
             }
         }
 
@@ -1473,10 +1640,7 @@ namespace Zantetsu.Rendering
             WriteArguments(commands.AsReadOnlySpan(), commandCount, objectToWorlds.AsReadOnlySpan(), singlePassInstanced, out Bounds worldBounds);
             if (instanceTotal > 0)
             {
-                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal, "VpIndexedIndirectDrawBatch.cs:1332");
-                InstanceGeneration++;
-                _instanceClipBuffer.SetData(clips, 0, 0, (int)instanceTotal, "VpIndexedIndirectDrawBatch.cs:1334");
-                ClipGeneration++;
+                SendInstanceRecords(objectToWorlds, clips, 0, (int)instanceTotal, "VpIndexedIndirectDrawBatch.cs:1332", "VpIndexedIndirectDrawBatch.cs:1334");
                 InstanceSetDataCalls += 2;
                 InstanceTransfers++;
                 InstanceElementsTransferred += instanceTotal;
@@ -1577,10 +1741,7 @@ namespace Zantetsu.Rendering
             if (instances)
             {
                 int count = instanceEnd - instanceStart;
-                _instanceBuffer.SetData(objectToWorlds, instanceStart, instanceStart, count, "VpIndexedIndirectDrawBatch.cs:1436");
-                InstanceGeneration++;
-                _instanceClipBuffer.SetData(clips, instanceStart, instanceStart, count, "VpIndexedIndirectDrawBatch.cs:1438");
-                ClipGeneration++;
+                SendInstanceRecords(objectToWorlds, clips, instanceStart, count, "VpIndexedIndirectDrawBatch.cs:1436", "VpIndexedIndirectDrawBatch.cs:1438");
                 InstanceSetDataCalls += 2;
                 InstanceTransfers++;
                 InstanceElementsTransferred += count;
@@ -1758,10 +1919,7 @@ namespace Zantetsu.Rendering
             {
                 if (instanceEnd > 0)
                 {
-                    _instanceBuffer.SetData(objectToWorlds, 0, 0, instanceEnd, "VpIndexedIndirectDrawBatch.cs:1617", VpUploadKind.Initial);
-                    InstanceGeneration++;
-                    _instanceClipBuffer.SetData(clips, 0, 0, instanceEnd, "VpIndexedIndirectDrawBatch.cs:1619", VpUploadKind.Initial);
-                    ClipGeneration++;
+                    SendInstanceRecords(objectToWorlds, clips, 0, instanceEnd, "VpIndexedIndirectDrawBatch.cs:1617", "VpIndexedIndirectDrawBatch.cs:1619", VpUploadKind.Initial);
                     WholeInstanceElementsTransferred += instanceEnd;
                     WholeSetDataCalls += 2;
                     sent = true;
@@ -1773,11 +1931,8 @@ namespace Zantetsu.Rendering
                 int from = Math.Max(0, Math.Min(instanceFrom, instanceEnd)), to = Math.Min(instanceTo, instanceEnd);
                 if (to > from)
                 {
-                    _instanceBuffer.SetData(objectToWorlds, from, from, to - from, "VpIndexedIndirectDrawBatch.cs:1632");
-                    InstanceGeneration++;
+                    SendInstanceRecords(objectToWorlds, clips, from, to - from, "VpIndexedIndirectDrawBatch.cs:1632", "VpIndexedIndirectDrawBatch.cs:1635");
                     InstanceTransformSetDataCalls++;
-                    _instanceClipBuffer.SetData(clips, from, from, to - from, "VpIndexedIndirectDrawBatch.cs:1635");
-                    ClipGeneration++;
                     InstanceClipSetDataCalls++;
                     InstanceSetDataCalls += 2;
                     InstanceElementsTransferred += to - from;
@@ -1989,14 +2144,13 @@ namespace Zantetsu.Rendering
                 }
 
                 VpWholeWrite.Step("write transforms");
-                _instanceBuffer.SetData(transforms, 0, 0, InstanceCapacity, "VpIndexedIndirectDrawBatch.cs:1848", VpUploadKind.Initial);
-                InstanceGeneration++;
+                SendRecords(false, transforms, 0, InstanceCapacity, "VpIndexedIndirectDrawBatch.cs:1848", VpUploadKind.Initial);
                 VpWholeWrite.Step("write clips");
-                _instanceClipBuffer.SetData(clips, 0, 0, InstanceCapacity, "VpIndexedIndirectDrawBatch.cs:1851", VpUploadKind.Initial);
-                ClipGeneration++;
+                SendRecords(true, clips, 0, InstanceCapacity, "VpIndexedIndirectDrawBatch.cs:1851", VpUploadKind.Initial);
             }
             finally
             {
+                SubmitWrites();
                 VpWholeWrite.Release(ref arguments);
                 VpWholeWrite.Release(ref transforms);
                 VpWholeWrite.Release(ref clips);
@@ -2180,24 +2334,30 @@ namespace Zantetsu.Rendering
             WriteArguments(commands, commandCount, objectToWorlds, singlePassInstanced, out Bounds worldBounds);
             if (instanceTotal > 0)
             {
-                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal, "VpIndexedIndirectDrawBatch.cs:2032");
-                InstanceGeneration++;
-
-                // No clips given is the ordinary display: every instance takes a record that clips nothing and
-                // moves nothing. Each record is written whole, count and all eight planes together, so a record
-                // that now carries fewer planes — or none — leaves no plane of an earlier upload in force.
-                if (_instanceClips == null)
+                try
                 {
-                    _instanceClips = new VpInstanceClip[InstanceCapacity];
+                    SendRecords(false, objectToWorlds, 0, (int)instanceTotal, "VpIndexedIndirectDrawBatch.cs:2032");
+
+                    // No clips given is the ordinary display: every instance takes a record that clips nothing and
+                    // moves nothing. Each record is written whole, count and all eight planes together, so a record
+                    // that now carries fewer planes — or none — leaves no plane of an earlier upload in force.
+                    if (_instanceClips == null)
+                    {
+                        _instanceClips = new VpInstanceClip[InstanceCapacity];
+                    }
+
+                    for (int i = 0; i < instanceTotal; i++)
+                    {
+                        _instanceClips[i] = clips == null ? VpInstanceClip.None : clips[i];
+                    }
+
+                    SendRecords(true, _instanceClips, 0, (int)instanceTotal, "VpIndexedIndirectDrawBatch.cs:2048");
+                }
+                finally
+                {
+                    SubmitWrites();
                 }
 
-                for (int i = 0; i < instanceTotal; i++)
-                {
-                    _instanceClips[i] = clips == null ? VpInstanceClip.None : clips[i];
-                }
-
-                _instanceClipBuffer.SetData(_instanceClips, 0, 0, (int)instanceTotal, "VpIndexedIndirectDrawBatch.cs:2048");
-                ClipGeneration++;
                 InstanceSetDataCalls += 2;
                 InstanceTransfers++;
                 InstanceElementsTransferred += instanceTotal;

@@ -335,6 +335,19 @@ namespace Zantetsu.Rendering
         // The Direct3D 12 library: the device's wave operations and the count draws recorded (absent in older ones).
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnIndirectCountInfo(ulong* output, int count);
+
+        // The Direct3D 12 library's own write into a buffer (DESIGN 4.5.8, D-261; absent in older ones).
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnUploadEventId();
+
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnUploadWrite(void* resource, ulong destinationOffset, void* source, uint bytes);
+
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern ulong ZvnUploadSeal();
+
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnUploadInfo(ulong* output, int count);
 #endif
 
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
@@ -458,6 +471,9 @@ namespace Zantetsu.Rendering
                         // The Direct3D 12 library's count draw (DESIGN 4.5.11); a library built before it has none.
                         try { s_indirectCountReady = ZvnIndirectCountReady() != 0; }
                         catch (EntryPointNotFoundException) { s_indirectCountReady = false; }
+                        // The library's own buffer write (D-261); a library built before it has none, and then every write is Unity's.
+                        try { s_uploadEventId = ZvnUploadEventId(); }
+                        catch (EntryPointNotFoundException) { s_uploadEventId = 0; }
 #endif
                         s_loaded = s_eventFunction != IntPtr.Zero;
                         if (!s_loaded)
@@ -675,6 +691,72 @@ namespace Zantetsu.Rendering
             {
                 return false;
             }
+#endif
+        }
+
+        private static int s_uploadEventId;
+
+        /// <summary>
+        /// The event of the library's own buffer write (DESIGN 4.5.8, D-261), issued with the number
+        /// <see cref="UploadSeal"/> gave as its data; 0 when the library is not loaded, is the Vulkan one, or was built
+        /// before the upload -- and then every write is Unity's. See <see cref="VpNativeUpload"/>.
+        /// </summary>
+        public static int UploadEventId => s_loaded ? s_uploadEventId : 0;
+
+        /// <summary>
+        /// Hands <paramref name="bytes"/> bytes at <paramref name="source"/> to the library, to be written
+        /// <paramref name="destinationOffset"/> bytes into the buffer whose native pointer is given. The bytes are
+        /// copied before this returns. False, nothing taken: no upload in this library, no device, or an empty write.
+        /// </summary>
+        public static bool UploadWrite(IntPtr nativeBuffer, long destinationOffset, void* source, long bytes)
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            return false;
+#else
+            if (UploadEventId == 0 || bytes <= 0 || bytes > uint.MaxValue || destinationOffset < 0) return false;
+            return ZvnUploadWrite((void*)nativeBuffer, (ulong)destinationOffset, source, (uint)bytes) != 0;
+#endif
+        }
+
+        /// <summary>Seals what was handed over since the last seal; its number for the upload event's data, or 0 when there was nothing.</summary>
+        public static ulong UploadSeal()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            return 0;
+#else
+            return UploadEventId == 0 ? 0 : ZvnUploadSeal();
+#endif
+        }
+
+        /// <summary>The library's account of its uploads (cumulative; the library outlives a reload of the managed side in the Editor).</summary>
+        public struct UploadInfo
+        {
+            public ulong events, batches, writes, bytes, writesLost, writesRefused, batchesPending, pages, pageBytes, pagesMade, pagesReleased;
+
+            public override string ToString()
+            {
+                return "events " + events + ", batches " + batches + ", writes " + writes + " (" + bytes + " bytes), lost " + writesLost
+                    + ", refused when handed over " + writesRefused + ", batches pending " + batchesPending
+                    + ", pages " + pages + " (" + pageBytes + " bytes; made " + pagesMade + ", released " + pagesReleased + ")";
+            }
+        }
+
+        private const int UploadInfoValues = 11;
+
+        /// <summary>False where the library has no upload; the values are then zeros.</summary>
+        public static bool TryReadUploadInfo(out UploadInfo info)
+        {
+            info = default;
+#if UNITY_ANDROID && !UNITY_EDITOR
+            return false;
+#else
+            if (UploadEventId == 0) return false;
+            ulong* values = stackalloc ulong[UploadInfoValues];
+            if (ZvnUploadInfo(values, UploadInfoValues) != UploadInfoValues) return false;
+            info.events = values[0]; info.batches = values[1]; info.writes = values[2]; info.bytes = values[3];
+            info.writesLost = values[4]; info.writesRefused = values[5]; info.batchesPending = values[6];
+            info.pages = values[7]; info.pageBytes = values[8]; info.pagesMade = values[9]; info.pagesReleased = values[10];
+            return true;
 #endif
         }
 

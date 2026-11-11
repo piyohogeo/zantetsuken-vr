@@ -18,6 +18,16 @@
 // Outputs are 0/1 and describe physical support and actual device enablement independently of ZvnIsAvailable.
 // Either output pointer may be null. Older libraries may omit this export; callers then use pixel clipping.
 
+// Optional Direct3D 12 exports, without a draw-contract version change (the upload, DESIGN 4.5.8; D-261):
+// int ZvnUploadEventId();
+// int ZvnUploadWrite(void* resource, uint64_t destinationOffset, const void* source, uint32_t bytes);
+// uint64_t ZvnUploadSeal();
+// int ZvnUploadInfo(uint64_t* out, int count);
+// The managed side's own write into a buffer Unity made, in place of GraphicsBuffer.SetData: ZvnUploadWrite copies
+// the bytes at once and returns 1 (0: nothing taken); ZvnUploadSeal numbers what was handed over since the last seal
+// (0: nothing); the upload event, issued with that number as its data pointer (a number, never dereferenced), writes
+// every sealed batch up to it. Older libraries omit these exports; callers then write through Unity's API.
+
 // What a shader stage binds, as Unity reported it when the Editor compiled the variant (VpNativeShaderBake).
 enum ZvnBindingKind
 {

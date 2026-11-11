@@ -28,6 +28,20 @@
 // buffer into the indirect-argument state as it asks the argument buffer, and that is all the order it needs: the
 // compute that wrote the count had it for unordered access, so the transition stands between the two. Nothing is
 // zeroed, copied or read back here. Any other mode of version 2 is the Vulkan plugin's and is refused.
+//
+// The upload (DESIGN 4.5.8, D-261): the managed side's own write into a buffer Unity made, in place of
+// GraphicsBuffer.SetData. Unity's contract is that a write through its APIs may change the buffer's native pointer, so
+// a pointer kept across such a write has to be asked again -- a call that waits for the rendering thread. A buffer
+// written here alone is never written through Unity's APIs, and its pointer stands. The main thread hands the bytes
+// over (ZvnUploadWrite copies them at once, into the plugin's own memory), seals what it handed over (ZvnUploadSeal
+// gives the batch a number) and issues the upload event with that number as its data, where SetData would have been
+// called: the event runs in the rendering thread's order as SetData's own write would, copies the bytes into an upload
+// page, asks the destination into the copy-destination state through Unity (RequestResourceState: Unity's later uses
+// add their own barriers) and records CopyBufferRegion into the command list Unity is recording. An event takes every
+// sealed batch up to its number, so a batch is never written before the place its event was issued at, and an event
+// that never ran is made up for by the next. A page is reused only when the frame fence of the frame that copied from
+// it has passed; a write that cannot be recorded (no command list, no page, outside the destination) is counted as
+// lost, never retried at another place in the order.
 
 #include <cstdarg>
 #include <cstdint>
@@ -57,6 +71,13 @@ namespace
     const int kDrawEventId = 0x5A560001;
     const int kSentinelEventId = 0x5A560002;
     const int kWarmPipelineEventId = 0x5A560003;
+    const int kUploadEventId = 0x5A560004;
+    const uint32_t kUploadPageBytes = 1024 * 1024;
+    const uint32_t kUploadPageGranularity = 64 * 1024;
+    const uint32_t kUploadMostBytes = 1u << 30;        // of one write: far above any buffer here, and keeps the sizes in 32 bits
+    const uint32_t kUploadPageIdleEvents = 256;        // upload events a free page may go unused before it is released
+    const size_t kUploadSpareBatches = 8;
+    const size_t kUploadSpareBatchBytes = 4 * 1024 * 1024;
     const uint32_t kDefaultRegions = 4;
     const uint32_t kDefaultRegionBytes = 256 * 1024;
     const uint32_t kDefaultRegionDescriptors = 1024;
@@ -190,6 +211,61 @@ namespace
     uint32_t s_waveLaneMin = 0, s_waveLaneMax = 0;
     uint64_t s_countDraws = 0, s_countDrawMostCommands = 0;
 
+    // ---- uploads: see the notes at the top ---------------------------------------------------------------------------
+
+    struct UploadWrite
+    {
+        ID3D12Resource* destination;   // a reference is held from the write to its event (or to its being dropped)
+        uint64_t destinationOffset;
+        uint32_t bytes;
+        uint32_t at;                   // where the bytes stand in the batch's own
+    };
+
+    struct UploadBatch
+    {
+        uint64_t sequence = 0;
+        std::vector<UploadWrite> writes;
+        std::vector<uint8_t> bytes;
+    };
+
+    struct UploadPage
+    {
+        ID3D12Resource* resource = nullptr;
+        uint8_t* cpu = nullptr;
+        uint32_t bytes = 0;
+        uint32_t used = 0;
+        uint64_t fence = 0;        // the frame fence value of the frame that copied from it; 0 = never used
+        uint32_t idleEvents = 0;   // upload events it was free through and not taken in
+
+        void Destroy()
+        {
+            if (resource != nullptr && cpu != nullptr)
+            {
+                resource->Unmap(0, nullptr);
+            }
+
+            cpu = nullptr;
+            Release(resource);
+        }
+    };
+
+    // The queue between the main thread (write, seal) and the rendering thread (the event). s_uploadMutex guards the
+    // queue alone and is never held across device work; where both are held, s_mutex is taken first. The main thread
+    // takes s_uploadMutex only, so it never waits for a draw event's recording.
+    std::mutex s_uploadMutex;
+    bool s_uploadsOpen = false;                   // the device is there to write to
+    UploadBatch* s_uploadFilling = nullptr;       // what the main thread handed over since the last seal
+    std::vector<UploadBatch*> s_uploadSealed;     // in the order sealed
+    std::vector<UploadBatch*> s_uploadSpare;
+    uint64_t s_uploadSequence = 0;
+    uint64_t s_uploadWritesRefused = 0;           // by ZvnUploadWrite: nothing was taken
+
+    // Under s_mutex: the rendering thread's side.
+    std::vector<UploadPage> s_uploadPages;
+    std::vector<UploadBatch*> s_uploadTaken;
+    uint64_t s_uploadEvents = 0, s_uploadBatches = 0, s_uploadWrites = 0, s_uploadBytes = 0, s_uploadWritesLost = 0;
+    uint64_t s_uploadPagesMade = 0, s_uploadPagesReleased = 0;
+
     static_assert(sizeof(ZvnDraw) == 240, "the extension of a version 2 draw follows the 240-byte ZvnDraw");
     static_assert(sizeof(ZvnDrawExtension) == 16, "ZvnDrawExtension");
     static_assert(sizeof(ZvnIndirectCount) == 32, "ZvnIndirectCount");
@@ -309,6 +385,38 @@ namespace
         s_lastError = line;
     }
 
+    // Everything handed over and not yet written is given up, its references released: the device is going, or the
+    // library is. Nothing is taken from here on until a device is there again.
+    void DropUploadsLocked()
+    {
+        std::lock_guard<std::mutex> lock(s_uploadMutex);
+        s_uploadsOpen = false;
+        if (s_uploadFilling != nullptr)
+        {
+            s_uploadSealed.push_back(s_uploadFilling);
+            s_uploadFilling = nullptr;
+        }
+
+        for (size_t i = 0; i < s_uploadSealed.size(); i++)
+        {
+            UploadBatch* batch = s_uploadSealed[i];
+            for (size_t w = 0; w < batch->writes.size(); w++)
+            {
+                batch->writes[w].destination->Release();
+            }
+
+            delete batch;
+        }
+
+        s_uploadSealed.clear();
+        for (size_t i = 0; i < s_uploadSpare.size(); i++)
+        {
+            delete s_uploadSpare[i];
+        }
+
+        s_uploadSpare.clear();
+    }
+
     void DestroyEverythingLocked()
     {
         for (size_t i = 0; i < s_pipelines.size(); i++)
@@ -318,6 +426,13 @@ namespace
 
         s_pipelines.clear();
         s_rings.Destroy();
+        DropUploadsLocked();
+        for (size_t i = 0; i < s_uploadPages.size(); i++)
+        {
+            s_uploadPages[i].Destroy();
+        }
+
+        s_uploadPages.clear();
     }
 
     void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType eventType)
@@ -371,6 +486,14 @@ namespace
             warm.ensureActiveRenderTextureIsBound = false;
             s_d3d12->ConfigureEvent(kWarmPipelineEventId, &warm);
 
+            // The upload event: copies into buffers, between resource states asked through Unity; no binding of the
+            // command list is changed and no target is needed.
+            UnityD3D12PluginEventConfig upload = {};
+            upload.graphicsQueueAccess = kUnityD3D12GraphicsQueueAccess_DontCare;
+            upload.flags = 0;
+            upload.ensureActiveRenderTextureIsBound = false;
+            s_d3d12->ConfigureEvent(kUploadEventId, &upload);
+
             D3D12_FEATURE_DATA_D3D12_OPTIONS1 options1 = {};
             if (SUCCEEDED(s_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &options1, sizeof(options1))))
             {
@@ -385,6 +508,10 @@ namespace
             }
 
             s_unavailable.clear();
+            {
+                std::lock_guard<std::mutex> uploads(s_uploadMutex);
+                s_uploadsOpen = true;
+            }
         }
         else if (eventType == kUnityGfxDeviceEventShutdown)
         {
@@ -971,10 +1098,190 @@ namespace
         Consume(draw, ZvnResult_Recorded);
     }
 
+    // ---- the upload event -------------------------------------------------------------------------------------------
+
+    // Room for a copy's source: in a page this frame already copies from, else in the smallest free page that holds
+    // it (the frame fence of its last use has passed), else in a page made for it. False when none could be made.
+    bool TakeUploadRoomLocked(uint32_t bytes, uint64_t frameFence, uint64_t completedFence, UploadPage*& page, uint32_t& at)
+    {
+        uint32_t needed = (bytes + 15u) & ~15u;
+        UploadPage* chosen = nullptr;
+        for (size_t i = 0; i < s_uploadPages.size(); i++)
+        {
+            UploadPage& candidate = s_uploadPages[i];
+            if (candidate.fence == frameFence && candidate.bytes - candidate.used >= needed)
+            {
+                chosen = &candidate;
+                break;
+            }
+        }
+
+        if (chosen == nullptr)
+        {
+            for (size_t i = 0; i < s_uploadPages.size(); i++)
+            {
+                UploadPage& candidate = s_uploadPages[i];
+                if (candidate.fence != frameFence && candidate.fence <= completedFence && candidate.bytes >= needed
+                    && (chosen == nullptr || candidate.bytes < chosen->bytes))
+                {
+                    chosen = &candidate;
+                }
+            }
+
+            if (chosen != nullptr)
+            {
+                chosen->fence = frameFence;
+                chosen->used = 0;
+            }
+        }
+
+        if (chosen == nullptr)
+        {
+            UploadPage made;
+            made.bytes = needed <= kUploadPageBytes ? kUploadPageBytes : (needed + kUploadPageGranularity - 1) / kUploadPageGranularity * kUploadPageGranularity;
+            D3D12_HEAP_PROPERTIES heap = {};
+            heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+            D3D12_RESOURCE_DESC description = {};
+            description.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            description.Width = made.bytes;
+            description.Height = 1;
+            description.DepthOrArraySize = 1;
+            description.MipLevels = 1;
+            description.SampleDesc.Count = 1;
+            description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            HRESULT result = s_device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&made.resource));
+            if (FAILED(result))
+            {
+                SetError("an upload page of %u bytes could not be made: 0x%08x", made.bytes, (unsigned)result);
+                return false;
+            }
+
+            made.resource->SetName(L"Zantetsu VP native upload");
+            void* mapped = nullptr;
+            D3D12_RANGE noRead = { 0, 0 };
+            result = made.resource->Map(0, &noRead, &mapped);
+            if (FAILED(result))
+            {
+                SetError("an upload page of %u bytes could not be mapped: 0x%08x", made.bytes, (unsigned)result);
+                Release(made.resource);
+                return false;
+            }
+
+            made.cpu = (uint8_t*)mapped;
+            made.fence = frameFence;
+            s_uploadPages.push_back(made);
+            s_uploadPagesMade++;
+            chosen = &s_uploadPages.back();
+        }
+
+        chosen->idleEvents = 0;
+        page = chosen;
+        at = chosen->used;
+        chosen->used += needed;
+        return true;
+    }
+
+    // Every sealed batch up to `upTo`, in the order sealed: each write copied into an upload page and from there into
+    // its destination, in the command list Unity is recording. What cannot be recorded is counted and dropped.
+    void RecordUploadsLocked(uint64_t upTo)
+    {
+        s_uploadEvents++;
+        s_uploadTaken.clear();
+        {
+            std::lock_guard<std::mutex> lock(s_uploadMutex);
+            size_t n = 0;
+            while (n < s_uploadSealed.size() && s_uploadSealed[n]->sequence <= upTo)
+            {
+                s_uploadTaken.push_back(s_uploadSealed[n++]);
+            }
+
+            s_uploadSealed.erase(s_uploadSealed.begin(), s_uploadSealed.begin() + n);
+        }
+
+        UnityGraphicsD3D12RecordingState recording = {};
+        ID3D12GraphicsCommandList* list = s_d3d12->CommandRecordingState(&recording) ? recording.commandList : nullptr;
+        ID3D12Fence* fence = s_d3d12->GetFrameFence();
+        uint64_t frameFence = s_d3d12->GetNextFrameFenceValue();
+        uint64_t completed = fence != nullptr ? fence->GetCompletedValue() : 0;
+        for (size_t b = 0; b < s_uploadTaken.size(); b++)
+        {
+            UploadBatch* batch = s_uploadTaken[b];
+            for (size_t w = 0; w < batch->writes.size(); w++)
+            {
+                const UploadWrite& write = batch->writes[w];
+                UploadPage* page = nullptr;
+                uint32_t at = 0;
+                if (list != nullptr && write.destinationOffset + write.bytes <= write.destination->GetDesc().Width
+                    && TakeUploadRoomLocked(write.bytes, frameFence, completed, page, at))
+                {
+                    memcpy(page->cpu + at, batch->bytes.data() + write.at, write.bytes);
+                    s_d3d12->RequestResourceState(write.destination, D3D12_RESOURCE_STATE_COPY_DEST);
+                    list->CopyBufferRegion(write.destination, write.destinationOffset, page->resource, at, write.bytes);
+                    s_uploadWrites++;
+                    s_uploadBytes += write.bytes;
+                }
+                else
+                {
+                    s_uploadWritesLost++;
+                }
+
+                write.destination->Release();
+            }
+
+            s_uploadBatches++;
+        }
+
+        // A free page not taken in this many events is released: the page a whole first write was given does not stay.
+        for (size_t i = 0; i < s_uploadPages.size();)
+        {
+            UploadPage& page = s_uploadPages[i];
+            if (page.fence != frameFence && page.fence <= completed && ++page.idleEvents >= kUploadPageIdleEvents)
+            {
+                page.Destroy();
+                s_uploadPages.erase(s_uploadPages.begin() + i);
+                s_uploadPagesReleased++;
+                continue;
+            }
+
+            i++;
+        }
+
+        std::lock_guard<std::mutex> lock(s_uploadMutex);
+        for (size_t b = 0; b < s_uploadTaken.size(); b++)
+        {
+            UploadBatch* batch = s_uploadTaken[b];
+            if (s_uploadSpare.size() < kUploadSpareBatches && batch->bytes.capacity() <= kUploadSpareBatchBytes)
+            {
+                batch->writes.clear();
+                batch->bytes.clear();
+                s_uploadSpare.push_back(batch);
+            }
+            else
+            {
+                delete batch;
+            }
+        }
+
+        s_uploadTaken.clear();
+    }
+
     void UNITY_INTERFACE_API OnDrawEvent(int eventId, void* data)
     {
-        if (data == nullptr || (eventId != kDrawEventId && eventId != kSentinelEventId && eventId != kWarmPipelineEventId))
+        if (data == nullptr || (eventId != kDrawEventId && eventId != kSentinelEventId && eventId != kWarmPipelineEventId && eventId != kUploadEventId))
         {
+            return;
+        }
+
+        if (eventId == kUploadEventId)
+        {
+            // The data is the number of the last batch sealed before the event was issued, not a block: nothing is
+            // read through it. With the device gone there is nothing to write to, and the queue was dropped with it.
+            TimedLock lock(s_drawLock);
+            if (AvailableLocked())
+            {
+                RecordUploadsLocked((uint64_t)(uintptr_t)data);
+            }
+
             return;
         }
 
@@ -1519,6 +1826,94 @@ extern "C"
         std::lock_guard<std::mutex> lock(s_mutex);
         uint64_t values[5] = { s_waveOps ? 1ull : 0ull, s_waveLaneMin, s_waveLaneMax, s_countDraws, s_countDrawMostCommands };
         int n = count < 5 ? count : 5;
+        for (int i = 0; i < n; i++) out[i] = values[i];
+        return n;
+    }
+
+    // The upload event's id (see the notes at the top), issued with the number ZvnUploadSeal gave as its data. The
+    // event function is the draw event's. A library built before the upload has no such export.
+    int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnUploadEventId()
+    {
+        return kUploadEventId;
+    }
+
+    // Main thread: `bytes` from `source` are to be written `destinationOffset` bytes into `resource` (an
+    // ID3D12Resource* of a buffer, as GraphicsBuffer.GetNativeBufferPtr gives it). The bytes are copied before this
+    // returns; a reference to the resource is held until the write's event has run. Returns 1, or 0 having taken
+    // nothing: no device, a null or empty write, or one too large.
+    int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnUploadWrite(void* resource, uint64_t destinationOffset, const void* source, uint32_t bytes)
+    {
+        std::lock_guard<std::mutex> lock(s_uploadMutex);
+        if (!s_uploadsOpen || resource == nullptr || source == nullptr || bytes == 0 || bytes > kUploadMostBytes
+            || (s_uploadFilling != nullptr && s_uploadFilling->bytes.size() > UINT32_MAX - bytes))
+        {
+            s_uploadWritesRefused++;
+            return 0;
+        }
+
+        if (s_uploadFilling == nullptr)
+        {
+            if (!s_uploadSpare.empty())
+            {
+                s_uploadFilling = s_uploadSpare.back();
+                s_uploadSpare.pop_back();
+            }
+            else
+            {
+                s_uploadFilling = new UploadBatch();
+            }
+        }
+
+        UploadWrite write = {};
+        write.destination = (ID3D12Resource*)resource;
+        write.destinationOffset = destinationOffset;
+        write.bytes = bytes;
+        write.at = (uint32_t)s_uploadFilling->bytes.size();
+        const uint8_t* from = (const uint8_t*)source;
+        s_uploadFilling->bytes.insert(s_uploadFilling->bytes.end(), from, from + bytes);
+        write.destination->AddRef();
+        s_uploadFilling->writes.push_back(write);
+        return 1;
+    }
+
+    // Main thread: seals the writes handed over since the last seal as one batch and returns its number (from 1, in
+    // order), to be the data of the upload event issued next; 0 when nothing was handed over, and then no event is
+    // to be issued.
+    uint64_t UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnUploadSeal()
+    {
+        std::lock_guard<std::mutex> lock(s_uploadMutex);
+        if (s_uploadFilling == nullptr)
+        {
+            return 0;
+        }
+
+        s_uploadFilling->sequence = ++s_uploadSequence;
+        s_uploadSealed.push_back(s_uploadFilling);
+        s_uploadFilling = nullptr;
+        return s_uploadSequence;
+    }
+
+    // For the managed side's records. Fills up to `count` of: [0] upload events run, [1] batches written, [2] writes
+    // recorded (CopyBufferRegion calls), [3] their bytes, [4] writes lost at their event (no command list, no page, or
+    // outside the destination), [5] writes refused when handed over, [6] batches sealed and not yet written,
+    // [7] upload pages held now, [8] their bytes, [9] pages made in all, [10] pages released. Returns how many were
+    // filled.
+    int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnUploadInfo(uint64_t* out, int count)
+    {
+        if (out == nullptr || count <= 0) return 0;
+        std::lock_guard<std::mutex> lock(s_mutex);
+        uint64_t pageBytes = 0;
+        for (size_t i = 0; i < s_uploadPages.size(); i++) pageBytes += s_uploadPages[i].bytes;
+        uint64_t refused, pending;
+        {
+            std::lock_guard<std::mutex> uploads(s_uploadMutex);
+            refused = s_uploadWritesRefused;
+            pending = s_uploadSealed.size();
+        }
+
+        uint64_t values[11] = { s_uploadEvents, s_uploadBatches, s_uploadWrites, s_uploadBytes, s_uploadWritesLost, refused, pending,
+            s_uploadPages.size(), pageBytes, s_uploadPagesMade, s_uploadPagesReleased };
+        int n = count < 11 ? count : 11;
         for (int i = 0; i < n; i++) out[i] = values[i];
         return n;
     }

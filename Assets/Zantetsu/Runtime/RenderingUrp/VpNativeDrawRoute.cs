@@ -344,7 +344,7 @@ namespace Zantetsu.Rendering.Urp
         private readonly List<CameraPasses> _cameras = new List<CameraPasses>(2);
         private readonly Dictionary<PipelineKey, PipelineEntry> _pipelines = new Dictionary<PipelineKey, PipelineEntry>();
         private readonly int[] _gpuOffsets = new int[8];
-        private readonly VpNativePointerCache _pointers = new VpNativePointerCache();
+        private readonly VpNativePointerCache _pointers = new VpNativePointerCache { KeepAcrossWrites = VpNativeDrawSetup.KeepPointersAcrossWrites };
         private int _pointersSweptFrame = -1;
         private VpNativeDrawData _ringAfterDispose;
         private readonly Vector4[] _ambient = new Vector4[7];
@@ -1716,8 +1716,18 @@ namespace Zantetsu.Rendering.Urp
                 .Append('/').Append(_shadowSliceCompactions[2]).Append('/').Append(_shadowSliceCompactions[3]).Append(')')
                 .Append(", warm events ").Append(PrewarmRecorded).Append(" completed ").Append(PrewarmCompleted)
                 .Append(", warm compute dispatches: constants ").Append(PrewarmConstantDispatches).Append(" cull ").Append(PrewarmCullDispatches)
-                .Append(", native pointers asked ").Append(_pointers.Acquisitions).Append(" / kept ").Append(_pointers.Hits)
-                .Append(", issues after dispose ").Append(IssuesAfterDispose).Append(", buffers retired through the route ").Append(BuffersRetired)
+                .Append(", native pointers asked ").Append(_pointers.Acquisitions).Append(" / kept ").Append(_pointers.Hits);
+            if (_pointers.KeepAcrossWrites)
+            {
+                // The measurement's switch: said with what it risked -- the kept pointers asked once more, here.
+                int changed = _pointers.CountChangedBuffers(out int asked);
+                text.Append(" (MEASUREMENT ").Append(VpNativeDrawSetup.KeepPointersArgument).Append(": kept across CPU writes ").Append(_pointers.KeptAcrossWrites)
+                    .Append(", kept buffers asked again now ").Append(asked).Append(", changed ").Append(changed).Append(')');
+            }
+
+            // The transforms' and clips' writes by the plugin (D-261), process-wide: what keeps the pointers from being asked again.
+            text.Append(", ").Append(VpNativeUpload.Describe());
+            text.Append(", issues after dispose ").Append(IssuesAfterDispose).Append(", buffers retired through the route ").Append(BuffersRetired)
                 .Append(", events never run ").Append(EventsNeverRan).Append(", results lost to reuse ").Append(ResultsLost).Append("; ").Append(VpNativeDrawRelease.Describe())
                 .Append(", last frame issues ").Append(LastFrameIssues)
                 .Append(", indirect-count issues ").Append(IndirectCountIssues).Append(" (compactions ").Append(IndirectCountCompactions)

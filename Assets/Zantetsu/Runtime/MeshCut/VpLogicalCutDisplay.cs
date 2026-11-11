@@ -4936,6 +4936,9 @@ namespace Zantetsu.MeshCut
         /// <summary>Whether the batch's selection writes the plugin's argument entries, so that only <see cref="NativeDrawSink"/> can draw it.</summary>
         public bool NativeArguments => _batch != null && _batch.NativeArguments;
 
+        /// <summary>Whether the batch's transforms and clips are written by the plugin, not through Unity's API (<see cref="VpIndexedIndirectDrawBatch.PluginWrites"/>).</summary>
+        public bool PluginWrites => _batch != null && _batch.PluginWrites;
+
         /// <summary>Whether the body is drawn through the GPU selection of DESIGN 4.5.7. Fixed when the display is made.</summary>
         public bool CullsOnGpu => _cull != null;
 

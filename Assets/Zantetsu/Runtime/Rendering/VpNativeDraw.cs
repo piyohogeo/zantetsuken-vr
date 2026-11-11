@@ -60,6 +60,33 @@ namespace Zantetsu.Rendering
         public const string UnityApiArgument = "-zantetsuVp3cUnityApi";
 
         /// <summary>
+        /// The Player argument of a MEASUREMENT (2026-11-10), never of a product launch: the route keeps a buffer's
+        /// native pointer across the owner's CPU writes instead of asking Unity again (<see cref="VpNativePointerCache.KeepAcrossWrites"/>).
+        /// It exists to measure what asking again costs the main thread (the call synchronises with the rendering
+        /// thread). Unity's contract is that a write through its APIs changes the native pointer; that it stayed the
+        /// same on the devices tried is an observation, so a launch with this argument may bind a stale buffer. The
+        /// route says at its end how many kept pointers had changed.
+        /// </summary>
+        public const string KeepPointersArgument = "-zantetsuVpNativeKeepPointers";
+
+        private static bool? s_keepPointers;
+
+        /// <summary>Whether <see cref="KeepPointersArgument"/> was given; a caller (a test) may set it before a route is made.</summary>
+        public static bool KeepPointersAcrossWrites
+        {
+            get
+            {
+                if (!s_keepPointers.HasValue)
+                {
+                    s_keepPointers = Array.IndexOf(Environment.GetCommandLineArgs(), KeepPointersArgument) >= 0;
+                }
+
+                return s_keepPointers.Value;
+            }
+            set => s_keepPointers = value;
+        }
+
+        /// <summary>
         /// Unity-API VP3C groups commands in one indirect call when true; false issues one call per command.
         /// A host sets this before constructing a world. Native plugin draws have their own capability policy.
         /// </summary>
@@ -396,6 +423,16 @@ namespace Zantetsu.Rendering
 
         public long Hits { get; private set; }
 
+        /// <summary>
+        /// A measurement's switch (<see cref="VpNativeDrawSetup.KeepPointersArgument"/>), off in every product launch:
+        /// a buffer's pointer is kept across its owner's CPU writes -- the generation is not compared. Against Unity's
+        /// contract (see the class remarks); <see cref="CountChangedBuffers"/> says afterwards whether it held.
+        /// </summary>
+        public bool KeepAcrossWrites { get; set; }
+
+        /// <summary>How many times a kept pointer answered although its owner had written since (only with <see cref="KeepAcrossWrites"/>).</summary>
+        public long KeptAcrossWrites { get; private set; }
+
         /// <summary>How many entries are kept.</summary>
         public int Count => _buffers.Count + _textures.Count;
 
@@ -409,7 +446,8 @@ namespace Zantetsu.Rendering
         /// A buffer with its owner's CPU-write generation: Unity's contract is that writing a buffer's data through
         /// its APIs may change the native buffer ("Call GetNativeBufferPtr to get the new native pointer"), so the
         /// pointer is kept only while the generation the owner raises at each such write is the one it was taken at.
-        /// A write by the GPU (a compute pass) raises nothing: it writes into the buffer that is.
+        /// A write by the GPU (a compute pass) raises nothing: it writes into the buffer that is. Neither does a write
+        /// by the plugin (<see cref="VpNativeUpload"/>; a batch's transforms and clips): no Unity API wrote.
         /// </summary>
         public IntPtr Buffer(GraphicsBuffer buffer, uint generation)
         {
@@ -418,8 +456,10 @@ namespace Zantetsu.Rendering
                 throw new ArgumentException("a valid buffer", nameof(buffer));
             }
 
-            if (_buffers.TryGetValue(buffer, out BufferEntry entry) && entry.count == buffer.count && entry.stride == buffer.stride && entry.generation == generation)
+            if (_buffers.TryGetValue(buffer, out BufferEntry entry) && entry.count == buffer.count && entry.stride == buffer.stride
+                && (entry.generation == generation || KeepAcrossWrites))
             {
+                if (entry.generation != generation) KeptAcrossWrites++;
                 Hits++;
                 return entry.pointer;
             }
@@ -506,6 +546,25 @@ namespace Zantetsu.Rendering
             entry.depthRenderBuffer = texture.depthBuffer.GetNativeRenderBufferPtr();
             Store(texture, entry);
             return entry.depthRenderBuffer;
+        }
+
+        /// <summary>
+        /// Asks Unity for the pointer of every live buffer kept and counts those that are no longer the kept one. For
+        /// the end of a measurement with <see cref="KeepAcrossWrites"/>: each ask may synchronise with the rendering
+        /// thread, so it is not for a frame.
+        /// </summary>
+        public int CountChangedBuffers(out int asked)
+        {
+            asked = 0;
+            int changed = 0;
+            foreach (KeyValuePair<GraphicsBuffer, BufferEntry> pair in _buffers)
+            {
+                if (pair.Key == null || !pair.Key.IsValid()) continue;
+                asked++;
+                if (pair.Key.GetNativeBufferPtr() != pair.Value.pointer) changed++;
+            }
+
+            return changed;
         }
 
         /// <summary>Forgets a texture's pointers: for an owner that changed its native texture in a way Unity does not show (Reinitialize).</summary>

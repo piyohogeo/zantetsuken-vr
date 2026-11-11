@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using NUnit.Framework;
+using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Plugin = Zantetsu.Rendering.VpNativeDrawPlugin;
@@ -1101,6 +1102,353 @@ namespace Zantetsu.Rendering.Tests
             cache.Invalidate(first);
             cache.Buffer(first);
             Assert.That(cache.Acquisitions, Is.EqualTo(6), "an invalidated one is asked again");
+        }
+
+        [Test]
+        public void PointerCache_WithTheMeasurementSwitch_KeepsABufferAcrossAWrite_AndCountsWhatChanged()
+        {
+            // The measurement's switch (-zantetsuVpNativeKeepPointers): the generation is not compared, the kept pointer
+            // answers, and the count afterwards says whether Unity had changed any of them on this device.
+            var cache = new VpNativePointerCache { KeepAcrossWrites = true };
+            GraphicsBuffer buffer = Track(new GraphicsBuffer(GraphicsBuffer.Target.Structured, 8, 16));
+            IntPtr pointer = cache.Buffer(buffer, 1);
+            buffer.SetData(new Vector4[8]);
+            Assert.That(cache.Buffer(buffer, 2), Is.EqualTo(pointer), "kept across the write");
+            Assert.That(cache.Acquisitions, Is.EqualTo(1), "not asked again");
+            Assert.That(cache.KeptAcrossWrites, Is.EqualTo(1));
+            Assert.That(cache.Buffer(buffer, 2), Is.EqualTo(pointer));
+            Assert.That(cache.KeptAcrossWrites, Is.EqualTo(2), "the entry keeps the generation it was taken at");
+            int changed = cache.CountChangedBuffers(out int asked);
+            Assert.That(asked, Is.EqualTo(1));
+            Assert.That(changed, Is.EqualTo(buffer.GetNativeBufferPtr() == pointer ? 0 : 1), "what Unity did to the pointer on this device");
+
+            // Off (every product launch): the write is another generation, asked again.
+            var strict = new VpNativePointerCache();
+            strict.Buffer(buffer, 1);
+            strict.Buffer(buffer, 2);
+            Assert.That(strict.Acquisitions, Is.EqualTo(2));
+            Assert.That(strict.KeptAcrossWrites, Is.EqualTo(0));
+        }
+
+        // ----- the plugin's own write into a buffer (DESIGN 4.5.8, D-261) -------------------------------------------
+
+        [Test]
+        public void Upload_IsAskedForUnlessTheLaunchKeepsUnitysWrites_AndIsReadyOnlyWithTheLibrary()
+        {
+            Assert.That(VpNativeUpload.UnityUploadsArgument, Is.EqualTo("-zantetsuVpNativeUnityUploads"));
+            Assert.That(VpNativeUpload.ReadRequest(null), Is.True);
+            Assert.That(VpNativeUpload.ReadRequest(new[] { "player", VpNativeDrawSetup.Argument }), Is.True, "the plugin's route takes the plugin's writes");
+            Assert.That(VpNativeUpload.ReadRequest(new[] { "player", VpNativeUpload.UnityUploadsArgument }), Is.False, "the way back");
+
+            bool loaded = Plugin.TryLoad(out _);
+            bool asked = VpNativeUpload.Asked;
+            try
+            {
+                VpNativeUpload.Asked = true;
+                Assert.That(VpNativeUpload.Ready, Is.EqualTo(loaded && Plugin.UploadEventId != 0), "ready where the loaded library has the upload, nowhere else");
+                if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D12)
+                {
+                    Assert.That(VpNativeUpload.Ready, Is.True, "the library in the project has the upload");
+                }
+
+                VpNativeUpload.Asked = false;
+                Assert.That(VpNativeUpload.Ready, Is.False, "not asked for: never ready");
+            }
+            finally
+            {
+                VpNativeUpload.Asked = asked;
+            }
+        }
+
+        // What the plugin's upload tests need: a Direct3D 12 Editor (-force-d3d12; Tools/Run-UnityEditModeTests.ps1
+        // -Direct3D12) with the library loaded. Elsewhere there is no upload to test and the case is ignored, never
+        // passed: a run that did not write through the plugin does not say it did.
+        private static bool UploadIsHere()
+        {
+            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D12)
+            {
+                Assert.Ignore("device " + SystemInfo.graphicsDeviceType + ": the plugin's upload is on Direct3D 12 only (run with -force-d3d12)");
+            }
+
+            Assert.That(Plugin.TryLoad(out string failure), Is.True, failure);
+            Assert.That(Plugin.UploadEventId, Is.Not.Zero, "the library in the project has the upload");
+            return true;
+        }
+
+        [Test]
+        public unsafe void Upload_WritesWhatUnityThenReads_InTheOrderSubmitted_AndThePointerStands()
+        {
+            if (!UploadIsHere()) return;
+            GraphicsBuffer buffer = Track(new GraphicsBuffer(GraphicsBuffer.Target.Structured, 64, 16));
+            IntPtr native = buffer.GetNativeBufferPtr();
+            Assert.That(Plugin.TryReadUploadInfo(out Plugin.UploadInfo before), Is.True);
+            long eventsBefore = VpNativeUpload.Events;
+
+            var whole = new Vector4[64];
+            for (int i = 0; i < whole.Length; i++) whole[i] = new Vector4(i, 1f, 2f, 3f);
+            var part = new Vector4[8];
+            for (int i = 0; i < part.Length; i++) part[i] = new Vector4(100 + i, -1f, -2f, -3f);
+            fixed (Vector4* w = whole)
+            fixed (Vector4* p = part)
+            {
+                // A whole write, put in order; then two writes of one batch over parts of it.
+                Assert.That(VpNativeUpload.Write(native, 0, w, 64 * 16), Is.True);
+                VpNativeUpload.Submit();
+                Assert.That(VpNativeUpload.Write(native, 20 * 16, p, 8 * 16), Is.True);
+                Assert.That(VpNativeUpload.Write(native, 40 * 16, p + 4, 4 * 16), Is.True);
+                VpNativeUpload.Submit();
+            }
+
+            var expected = (Vector4[])whole.Clone();
+            Array.Copy(part, 0, expected, 20, 8);
+            Array.Copy(part, 4, expected, 40, 4);
+            var back = new Vector4[64];
+            buffer.GetData(back);
+            Assert.That(back, Is.EqualTo(expected), "Unity reads what the plugin wrote, the later batch over the earlier");
+            Assert.That(buffer.GetNativeBufferPtr(), Is.EqualTo(native), "no Unity API wrote the buffer: its native pointer stands");
+
+            Assert.That(Plugin.TryReadUploadInfo(out Plugin.UploadInfo after), Is.True);
+            TestContext.WriteLine(VpNativeUpload.Describe());
+            Assert.That(after.writes - before.writes, Is.EqualTo(3ul));
+            Assert.That(after.bytes - before.bytes, Is.EqualTo((ulong)((64 + 8 + 4) * 16)));
+            Assert.That(after.batches - before.batches, Is.EqualTo(2ul));
+            Assert.That(after.events - before.events, Is.EqualTo(2ul), "an event a submit");
+            Assert.That(after.writesLost, Is.EqualTo(before.writesLost));
+            Assert.That(after.writesRefused, Is.EqualTo(before.writesRefused));
+            Assert.That(after.batchesPending, Is.Zero, "everything sealed was written by its own event");
+            Assert.That(VpNativeUpload.Events - eventsBefore, Is.EqualTo(2));
+
+            // Nothing handed over: no event.
+            VpNativeUpload.Submit();
+            Assert.That(VpNativeUpload.Events - eventsBefore, Is.EqualTo(2));
+        }
+
+        [Test]
+        public unsafe void Upload_OutsideTheBuffer_IsLostAndCounted_AndAnEmptyOneIsNotTaken()
+        {
+            if (!UploadIsHere()) return;
+            GraphicsBuffer buffer = Track(new GraphicsBuffer(GraphicsBuffer.Target.Structured, 16, 16));
+            IntPtr native = buffer.GetNativeBufferPtr();
+            var held = new Vector4[16];
+            for (int i = 0; i < held.Length; i++) held[i] = new Vector4(i, i, i, i);
+            var other = new Vector4[8];
+            for (int i = 0; i < other.Length; i++) other[i] = new Vector4(-1f, -1f, -1f, -1f);
+            Assert.That(Plugin.TryReadUploadInfo(out Plugin.UploadInfo before), Is.True);
+            long refusedBefore = VpNativeUpload.Refused;
+            fixed (Vector4* h = held)
+            fixed (Vector4* o = other)
+            {
+                Assert.That(VpNativeUpload.Write(native, 0, h, 16 * 16), Is.True);
+
+                // Eight records from the twelfth on do not fit sixteen: the plugin writes none of them.
+                Assert.That(VpNativeUpload.Write(native, 12 * 16, o, 8 * 16), Is.True, "taken: where it would stand is judged against the buffer itself, at the event");
+                VpNativeUpload.Submit();
+
+                Assert.That(VpNativeUpload.Write(native, 0, o, 0), Is.False, "nothing to write");
+                Assert.That(VpNativeUpload.Write(IntPtr.Zero, 0, o, 16), Is.False, "no buffer");
+            }
+
+            var back = new Vector4[16];
+            buffer.GetData(back);
+            Assert.That(back, Is.EqualTo(held), "the write that fits stands whole; the one that does not wrote nothing");
+            Assert.That(Plugin.TryReadUploadInfo(out Plugin.UploadInfo after), Is.True);
+            Assert.That(after.writesLost - before.writesLost, Is.EqualTo(1ul));
+            Assert.That(after.writes - before.writes, Is.EqualTo(1ul));
+            Assert.That(VpNativeUpload.Refused - refusedBefore, Is.EqualTo(2));
+            VpNativeUpload.Submit();
+            Assert.That(Plugin.TryReadUploadInfo(out Plugin.UploadInfo last), Is.True);
+            Assert.That(last.events, Is.EqualTo(after.events), "the refused writes left nothing to submit");
+        }
+
+        private static VpIndirectCommand[] UploadCommands()
+        {
+            var box = new Bounds(Vector3.zero, Vector3.one);
+            return new[]
+            {
+                new VpIndirectCommand(new VpGeometryRange(0, 3, 0, 3), box, 3),
+                new VpIndirectCommand(new VpGeometryRange(0, 3, 3, 3), box, 4),
+            };
+        }
+
+        [Test]
+        public void Batch_ThePluginDraws_WritesItsTransformsAndClipsByThePlugin_AndRaisesNoGeneration()
+        {
+            if (!UploadIsHere()) return;
+            bool asked = VpNativeUpload.Asked;
+            var transforms = new Matrix4x4[7];
+            var clips = new VpInstanceClip[7];
+            for (int i = 0; i < 7; i++)
+            {
+                transforms[i] = Matrix4x4.Translate(new Vector3(i, 2 * i, -i));
+                clips[i] = (i & 1) == 0 ? VpInstanceClip.None : VpInstanceClip.Keep(new Vector4(0f, 1f, 0f, -i), 1f);
+            }
+
+            var slotCommands = new NativeArray<VpIndirectCommand>(UploadCommands(), Allocator.Temp);
+            var starts = new NativeArray<int>(new[] { 0, 3 }, Allocator.Temp);
+            var slotTransforms = new NativeArray<Matrix4x4>(transforms, Allocator.Temp);
+            var slotClips = new NativeArray<VpInstanceClip>(clips, Allocator.Temp);
+            try
+            {
+                VpNativeUpload.Asked = true;
+                Assert.That(VpGpuCullSetup.TryCreate(2, true, out VpGpuCullSetup native, out string failure), Is.True, failure);
+
+                // The array upload, after the whole write a display makes first.
+                using (var batch = new VpIndexedIndirectDrawBatch(2, 7, null, native))
+                {
+                    Assert.That(batch.PluginWrites, Is.True, "a batch the plugin draws, made where the upload is ready");
+                    IntPtr instancePointer = batch.InstanceBuffer.GetNativeBufferPtr(), clipPointer = batch.InstanceClipBuffer.GetNativeBufferPtr();
+                    batch.WriteWholeOnce();
+                    var zeros = new Matrix4x4[7];
+                    batch.InstanceBuffer.GetData(zeros);
+                    Assert.That(zeros, Is.EqualTo(new Matrix4x4[7]), "the whole write stands");
+                    Assert.That(batch.TryUpload(UploadCommands(), transforms, clips, false), Is.True);
+                    var sent = new Matrix4x4[7];
+                    batch.InstanceBuffer.GetData(sent);
+                    Assert.That(sent, Is.EqualTo(transforms));
+                    var sentClips = new VpInstanceClip[7];
+                    batch.InstanceClipBuffer.GetData(sentClips);
+                    Assert.That(sentClips, Is.EqualTo(clips));
+                    Assert.That(new[] { batch.InstanceGeneration, batch.ClipGeneration }, Is.EqualTo(new[] { 0u, 0u }), "Unity's API wrote neither: no generation to raise");
+                    Assert.That(batch.PluginWriteCalls, Is.EqualTo(4), "the whole write's two and the upload's two");
+                    Assert.That(batch.PluginWritesNotTaken, Is.Zero);
+                    Assert.That(batch.InstanceBuffer.GetNativeBufferPtr(), Is.EqualTo(instancePointer));
+                    Assert.That(batch.InstanceClipBuffer.GetNativeBufferPtr(), Is.EqualTo(clipPointer));
+                    Assert.That(batch.CullCommandGeneration, Is.GreaterThan(0u), "the commands are still Unity's write, and say so");
+                }
+
+                // The slot upload: everything at first, then one range -- and nothing outside it.
+                using (var batch = new VpIndexedIndirectDrawBatch(2, 7, null, native))
+                {
+                    var ranges = new VpChangedRanges(4, 0);
+                    ranges.Add(0, 2);
+                    Assert.That(batch.TryUploadSlots(slotCommands, starts, 2, slotTransforms, slotClips, 7, false, ranges, 0, 7), Is.True);
+                    var sent = new Matrix4x4[7];
+                    batch.InstanceBuffer.GetData(sent);
+                    Assert.That(sent, Is.EqualTo(transforms), "the first upload sends every record");
+
+                    for (int i = 0; i < 7; i++) slotTransforms[i] = Matrix4x4.Translate(new Vector3(50 + i, 0f, 0f));
+                    slotClips[3] = VpInstanceClip.Keep(new Vector4(1f, 0f, 0f, 9f), -1f);
+                    Assert.That(batch.TryUploadSlots(slotCommands, starts, 2, slotTransforms, slotClips, 7, false, new VpChangedRanges(4, 0), 2, 5), Is.True);
+                    var expected = (Matrix4x4[])transforms.Clone();
+                    for (int i = 2; i < 5; i++) expected[i] = slotTransforms[i];
+                    batch.InstanceBuffer.GetData(sent);
+                    Assert.That(sent, Is.EqualTo(expected), "the range alone: what stands outside it is what was sent before");
+                    var sentClips = new VpInstanceClip[7];
+                    batch.InstanceClipBuffer.GetData(sentClips);
+                    var expectedClips = (VpInstanceClip[])clips.Clone();
+                    expectedClips[3] = slotClips[3];
+                    Assert.That(sentClips, Is.EqualTo(expectedClips));
+                    Assert.That(new[] { batch.InstanceGeneration, batch.ClipGeneration }, Is.EqualTo(new[] { 0u, 0u }));
+                    Assert.That(batch.PluginWriteCalls, Is.EqualTo(4));
+                    Assert.That(batch.PluginWritesNotTaken, Is.Zero);
+                }
+
+                // The way back: asked not to, the same batch writes through Unity and raises its generations.
+                VpNativeUpload.Asked = false;
+                using (var batch = new VpIndexedIndirectDrawBatch(2, 7, null, native))
+                {
+                    Assert.That(batch.PluginWrites, Is.False);
+                    Assert.That(batch.TryUpload(UploadCommands(), transforms, clips, false), Is.True);
+                    var sent = new Matrix4x4[7];
+                    batch.InstanceBuffer.GetData(sent);
+                    Assert.That(sent, Is.EqualTo(transforms));
+                    Assert.That(new[] { batch.InstanceGeneration, batch.ClipGeneration }, Is.EqualTo(new[] { 1u, 1u }));
+                    Assert.That(batch.PluginWriteCalls, Is.Zero);
+                }
+            }
+            finally
+            {
+                VpNativeUpload.Asked = asked;
+                slotCommands.Dispose();
+                starts.Dispose();
+                slotTransforms.Dispose();
+                slotClips.Dispose();
+            }
+        }
+
+        [Test]
+        public void Batch_AWriteThePluginDidNotTake_IsUnitys_AndThatBuffersPointerIsAskedAgain()
+        {
+            if (!UploadIsHere()) return;
+            bool asked = VpNativeUpload.Asked;
+            try
+            {
+                VpNativeUpload.Asked = true;
+                Assert.That(VpGpuCullSetup.TryCreate(2, true, out VpGpuCullSetup native, out string failure), Is.True, failure);
+                using (var batch = new VpIndexedIndirectDrawBatch(2, 7, null, native))
+                {
+                    var transforms = new Matrix4x4[7];
+                    var sent = new Matrix4x4[7];
+                    for (int i = 0; i < 7; i++) transforms[i] = Matrix4x4.Translate(new Vector3(i, 0f, 0f));
+                    Assert.That(batch.TryUpload(UploadCommands(), transforms, null, false), Is.True);
+                    VpUploadMeter.SetEnabledForTest(true);
+                    Assert.That(batch.TryUpload(UploadCommands(), transforms, null, false), Is.True);
+                    long meteredCalls = VpUploadMeter.TotalCalls, meteredBytes = VpUploadMeter.TotalBytes;
+                    Assert.That(meteredCalls, Is.GreaterThanOrEqualTo(2), "the transforms and the clips at least");
+                    Assert.That(batch.PluginPointersAsked, Is.EqualTo(2), "each buffer's pointer once, and kept");
+
+                    // The plugin does not take the transforms' write: Unity's API writes them, which may change the
+                    // native buffer, so the pointer kept for them is not to be written through again.
+                    for (int i = 0; i < 7; i++) transforms[i] = Matrix4x4.Translate(new Vector3(i, 10f, 0f));
+                    VpNativeUpload.RefuseNext = 1;
+                    Assert.That(batch.TryUpload(UploadCommands(), transforms, null, false), Is.True);
+                    Assert.That(VpNativeUpload.RefuseNext, Is.Zero);
+                    Assert.That(batch.PluginWritesNotTaken, Is.EqualTo(1));
+                    Assert.That(new[] { VpUploadMeter.TotalCalls, VpUploadMeter.TotalBytes }, Is.EqualTo(new[] { 2 * meteredCalls, 2 * meteredBytes }),
+                        "the meter counts the same upload the same, whichever way the transforms were written");
+                    Assert.That(new[] { batch.InstanceGeneration, batch.ClipGeneration }, Is.EqualTo(new[] { 1u, 0u }), "the transforms were Unity's write; the clips the plugin's");
+                    batch.InstanceBuffer.GetData(sent);
+                    Assert.That(sent, Is.EqualTo(transforms), "the write stands, by Unity");
+                    Assert.That(batch.PluginPointersAsked, Is.EqualTo(2), "nothing asked before the plugin writes again");
+
+                    // The plugin writes again: the transforms' pointer is asked anew, the clips' stands.
+                    for (int i = 0; i < 7; i++) transforms[i] = Matrix4x4.Translate(new Vector3(i, 20f, 0f));
+                    Assert.That(batch.TryUpload(UploadCommands(), transforms, null, false), Is.True);
+                    Assert.That(batch.PluginPointersAsked, Is.EqualTo(3), "the buffer Unity wrote, asked again; the other kept");
+                    batch.InstanceBuffer.GetData(sent);
+                    Assert.That(sent, Is.EqualTo(transforms), "the plugin's write reaches the buffer as it is now");
+                    Assert.That(batch.TryUpload(UploadCommands(), transforms, null, false), Is.True);
+                    Assert.That(batch.PluginPointersAsked, Is.EqualTo(3), "and kept again");
+                    Assert.That(new[] { batch.InstanceGeneration, batch.ClipGeneration }, Is.EqualTo(new[] { 1u, 0u }));
+                    Assert.That(batch.PluginWritesNotTaken, Is.EqualTo(1));
+                }
+            }
+            finally
+            {
+                VpUploadMeter.SetEnabledForTest(false);
+                VpNativeUpload.RefuseNext = 0;
+                VpNativeUpload.Asked = asked;
+            }
+        }
+
+        [Test]
+        public void Batch_WithoutThePluginsUpload_WritesThroughUnity_AndRaisesItsGenerations()
+        {
+            // Any device: with the upload not asked for (or not there), a batch the plugin draws is written as it always
+            // was, and each write of the transforms and the clips is a generation.
+            bool asked = VpNativeUpload.Asked;
+            try
+            {
+                VpNativeUpload.Asked = false;
+                Assert.That(VpGpuCullSetup.TryCreate(2, true, out VpGpuCullSetup native, out string failure), Is.True, failure);
+                using (var batch = new VpIndexedIndirectDrawBatch(2, 7, null, native))
+                {
+                    Assert.That(batch.PluginWrites, Is.False);
+                    var transforms = new Matrix4x4[7];
+                    for (int i = 0; i < 7; i++) transforms[i] = Matrix4x4.Translate(new Vector3(i, 0f, 0f));
+                    Assert.That(batch.TryUpload(UploadCommands(), transforms, null, false), Is.True);
+                    Assert.That(batch.TryUpload(UploadCommands(), transforms, null, false), Is.True);
+                    Assert.That(new[] { batch.InstanceGeneration, batch.ClipGeneration }, Is.EqualTo(new[] { 2u, 2u }));
+                    Assert.That(batch.PluginWriteCalls, Is.Zero);
+                    var sent = new Matrix4x4[7];
+                    batch.InstanceBuffer.GetData(sent);
+                    Assert.That(sent, Is.EqualTo(transforms));
+                }
+            }
+            finally
+            {
+                VpNativeUpload.Asked = asked;
+            }
         }
 
         [Test]

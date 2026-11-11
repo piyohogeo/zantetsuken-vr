@@ -26,6 +26,15 @@
 .PARAMETER TimeoutSeconds
     Maximum seconds to wait for the Unity process to finish. Default is 300.
 
+.PARAMETER Direct3D12
+    Starts the editor with -force-d3d12. The tests of the Direct3D 12 native
+    plugin (its upload among them) run only on that device; on any other they
+    are ignored, which this script reports as exit code 1, never as passed.
+
+.PARAMETER TestFilter
+    Passed to Unity as -testFilter (a namespace, class or test name). Without
+    it every EditMode test runs.
+
 .EXAMPLE
     powershell.exe -NoProfile -ExecutionPolicy Bypass `
       -File .\Tools\Run-UnityEditModeTests.ps1
@@ -33,11 +42,18 @@
 .EXAMPLE
     powershell.exe -NoProfile -ExecutionPolicy Bypass `
       -File .\Tools\Run-UnityEditModeTests.ps1 -TimeoutSeconds 120
+
+.EXAMPLE
+    powershell.exe -NoProfile -ExecutionPolicy Bypass `
+      -File .\Tools\Run-UnityEditModeTests.ps1 -Direct3D12 `
+      -TestFilter Zantetsu.Rendering.Tests.VpNativeDrawTests
 #>
 
 [CmdletBinding()]
 param(
-    [int]$TimeoutSeconds = 300
+    [int]$TimeoutSeconds = 300,
+    [switch]$Direct3D12,
+    [string]$TestFilter
 )
 
 Set-StrictMode -Version Latest
@@ -296,6 +312,9 @@ if ($conflicts.Count -gt 0) {
 if ($TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 3600) {
     Fail-Infrastructure "TimeoutSeconds must be in the range 1..3600 (got $TimeoutSeconds)."
 }
+if ($TestFilter -and $TestFilter -notmatch '^[A-Za-z0-9_.,;|()\[\]^$*?+-]+$') {
+    Fail-Infrastructure "TestFilter has characters that cannot be passed to Unity intact (got '$TestFilter')."
+}
 
 $runId = New-RunId
 $outDir = Join-Path $repoRoot ("Logs\UnityTests\" + $runId)
@@ -315,6 +334,12 @@ $startTime = Get-Date
 # Path arguments are explicitly quoted so worktree paths containing spaces are
 # passed intact to Unity.
 $unityArguments = '-batchmode -projectPath "{0}" -runTests -testPlatform EditMode -testResults "{1}" -logFile "{2}"' -f $repoRoot, $resultXml, $logPath
+if ($Direct3D12) {
+    $unityArguments += ' -force-d3d12'
+}
+if ($TestFilter) {
+    $unityArguments += ' -testFilter "{0}"' -f $TestFilter
+}
 
 $unityProc = $null
 try {

@@ -576,6 +576,8 @@ namespace Zantetsu.PhysicsCut
                     + (VpNativeDrawPlugin.Vulkan ? "Vulkan indexed multi-draw" : "Direct3D 12 ExecuteIndirect") + " plugin, " + profile.StencilSettings.cameraCapacity + " views; shadow slice selection "
                     + (VpGpuCullSetup.ShadowSliceSelection && !VpNativeDrawPlugin.Vulkan ? "on" : "off")
                     + (VpNativeDrawPlugin.Vulkan ? " (skin draw casters: " + (VpGpuCullSetup.ShadowSliceSelection && VpGpuCullSetup.Skin24SliceSelectionOnVulkan ? "on, " + VpGpuCullSetup.Skin24SliceSelectionArgument : "off") + ")" : "")
+                    + "; transforms and clips written by " + (display.PluginWrites ? "the plugin (D-261)"
+                        : VpNativeUpload.Asked ? "Unity's SetData (the library has no upload)" : "Unity's SetData (" + VpNativeUpload.UnityUploadsArgument + ")")
                     + "; selected: " + BodyRouteReason
                     + "; plugin: " + VpNativeDrawPlugin.DescribeState(),
                     this);
