@@ -34,6 +34,10 @@ param(
     [ValidateRange(0, 1000000)][int]$SkinModels = 0,          # SKIN-BENCH-3 (TL review 3): the skin draw's model room (-zantetsuSkinModelCapacity; 0 the profile's, 8 in the city walk's)
     [ValidateRange(0, 1000000)][int]$SkinBoneBoxes = 0,       # SKIN-BENCH-3 (TL review 3): the skin draw's bone box room (-zantetsuSkinBoneBoxCapacity; 0 the profile's 2048; 66 a model)
     [ValidateSet('', 'cpu', 'cpu-float', 'float', 'gpu')][string]$SkinBake = '',   # CPU-SKIN-FLOAT-DEFAULT-1: -zantetsuSkinBake in the intent's unity extra ('' = the Player's default, cpu-float since 2026-11-03; cpu = the 24-byte bake, the way back)
+    [switch]$EyeFixed,             # the view condition of a measurement (-zantetsuEyeFixed): the head's pose is taken out of the view, so a run does not depend on who wears the headset or where it lies
+    [ValidateRange(0, 3)][float]$EyeHeight = 0,   # the view condition -zantetsuEyeHeight <metres>: the eye held that far above the floor under the player (0: not given; the fixed view stands 1.6 m above the tracking space's floor without it)
+    [switch]$KeepPointers,         # MEASUREMENT ONLY (-zantetsuVpNativeKeepPointers): native pointers kept across CPU writes, against Unity's contract; what asking them again costs
+    [switch]$UnbatchedConstants,   # comparison and way back (-zantetsuVpNativeUnbatchedConstants): one dispatch a GPU constant block, as before D-262
     [string]$Package = 'com.zantetsuken.quest.citywalk',   # the APK that runs it: this scenario's own, or the one of every scenario (com.zantetsuken.quest)
     [string]$Serial = '340YC10G7D0FZ9',
     [string]$Adb = 'C:\Program Files\RenderDocForMetaQuest\plugins\android\adb.exe'
@@ -87,6 +91,10 @@ if ($WorkerFrom -gt 0) { $unityArguments += " -zantetsuSkinGatherWorkerFrom $Wor
 if ($SkinModels -gt 0) { $unityArguments += " -zantetsuSkinModelCapacity $SkinModels" }
 if ($SkinBoneBoxes -gt 0) { $unityArguments += " -zantetsuSkinBoneBoxCapacity $SkinBoneBoxes" }
 if ($SkinBake) { $unityArguments += " -zantetsuSkinBake $SkinBake" }
+if ($EyeFixed) { $unityArguments += ' -zantetsuEyeFixed' }
+if ($EyeHeight -gt 0) { $unityArguments += ' -zantetsuEyeHeight ' + $EyeHeight.ToString([Globalization.CultureInfo]::InvariantCulture) }
+if ($KeepPointers) { $unityArguments += ' -zantetsuVpNativeKeepPointers' }
+if ($UnbatchedConstants) { $unityArguments += ' -zantetsuVpNativeUnbatchedConstants' }
 Invoke-Adb shell "am start -a android.intent.action.MAIN -n $package/com.unity3d.player.UnityPlayerGameActivity -e unity '$unityArguments'"
-Write-Output "Quest City Walk: mode=$Mode, AppSW=$(!$AppSwOff), profiler=$(!$NoProfiler), prewarm=$(!$NoPrewarm), AppSpace=$AppSpacePoseMode, AppSWfar=$AppSwFarMeters, fixedView=$AppSwFixedView, fragmentGroupsMax=$FragmentGroupsMax, spatialSplit=$([bool]$SpatialSplit), checks=$(!$ChecksOff), detail=$(!$DetailOff), commandCompaction=$(!$FixedCommands), skinDraw=$([bool]$SkinDraw), skinUnity=$([bool]$SkinUnity)."
+Write-Output "Quest City Walk: mode=$Mode, AppSW=$(!$AppSwOff), profiler=$(!$NoProfiler), prewarm=$(!$NoPrewarm), AppSpace=$AppSpacePoseMode, AppSWfar=$AppSwFarMeters, fixedView=$AppSwFixedView, eyeFixed=$([bool]$EyeFixed), eyeHeight=$EyeHeight, keepPointers=$([bool]$KeepPointers), unbatchedConstants=$([bool]$UnbatchedConstants), fragmentGroupsMax=$FragmentGroupsMax, spatialSplit=$([bool]$SpatialSplit), checks=$(!$ChecksOff), detail=$(!$DetailOff), commandCompaction=$(!$FixedCommands), skinDraw=$([bool]$SkinDraw), skinUnity=$([bool]$SkinUnity)."
 Write-Output "Pull profiles and results from $deviceFiles/runs. Check QUEST CITY WALK, QUEST THREAD, PROP SLASH and VrApi."

@@ -39,14 +39,12 @@ namespace Zantetsu.Sandbox
                 }
 
                 float floor = _mpInput.player.transform.position.y;
-                float eye = camera.transform.position.y - floor;
+                // Under the fixed view the pivot comes first (and with it the record of what the head did): the height
+                // read is then the fixed eye's, whatever the head has done since the pivot was last set.
+                if (_mpEyeFixed) MobPlanLevelEye();
+                float eye = SandboxEyeView.HoldEyeHeight(_mpEyeSpace, _mpEyeFixed ? _mpEyePivot : null, camera.transform, floor, _mpEyeWanted);
                 _mpEyeLow = Mathf.Min(_mpEyeLow, eye);
                 _mpEyeHigh = Mathf.Max(_mpEyeHigh, eye);
-                float delta = _mpEyeWanted - eye;
-                if (Mathf.Abs(delta) > 0.0005f)
-                {
-                    _mpEyeSpace.position += Vector3.up * delta;
-                }
             }
 
             private void MobPlanEyeHeight()
