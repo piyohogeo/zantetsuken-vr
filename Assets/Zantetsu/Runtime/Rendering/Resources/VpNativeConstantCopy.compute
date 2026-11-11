@@ -3,15 +3,23 @@
 // Unity has set for this frame (the main light, the shadow cascades, the VP surface constants, the camera's own) and
 // from the values the pass gives (the view-projection as URP would set it, the instance multiplier, a slice's bias).
 // Reading the globals here, as any shader of the frame reads them, means no value Unity sets is guessed at or read a
-// frame late on the CPU. One thread; one dispatch per block.
+// frame late on the CPU. One thread a block.
+//
+// Two kernels assemble the same bytes. AssembleGlobals takes one block a dispatch: its offsets in a buffer and what
+// the pass gives in single values (the Vulkan route, which shares its blocks otherwise). AssembleGlobalsBatch takes
+// up to VP_NATIVE_BATCH blocks a dispatch, one a thread group: each block's offsets, destination and given values
+// stand in arrays at the group's index (the Direct3D 12 route: a dispatch costs the main thread about 2 microseconds
+// whatever it assembles, and a frame has about nine blocks; measured 2026-11-11, DESIGN 4.5.8).
 //
 // Each known value has a slot; _VpNativeOffsets[slot] is the byte offset of that value in the block, as the compiled
 // shader laid it out (VpNativeShaderBinary), or VP_NATIVE_UNUSED when the stage does not read it. A matrix is stored
 // column by column, which is how Unity's compiler lays a float4x4 out (column-major).
 #pragma kernel AssembleGlobals
+#pragma kernel AssembleGlobalsBatch
 
 #define VP_NATIVE_UNUSED 0xFFFFFFFFu
 #define VP_NATIVE_SLOT_COUNT 48
+#define VP_NATIVE_BATCH 16
 
 // Slots. Matches Zantetsu.Rendering.Urp.VpNativeDrawRoute.Slot.
 #define VP_SLOT_MAIN_LIGHT_POSITION 0
@@ -101,34 +109,63 @@ StructuredBuffer<uint> _VpNativeOffsets;
 uint _VpNativeDestination;
 RWByteAddressBuffer _VpNativeConstants;
 
-void Put1(uint slot, float value)
+// The batch's blocks, by thread group. The offsets are VP_NATIVE_SLOT_COUNT a block, four to an element (an array of
+// single uints would take sixteen bytes an element).
+uint4 _VpNativeJobOffsets[VP_NATIVE_BATCH * VP_NATIVE_SLOT_COUNT / 4];
+uint4 _VpNativeJobInts[VP_NATIVE_BATCH];              // x: the destination, y: the instance multiplier
+float4x4 _VpNativeJobMatrixVP[VP_NATIVE_BATCH];
+float4x4 _VpNativeJobMatrixV[VP_NATIVE_BATCH];
+float4x4 _VpNativeJobProjection[VP_NATIVE_BATCH];
+float4 _VpNativeJobShadowBias[VP_NATIVE_BATCH];
+float4 _VpNativeJobLightDirection[VP_NATIVE_BATCH];   // w: the shadow slice selection
+
+// Which block a thread assembles. `batch` is a constant of each kernel, so a kernel reads only its own offsets.
+struct VpTarget
 {
-    uint o = _VpNativeOffsets[slot];
-    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store(_VpNativeDestination + o, asuint(value));
+    bool batch;
+    uint job;
+    uint destination;
+};
+
+uint VpOffset(VpTarget t, uint slot)
+{
+    if (t.batch)
+    {
+        uint k = t.job * VP_NATIVE_SLOT_COUNT + slot;
+        return _VpNativeJobOffsets[k >> 2][k & 3u];
+    }
+
+    return _VpNativeOffsets[slot];
 }
 
-void PutUint(uint slot, uint value)
+void Put1(VpTarget t, uint slot, float value)
 {
-    uint o = _VpNativeOffsets[slot];
-    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store(_VpNativeDestination + o, value);
+    uint o = VpOffset(t, slot);
+    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store(t.destination + o, asuint(value));
 }
 
-void Put2(uint slot, float2 value)
+void PutUint(VpTarget t, uint slot, uint value)
 {
-    uint o = _VpNativeOffsets[slot];
-    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store2(_VpNativeDestination + o, asuint(value));
+    uint o = VpOffset(t, slot);
+    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store(t.destination + o, value);
 }
 
-void Put3(uint slot, float3 value)
+void Put2(VpTarget t, uint slot, float2 value)
 {
-    uint o = _VpNativeOffsets[slot];
-    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store3(_VpNativeDestination + o, asuint(value));
+    uint o = VpOffset(t, slot);
+    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store2(t.destination + o, asuint(value));
 }
 
-void Put4(uint slot, float4 value)
+void Put3(VpTarget t, uint slot, float3 value)
 {
-    uint o = _VpNativeOffsets[slot];
-    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store4(_VpNativeDestination + o, asuint(value));
+    uint o = VpOffset(t, slot);
+    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store3(t.destination + o, asuint(value));
+}
+
+void Put4(VpTarget t, uint slot, float4 value)
+{
+    uint o = VpOffset(t, slot);
+    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store4(t.destination + o, asuint(value));
 }
 
 void PutMatrixAt(uint at, float4x4 m)
@@ -139,29 +176,29 @@ void PutMatrixAt(uint at, float4x4 m)
     _VpNativeConstants.Store4(at + 48u, asuint(float4(m._m03, m._m13, m._m23, m._m33)));
 }
 
-void PutMatrix(uint slot, float4x4 m)
+void PutMatrix(VpTarget t, uint slot, float4x4 m)
 {
-    uint o = _VpNativeOffsets[slot];
-    if (o != VP_NATIVE_UNUSED) PutMatrixAt(_VpNativeDestination + o, m);
+    uint o = VpOffset(t, slot);
+    if (o != VP_NATIVE_UNUSED) PutMatrixAt(t.destination + o, m);
 }
 
-void PutMatrixPair(uint slot, float4x4 a, float4x4 b)
+void PutMatrixPair(VpTarget t, uint slot, float4x4 a, float4x4 b)
 {
-    uint o = _VpNativeOffsets[slot];
+    uint o = VpOffset(t, slot);
     if (o != VP_NATIVE_UNUSED)
     {
-        PutMatrixAt(_VpNativeDestination + o, a);
-        PutMatrixAt(_VpNativeDestination + o + 64u, b);
+        PutMatrixAt(t.destination + o, a);
+        PutMatrixAt(t.destination + o + 64u, b);
     }
 }
 
-void PutPair4(uint slot, float4 a, float4 b)
+void PutPair4(VpTarget t, uint slot, float4 a, float4 b)
 {
-    uint o = _VpNativeOffsets[slot];
+    uint o = VpOffset(t, slot);
     if (o != VP_NATIVE_UNUSED)
     {
-        _VpNativeConstants.Store4(_VpNativeDestination + o, asuint(a));
-        _VpNativeConstants.Store4(_VpNativeDestination + o + 16u, asuint(b));
+        _VpNativeConstants.Store4(t.destination + o, asuint(a));
+        _VpNativeConstants.Store4(t.destination + o + 16u, asuint(b));
     }
 }
 
@@ -198,64 +235,88 @@ float4x4 Inverse(float4x4 m)
     return r;
 }
 
-[numthreads(1, 1, 1)]
-void AssembleGlobals(uint3 id : SV_DispatchThreadID)
+void Assemble(VpTarget t, float4x4 matrixVP, float4x4 matrixV, float4x4 projection, uint instanceMultiplier,
+    float4 shadowBias, float3 lightDirection, float shadowSliceSelection)
 {
-    PutMatrixPair(38u, _PrevViewProjMatrixStereo[0], _PrevViewProjMatrixStereo[1]);
-    PutMatrixPair(39u, _NonJitteredViewProjMatrixStereo[0], _NonJitteredViewProjMatrixStereo[1]);
-    Put1(40u, _SpaceWarpNDCModifier);
-    Put4(VP_SLOT_MAIN_LIGHT_POSITION, _MainLightPosition);
-    Put4(VP_SLOT_MAIN_LIGHT_COLOR, _MainLightColor);
-    Put3(VP_SLOT_WORLD_SPACE_CAMERA_POS, _WorldSpaceCameraPos);
-    Put2(VP_SLOT_GLOBAL_MIP_BIAS, _GlobalMipBias);
-    Put4(VP_SLOT_ORTHO_PARAMS, unity_OrthoParams);
-    Put4(VP_SLOT_VP_SURFACE_COLOR_SCALE, _VpSurfaceColorScale);
-    Put4(VP_SLOT_VP_SURFACE_MATERIAL, _VpSurfaceMaterial);
-    Put1(VP_SLOT_VP_PALETTE_ATLAS_ENABLED, _VpPaletteAtlasEnabled);
-    Put4(VP_SLOT_VP_CUT_SURFACE_COLOR, _VpCutSurfaceColor);
-    Put4(VP_SLOT_VP_CUT_SURFACE_DEBUG_COLOR, _VpCutSurfaceDebugColor);
-    Put1(VP_SLOT_VP_CUT_SURFACE_DEBUG, _VpCutSurfaceDebug);
-    uint shadows = _VpNativeOffsets[VP_SLOT_MAIN_LIGHT_WORLD_TO_SHADOW];
+    PutMatrixPair(t, 38u, _PrevViewProjMatrixStereo[0], _PrevViewProjMatrixStereo[1]);
+    PutMatrixPair(t, 39u, _NonJitteredViewProjMatrixStereo[0], _NonJitteredViewProjMatrixStereo[1]);
+    Put1(t, 40u, _SpaceWarpNDCModifier);
+    Put4(t, VP_SLOT_MAIN_LIGHT_POSITION, _MainLightPosition);
+    Put4(t, VP_SLOT_MAIN_LIGHT_COLOR, _MainLightColor);
+    Put3(t, VP_SLOT_WORLD_SPACE_CAMERA_POS, _WorldSpaceCameraPos);
+    Put2(t, VP_SLOT_GLOBAL_MIP_BIAS, _GlobalMipBias);
+    Put4(t, VP_SLOT_ORTHO_PARAMS, unity_OrthoParams);
+    Put4(t, VP_SLOT_VP_SURFACE_COLOR_SCALE, _VpSurfaceColorScale);
+    Put4(t, VP_SLOT_VP_SURFACE_MATERIAL, _VpSurfaceMaterial);
+    Put1(t, VP_SLOT_VP_PALETTE_ATLAS_ENABLED, _VpPaletteAtlasEnabled);
+    Put4(t, VP_SLOT_VP_CUT_SURFACE_COLOR, _VpCutSurfaceColor);
+    Put4(t, VP_SLOT_VP_CUT_SURFACE_DEBUG_COLOR, _VpCutSurfaceDebugColor);
+    Put1(t, VP_SLOT_VP_CUT_SURFACE_DEBUG, _VpCutSurfaceDebug);
+    uint shadows = VpOffset(t, VP_SLOT_MAIN_LIGHT_WORLD_TO_SHADOW);
     if (shadows != VP_NATIVE_UNUSED)
     {
         [unroll]
         for (uint i = 0u; i < 5u; i++)
         {
-            PutMatrixAt(_VpNativeDestination + shadows + i * 64u, _MainLightWorldToShadow[i]);
+            PutMatrixAt(t.destination + shadows + i * 64u, _MainLightWorldToShadow[i]);
         }
     }
 
-    Put4(VP_SLOT_CASCADE_SPHERES0, _CascadeShadowSplitSpheres0);
-    Put4(VP_SLOT_CASCADE_SPHERES1, _CascadeShadowSplitSpheres1);
-    Put4(VP_SLOT_CASCADE_SPHERES2, _CascadeShadowSplitSpheres2);
-    Put4(VP_SLOT_CASCADE_SPHERES3, _CascadeShadowSplitSpheres3);
-    Put4(VP_SLOT_CASCADE_SPHERE_RADII, _CascadeShadowSplitSphereRadii);
-    Put4(VP_SLOT_MAIN_LIGHT_SHADOW_OFFSET0, _MainLightShadowOffset0);
-    Put4(VP_SLOT_MAIN_LIGHT_SHADOW_OFFSET1, _MainLightShadowOffset1);
-    Put4(VP_SLOT_MAIN_LIGHT_SHADOW_PARAMS, _MainLightShadowParams);
-    Put4(VP_SLOT_MAIN_LIGHT_SHADOWMAP_SIZE, _MainLightShadowmapSize);
-    PutMatrix(VP_SLOT_MATRIX_VP, _VpNativeMatrixVP);
-    PutMatrix(VP_SLOT_MATRIX_V, _VpNativeMatrixV);
-    PutMatrix(VP_SLOT_PROJECTION, _VpNativeProjection);
-    PutUint(VP_SLOT_INSTANCE_MULTIPLIER, _VpNativeInstanceMultiplier);
-    Put4(VP_SLOT_SHADOW_BIAS, _VpNativeShadowBias);
-    Put3(VP_SLOT_LIGHT_DIRECTION, _VpNativeLightDirection.xyz);
-    Put1(VP_SLOT_SHADOW_SLICE_SELECTION, _VpNativeShadowSliceSelection);
+    Put4(t, VP_SLOT_CASCADE_SPHERES0, _CascadeShadowSplitSpheres0);
+    Put4(t, VP_SLOT_CASCADE_SPHERES1, _CascadeShadowSplitSpheres1);
+    Put4(t, VP_SLOT_CASCADE_SPHERES2, _CascadeShadowSplitSpheres2);
+    Put4(t, VP_SLOT_CASCADE_SPHERES3, _CascadeShadowSplitSpheres3);
+    Put4(t, VP_SLOT_CASCADE_SPHERE_RADII, _CascadeShadowSplitSphereRadii);
+    Put4(t, VP_SLOT_MAIN_LIGHT_SHADOW_OFFSET0, _MainLightShadowOffset0);
+    Put4(t, VP_SLOT_MAIN_LIGHT_SHADOW_OFFSET1, _MainLightShadowOffset1);
+    Put4(t, VP_SLOT_MAIN_LIGHT_SHADOW_PARAMS, _MainLightShadowParams);
+    Put4(t, VP_SLOT_MAIN_LIGHT_SHADOWMAP_SIZE, _MainLightShadowmapSize);
+    PutMatrix(t, VP_SLOT_MATRIX_VP, matrixVP);
+    PutMatrix(t, VP_SLOT_MATRIX_V, matrixV);
+    PutMatrix(t, VP_SLOT_PROJECTION, projection);
+    PutUint(t, VP_SLOT_INSTANCE_MULTIPLIER, instanceMultiplier);
+    Put4(t, VP_SLOT_SHADOW_BIAS, shadowBias);
+    Put3(t, VP_SLOT_LIGHT_DIRECTION, lightDirection);
+    Put1(t, VP_SLOT_SHADOW_SLICE_SELECTION, shadowSliceSelection);
 
     // Stereo: the inverses are made here from the matrices given, so that the pass hands over four matrices and two
     // positions and nothing is inverted on the CPU for a block that may not read it.
-    PutMatrixPair(VP_SLOT_STEREO_MATRIX_VP, _VpNativeStereoMatrixVP[0], _VpNativeStereoMatrixVP[1]);
-    PutMatrixPair(VP_SLOT_STEREO_MATRIX_V, _VpNativeStereoMatrixV[0], _VpNativeStereoMatrixV[1]);
-    PutMatrixPair(VP_SLOT_STEREO_MATRIX_P, _VpNativeStereoMatrixP[0], _VpNativeStereoMatrixP[1]);
-    PutMatrixPair(VP_SLOT_STEREO_CAMERA_PROJECTION, _VpNativeStereoCameraProjection[0], _VpNativeStereoCameraProjection[1]);
-    PutPair4(VP_SLOT_STEREO_CAMERA_POS, _VpNativeStereoCameraPos[0], _VpNativeStereoCameraPos[1]);
-    PutPair4(VP_SLOT_STEREO_EYE_INDICES, float4(0.0, 0.0, 0.0, 0.0), float4(1.0, 0.0, 0.0, 0.0));
-    if (_VpNativeOffsets[VP_SLOT_STEREO_MATRIX_INV_V] != VP_NATIVE_UNUSED)
-        PutMatrixPair(VP_SLOT_STEREO_MATRIX_INV_V, Inverse(_VpNativeStereoMatrixV[0]), Inverse(_VpNativeStereoMatrixV[1]));
-    if (_VpNativeOffsets[VP_SLOT_STEREO_CAMERA_INV_PROJECTION] != VP_NATIVE_UNUSED)
-        PutMatrixPair(VP_SLOT_STEREO_CAMERA_INV_PROJECTION, Inverse(_VpNativeStereoCameraProjection[0]), Inverse(_VpNativeStereoCameraProjection[1]));
-    if (_VpNativeOffsets[VP_SLOT_STEREO_MATRIX_INV_VP] != VP_NATIVE_UNUSED)
-        PutMatrixPair(VP_SLOT_STEREO_MATRIX_INV_VP, Inverse(_VpNativeStereoMatrixVP[0]), Inverse(_VpNativeStereoMatrixVP[1]));
-    if (_VpNativeOffsets[VP_SLOT_STEREO_MATRIX_INV_P] != VP_NATIVE_UNUSED)
-        PutMatrixPair(VP_SLOT_STEREO_MATRIX_INV_P, Inverse(_VpNativeStereoMatrixP[0]), Inverse(_VpNativeStereoMatrixP[1]));
+    PutMatrixPair(t, VP_SLOT_STEREO_MATRIX_VP, _VpNativeStereoMatrixVP[0], _VpNativeStereoMatrixVP[1]);
+    PutMatrixPair(t, VP_SLOT_STEREO_MATRIX_V, _VpNativeStereoMatrixV[0], _VpNativeStereoMatrixV[1]);
+    PutMatrixPair(t, VP_SLOT_STEREO_MATRIX_P, _VpNativeStereoMatrixP[0], _VpNativeStereoMatrixP[1]);
+    PutMatrixPair(t, VP_SLOT_STEREO_CAMERA_PROJECTION, _VpNativeStereoCameraProjection[0], _VpNativeStereoCameraProjection[1]);
+    PutPair4(t, VP_SLOT_STEREO_CAMERA_POS, _VpNativeStereoCameraPos[0], _VpNativeStereoCameraPos[1]);
+    PutPair4(t, VP_SLOT_STEREO_EYE_INDICES, float4(0.0, 0.0, 0.0, 0.0), float4(1.0, 0.0, 0.0, 0.0));
+    if (VpOffset(t, VP_SLOT_STEREO_MATRIX_INV_V) != VP_NATIVE_UNUSED)
+        PutMatrixPair(t, VP_SLOT_STEREO_MATRIX_INV_V, Inverse(_VpNativeStereoMatrixV[0]), Inverse(_VpNativeStereoMatrixV[1]));
+    if (VpOffset(t, VP_SLOT_STEREO_CAMERA_INV_PROJECTION) != VP_NATIVE_UNUSED)
+        PutMatrixPair(t, VP_SLOT_STEREO_CAMERA_INV_PROJECTION, Inverse(_VpNativeStereoCameraProjection[0]), Inverse(_VpNativeStereoCameraProjection[1]));
+    if (VpOffset(t, VP_SLOT_STEREO_MATRIX_INV_VP) != VP_NATIVE_UNUSED)
+        PutMatrixPair(t, VP_SLOT_STEREO_MATRIX_INV_VP, Inverse(_VpNativeStereoMatrixVP[0]), Inverse(_VpNativeStereoMatrixVP[1]));
+    if (VpOffset(t, VP_SLOT_STEREO_MATRIX_INV_P) != VP_NATIVE_UNUSED)
+        PutMatrixPair(t, VP_SLOT_STEREO_MATRIX_INV_P, Inverse(_VpNativeStereoMatrixP[0]), Inverse(_VpNativeStereoMatrixP[1]));
+}
+
+[numthreads(1, 1, 1)]
+void AssembleGlobals(uint3 id : SV_DispatchThreadID)
+{
+    VpTarget t;
+    t.batch = false;
+    t.job = 0u;
+    t.destination = _VpNativeDestination;
+    Assemble(t, _VpNativeMatrixVP, _VpNativeMatrixV, _VpNativeProjection, _VpNativeInstanceMultiplier,
+        _VpNativeShadowBias, _VpNativeLightDirection.xyz, _VpNativeShadowSliceSelection);
+}
+
+// One block a thread group: the dispatch is of as many groups as the batch has blocks.
+[numthreads(1, 1, 1)]
+void AssembleGlobalsBatch(uint3 id : SV_DispatchThreadID)
+{
+    uint job = min(id.x, VP_NATIVE_BATCH - 1u);
+    VpTarget t;
+    t.batch = true;
+    t.job = job;
+    t.destination = _VpNativeJobInts[job].x;
+    Assemble(t, _VpNativeJobMatrixVP[job], _VpNativeJobMatrixV[job], _VpNativeJobProjection[job], _VpNativeJobInts[job].y,
+        _VpNativeJobShadowBias[job], _VpNativeJobLightDirection[job].xyz, _VpNativeJobLightDirection[job].w);
 }

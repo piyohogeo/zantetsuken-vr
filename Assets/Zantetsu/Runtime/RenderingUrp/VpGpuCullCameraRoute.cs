@@ -411,9 +411,9 @@ namespace Zantetsu.Rendering.Urp
                 Vector4 counts = Vector4.zero;
                 for (int split = 0; split < splits; split++)
                 {
-                    if (!ShadowUtils.ExtractDirectionalLightMatrix(
+                    if (!VpMainLightSlices.Extract(
                             ref renderingData.cullResults, shadowData, lightIndex, split, width, renderTargetHeight, resolution,
-                            mainLight.light.shadowNearPlane, out Vector4 _, out ShadowSliceData slice))
+                            mainLight.light.shadowNearPlane, out ShadowSliceData slice))
                     {
                         noShadowMap = true;
                         return "split " + split + " could not be computed";
@@ -442,4 +442,97 @@ namespace Zantetsu.Rendering.Urp
         }
     }
 
+    /// <summary>
+    /// The main light's cascade slices of the camera being rendered, computed once and shared by the passes that
+    /// need them: the GPU selection (the splits' culling planes) and the plugin's caster pass (the matrices, the
+    /// viewports, the biases). Both ask the public <c>ShadowUtils.ExtractDirectionalLightMatrix</c> with the same
+    /// inputs in the same camera rendering, and each computation of a frame's cascades costs the main thread about
+    /// 0.02 ms (CPU sampling, 2026-11-11, DESIGN 4.5.8); URP's own computation is a third that cannot be shared.
+    /// <para>
+    /// **What a kept slice is good for.** One camera rendering: the keep is dropped when any camera's rendering
+    /// begins and when a context's rendering ends, and a kept slice is given only for the same culling results, the
+    /// same shadow data object, light, map size, slice resolution and near plane it was computed with. Anything
+    /// else is computed anew.
+    /// </para>
+    /// </summary>
+    internal static class VpMainLightSlices
+    {
+        private const int Capacity = VpCullConditions.SplitCapacity;
+        private static readonly ShadowSliceData[] s_slices = new ShadowSliceData[Capacity];
+        private static readonly bool[] s_results = new bool[Capacity];
+        private static int s_kept;   // one bit a split
+        private static CullingResults s_cullResults;
+        private static UniversalShadowData s_shadowData;
+        private static int s_light, s_width, s_height, s_resolution;
+        private static float s_nearPlane;
+        private static bool s_subscribed;
+
+        /// <summary>Slices computed by ShadowUtils through this class, since the launch.</summary>
+        public static long Computed { get; private set; }
+
+        /// <summary>Slices given from the keep instead of being computed again, since the launch.</summary>
+        public static long Shared { get; private set; }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics()
+        {
+            // The subscription is not forgotten: without a domain reload it is still there.
+            s_kept = 0;
+            s_shadowData = null;
+            Computed = 0;
+            Shared = 0;
+        }
+
+        /// <summary>As <c>ShadowUtils.ExtractDirectionalLightMatrix</c>, without the split distance no caller reads.</summary>
+        public static bool Extract(
+            ref CullingResults cullResults, UniversalShadowData shadowData, int lightIndex, int split, int width, int height,
+            int resolution, float nearPlane, out ShadowSliceData slice)
+        {
+            if (!s_subscribed)
+            {
+                s_subscribed = true;
+                RenderPipelineManager.beginCameraRendering += static (_, _) => Drop();
+                RenderPipelineManager.endContextRendering += static (_, _) => Drop();
+            }
+
+            if (s_kept != 0 && (!ReferenceEquals(s_shadowData, shadowData) || !s_cullResults.Equals(cullResults) || s_light != lightIndex
+                    || s_width != width || s_height != height || s_resolution != resolution || s_nearPlane != nearPlane))
+            {
+                Drop();
+            }
+
+            bool keepable = (uint)split < Capacity;
+            if (keepable && (s_kept & (1 << split)) != 0)
+            {
+                Shared++;
+                slice = s_slices[split];
+                return s_results[split];
+            }
+
+            bool result = ShadowUtils.ExtractDirectionalLightMatrix(
+                ref cullResults, shadowData, lightIndex, split, width, height, resolution, nearPlane, out Vector4 _, out slice);
+            Computed++;
+            if (keepable)
+            {
+                s_cullResults = cullResults;
+                s_shadowData = shadowData;
+                s_light = lightIndex;
+                s_width = width;
+                s_height = height;
+                s_resolution = resolution;
+                s_nearPlane = nearPlane;
+                s_slices[split] = slice;
+                s_results[split] = result;
+                s_kept |= 1 << split;
+            }
+
+            return result;
+        }
+
+        private static void Drop()
+        {
+            s_kept = 0;
+            s_shadowData = null;
+        }
+    }
 }

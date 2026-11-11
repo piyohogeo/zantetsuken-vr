@@ -78,10 +78,21 @@ namespace Zantetsu.Rendering
         private static readonly int ShadowArgumentsId = Shader.PropertyToID("_VpShadowArguments");
         private static readonly int ShadowSliceSourceArgumentsId = Shader.PropertyToID("_VpShadowSliceSourceArguments");
         private static readonly int ShadowSliceSourceVisibleId = Shader.PropertyToID("_VpShadowSliceSourceVisible");
-        private static readonly int ShadowSliceArgumentsId = Shader.PropertyToID("_VpShadowSliceArguments");
-        private static readonly int ShadowSliceVisibleId = Shader.PropertyToID("_VpShadowSliceVisible");
+        // One output a cascade, all written by the one dispatch of CullShadowSlices (VpCullConditions.SplitCapacity of each).
+        private static readonly int[] ShadowSliceArgumentsIds =
+        {
+            Shader.PropertyToID("_VpShadowSliceArguments0"), Shader.PropertyToID("_VpShadowSliceArguments1"),
+            Shader.PropertyToID("_VpShadowSliceArguments2"), Shader.PropertyToID("_VpShadowSliceArguments3"),
+        };
+        private static readonly int[] ShadowSliceVisibleIds =
+        {
+            Shader.PropertyToID("_VpShadowSliceVisible0"), Shader.PropertyToID("_VpShadowSliceVisible1"),
+            Shader.PropertyToID("_VpShadowSliceVisible2"), Shader.PropertyToID("_VpShadowSliceVisible3"),
+        };
         private static readonly int ShadowSliceMatrixVpId = Shader.PropertyToID("_VpShadowSliceMatrixVP");
         private static readonly int ShadowSliceBiasId = Shader.PropertyToID("_VpShadowSliceBias");
+        private static readonly int ShadowSliceCountId = Shader.PropertyToID("_VpShadowSliceCount");
+        private readonly Matrix4x4[] _shadowSliceMatrices = new Matrix4x4[VpCullConditions.SplitCapacity];
 
         // The arguments are made here from the commands, so they are staged before they are sent: in managed arrays, or
         // -- for a batch made with a page backing -- in rooms on reserved address space, made and written at
@@ -468,7 +479,7 @@ namespace Zantetsu.Rendering
             ref CullView target = ref _cullViews[view];
             ShadowSliceOutput output = target.shadowSlices ??= new ShadowSliceOutput(CommandCapacity, InstanceCapacity, _cull.ArgumentStride, view);
             ComputeShader shader = _cull.Shader;
-            if (_shadowSliceKernel < 0) _shadowSliceKernel = shader.FindKernel("CullShadowSlice");
+            if (_shadowSliceKernel < 0) _shadowSliceKernel = shader.FindKernel("CullShadowSlices");
             int kernel = _shadowSliceKernel;
             commands.SetComputeIntParam(shader, CommandCountId, CommandCount);
             commands.SetComputeIntParam(shader, ArgumentStrideId, _cull.ArgumentStride);
@@ -477,15 +488,26 @@ namespace Zantetsu.Rendering
             commands.SetComputeBufferParam(shader, kernel, InstanceObjectToWorldId, _instanceBuffer);
             commands.SetComputeBufferParam(shader, kernel, ShadowSliceSourceArgumentsId, target.shadowArguments);
             commands.SetComputeBufferParam(shader, kernel, ShadowSliceSourceVisibleId, target.shadowVisible);
-            for (int split = 0; split < splitCount; split++)
+
+            // Every cascade by one dispatch: the kernel writes each cascade's own output, and none at or past the count.
+            // Every output is bound whatever the count is: the kernel names all of them.
+            Vector4 bias = Vector4.zero;
+            for (int split = 0; split < VpCullConditions.SplitCapacity; split++)
             {
-                commands.SetComputeMatrixParam(shader, ShadowSliceMatrixVpId, viewProjections[split]);
-                commands.SetComputeFloatParam(shader, ShadowSliceBiasId, Mathf.Abs(biases[split].x) + Mathf.Abs(biases[split].y));
-                commands.SetComputeBufferParam(shader, kernel, ShadowSliceArgumentsId, output.Arguments(split));
-                commands.SetComputeBufferParam(shader, kernel, ShadowSliceVisibleId, output.Visible(split));
-                commands.DispatchCompute(shader, kernel, Math.Max(1, (CommandCount + 63) / 64), 1, 1);
+                if (split < splitCount)
+                {
+                    _shadowSliceMatrices[split] = viewProjections[split];
+                    bias[split] = Mathf.Abs(biases[split].x) + Mathf.Abs(biases[split].y);
+                }
+
+                commands.SetComputeBufferParam(shader, kernel, ShadowSliceArgumentsIds[split], output.Arguments(split));
+                commands.SetComputeBufferParam(shader, kernel, ShadowSliceVisibleIds[split], output.Visible(split));
             }
 
+            commands.SetComputeMatrixArrayParam(shader, ShadowSliceMatrixVpId, _shadowSliceMatrices);
+            commands.SetComputeVectorParam(shader, ShadowSliceBiasId, bias);
+            commands.SetComputeIntParam(shader, ShadowSliceCountId, splitCount);
+            commands.DispatchCompute(shader, kernel, Math.Max(1, (CommandCount + 63) / 64), 1, 1);
             return output;
         }
 

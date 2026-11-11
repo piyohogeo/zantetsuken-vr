@@ -341,6 +341,24 @@ namespace Zantetsu.Rendering.Urp
         private readonly Matrix4x4[] _stereoVP = new Matrix4x4[2], _stereoV = new Matrix4x4[2], _stereoP = new Matrix4x4[2], _stereoCameraProjection = new Matrix4x4[2];
         private readonly Vector4[] _stereoPos = new Vector4[2];
 
+        // The batch of GPU constant blocks one dispatch assembles (VpNativeConstantCopy.compute, AssembleGlobalsBatch;
+        // the Direct3D 12 route). CopyBatchCapacity is the kernel's VP_NATIVE_BATCH.
+        private const int CopyBatchCapacity = 16;
+        private static readonly int JobOffsetsId = Shader.PropertyToID("_VpNativeJobOffsets");
+        private static readonly int JobIntsId = Shader.PropertyToID("_VpNativeJobInts");
+        private static readonly int JobMatrixVpId = Shader.PropertyToID("_VpNativeJobMatrixVP");
+        private static readonly int JobMatrixVId = Shader.PropertyToID("_VpNativeJobMatrixV");
+        private static readonly int JobProjectionId = Shader.PropertyToID("_VpNativeJobProjection");
+        private static readonly int JobShadowBiasId = Shader.PropertyToID("_VpNativeJobShadowBias");
+        private static readonly int JobLightDirectionId = Shader.PropertyToID("_VpNativeJobLightDirection");
+        private readonly int[] _copyJobOffsets = new int[CopyBatchCapacity * SlotCount];
+        private readonly int[] _copyJobInts = new int[CopyBatchCapacity * 4];
+        private readonly Matrix4x4[] _copyJobMatrixVP = new Matrix4x4[CopyBatchCapacity], _copyJobMatrixV = new Matrix4x4[CopyBatchCapacity], _copyJobProjection = new Matrix4x4[CopyBatchCapacity];
+        private readonly Vector4[] _copyJobShadowBias = new Vector4[CopyBatchCapacity], _copyJobLightDirection = new Vector4[CopyBatchCapacity];
+        private int _copyJobs;
+        private GraphicsBuffer _copyJobsConstants;
+        private bool _copyJobsStereo;
+
         private readonly List<CameraPasses> _cameras = new List<CameraPasses>(2);
         private readonly Dictionary<PipelineKey, PipelineEntry> _pipelines = new Dictionary<PipelineKey, PipelineEntry>();
         private readonly int[] _gpuOffsets = new int[8];
@@ -360,6 +378,7 @@ namespace Zantetsu.Rendering.Urp
         private readonly List<Block> _blocks = new List<Block>(64);
         private ComputeShader _copy;
         private int _copyKernel;
+        private int _copyBatchKernel = -1;
         private VpNativeDrawData _drawData;
         private string _environmentFailure;
         private bool _environmentChecked;
@@ -406,6 +425,7 @@ namespace Zantetsu.Rendering.Urp
             public int binding;
             public int size;
             public GraphicsBuffer offsets;
+            public int[] offsetWords;   // the same table for a batched dispatch, which takes it as values
             public string layoutKey;
         }
 
@@ -526,6 +546,9 @@ namespace Zantetsu.Rendering.Urp
         public long ClipCasterEntriesTaken { get; private set; }
         public long ClipCasterIssues { get; private set; }
         public long ShadowSliceCullDispatches { get; private set; }
+
+        /// <summary>The cascades those dispatches selected for (one dispatch takes a frame's cascades together).</summary>
+        public long ShadowSliceCullSlices { get; private set; }
         public long ShadowSliceCompactions { get; private set; }
         private readonly long[] _shadowSliceCompactions = new long[VpCullConditions.SplitCapacity];
         public long ShadowSliceCompactionsFor(int split) => _shadowSliceCompactions[split];
@@ -577,7 +600,11 @@ namespace Zantetsu.Rendering.Urp
         private readonly List<IntPtr> _groupPointers = new List<IntPtr>(4);
         private readonly Dictionary<(string layout, int context), int> _copiedGpuBlocks = new Dictionary<(string, int), int>();
         public long DirectClipDrawsIssued { get; private set; }
+        /// <summary>The dispatches that assembled GPU constant blocks; on Direct3D 12 one takes a pass's blocks together.</summary>
         public long GpuConstantDispatches { get; private set; }
+
+        /// <summary>The GPU constant blocks assembled (one a stage block of an issue).</summary>
+        public long GpuConstantBlocks { get; private set; }
         public long SharedGpuConstantBlocks { get; private set; }
 
         private sealed class PrewarmRequest
@@ -1214,6 +1241,7 @@ namespace Zantetsu.Rendering.Urp
                 {
                     _copy = Resources.Load<ComputeShader>(CopyShaderResource);
                     _copyKernel = _copy.FindKernel("AssembleGlobals");
+                    if (!Plugin.Vulkan) _copyBatchKernel = _copy.FindKernel("AssembleGlobalsBatch");
                     _drawData = new VpNativeDrawData(DrawBlocks, 16, Plugin.Vulkan ? 16 : 8, Plugin.Vulkan ? 65536 : 8192) { Name = "route ring " + (++s_ringsMade) };
                     VpNativeDrawRelease.Register(_drawData);
                 }
@@ -1433,7 +1461,14 @@ namespace Zantetsu.Rendering.Urp
                 // Borrow the actual offset table and write at zero in this pass's existing scratch buffer.
                 // No draw reads these warm bytes. Real IssueOne resets its allocation and overwrites them afterwards.
                 using (new ProfilingScope(commands, ConstantCopyWarmSampler))
-                    RecordConstantCopy(commands, entry.gpuBlocks[0], gpuConstants, 0, inputs);
+                {
+                    if (_copyBatchKernel >= 0)
+                    {
+                        AddConstantCopy(commands, entry.gpuBlocks[0], gpuConstants, 0, inputs);
+                        FlushConstantCopies(commands);
+                    }
+                    else RecordConstantCopy(commands, entry.gpuBlocks[0], gpuConstants, 0, inputs);
+                }
                 PrewarmConstantDispatches++;
                 request.constantsSubmitted = true;
                 break; // One kernel without keywords: body, shadow and stereo bindings share the compute pipeline.
@@ -1501,6 +1536,62 @@ namespace Zantetsu.Rendering.Urp
                 }
                 commands.DispatchCompute(copy, kernel, 1, 1, 1);
             }
+        }
+
+        // Direct3D 12: a block joins the pass's batch instead of taking a dispatch of its own. The batch is recorded
+        // by FlushConstantCopies -- when it is full, when a block is of another constant buffer or of another stereo
+        // state, and before the pass records its events (every dispatch of a pass precedes its events: IssueOne).
+        private void AddConstantCopy(CommandBuffer commands, GpuBlock block, GraphicsBuffer gpuConstants, int destination, in GlobalsInputs inputs)
+        {
+            if (_copyJobs > 0 && (_copyJobs == CopyBatchCapacity || !ReferenceEquals(_copyJobsConstants, gpuConstants) || _copyJobsStereo != inputs.stereo))
+                FlushConstantCopies(commands);
+            int job = _copyJobs++;
+            _copyJobsConstants = gpuConstants;
+            _copyJobsStereo = inputs.stereo;
+            Array.Copy(block.offsetWords, 0, _copyJobOffsets, job * SlotCount, SlotCount);
+            _copyJobInts[job * 4] = destination;
+            _copyJobInts[job * 4 + 1] = inputs.instanceMultiplier;
+            _copyJobMatrixVP[job] = inputs.matrixVP;
+            _copyJobMatrixV[job] = inputs.matrixV;
+            _copyJobProjection[job] = inputs.projection;
+            _copyJobShadowBias[job] = inputs.shadowBias;
+            // As the issue decided it (VpGpuCullSetup.CasterSliceSelectionFor), beside the direction's three.
+            _copyJobLightDirection[job] = new Vector4(inputs.lightDirection.x, inputs.lightDirection.y, inputs.lightDirection.z, inputs.sliceSelection);
+        }
+
+        /// <summary>Records the one dispatch that assembles the batch's blocks; nothing when the batch is empty.</summary>
+        private void FlushConstantCopies(CommandBuffer commands)
+        {
+            int jobs = _copyJobs;
+            if (jobs == 0) return;
+            _copyJobs = 0;
+            GraphicsBuffer gpuConstants = _copyJobsConstants;
+            _copyJobsConstants = null;
+            using (new ProfilingScope(commands, ConstantCopySampler))
+            {
+                ComputeShader copy = _copy;
+                int kernel = _copyBatchKernel;
+                commands.SetComputeBufferParam(copy, kernel, ConstantsId, gpuConstants);
+                commands.SetComputeIntParams(copy, JobOffsetsId, _copyJobOffsets);
+                commands.SetComputeIntParams(copy, JobIntsId, _copyJobInts);
+                commands.SetComputeMatrixArrayParam(copy, JobMatrixVpId, _copyJobMatrixVP);
+                commands.SetComputeMatrixArrayParam(copy, JobMatrixVId, _copyJobMatrixV);
+                commands.SetComputeMatrixArrayParam(copy, JobProjectionId, _copyJobProjection);
+                commands.SetComputeVectorArrayParam(copy, JobShadowBiasId, _copyJobShadowBias);
+                commands.SetComputeVectorArrayParam(copy, JobLightDirectionId, _copyJobLightDirection);
+                if (_copyJobsStereo)
+                {
+                    commands.SetComputeMatrixArrayParam(copy, StereoMatrixVpId, _stereoVP);
+                    commands.SetComputeMatrixArrayParam(copy, StereoMatrixVId, _stereoV);
+                    commands.SetComputeMatrixArrayParam(copy, StereoMatrixPId, _stereoP);
+                    commands.SetComputeMatrixArrayParam(copy, StereoCameraProjectionId, _stereoCameraProjection);
+                    commands.SetComputeVectorArrayParam(copy, StereoCameraPosId, _stereoPos);
+                }
+
+                commands.DispatchCompute(copy, kernel, jobs, 1, 1);
+            }
+
+            GpuConstantDispatches++;
         }
 
         private void RecordPrewarm(CommandBuffer commands, PrewarmRequest request, List<PipelineEntry> entries, int frame, bool restartRenderPass, Action<IntPtr> recordEvent = null)
@@ -1709,7 +1800,7 @@ namespace Zantetsu.Rendering.Urp
                 .Append(", runs of frames never executed: bodies ").Append(BodiesDropped).Append(", casters ").Append(CasterRunsDropped)
                 .Append(", caster bounds declared ").Append(CasterBoundsDeclared)
                 .Append(", caster bias ").Append(CasterDepthBiasSigned).Append("/").Append(CasterSlopeScaledDepthBiasSigned)
-                .Append(", compute shadow slice dispatches ").Append(ShadowSliceCullDispatches)
+                .Append(", compute shadow slice dispatches ").Append(ShadowSliceCullDispatches).Append(" (slices ").Append(ShadowSliceCullSlices).Append(")")
                 .Append(" (last caster variant ").Append(LastCasterVariant ?? "none").Append(")")
                 .Append(", compute shadow slice compactions ").Append(ShadowSliceCompactions)
                 .Append(" (by split ").Append(_shadowSliceCompactions[0]).Append('/').Append(_shadowSliceCompactions[1])
@@ -1747,7 +1838,8 @@ namespace Zantetsu.Rendering.Urp
                 .Append(" / kept by split ")
                 .Append(_clipCasterEntriesKept[0]).Append("/").Append(_clipCasterEntriesKept[1]).Append("/").Append(_clipCasterEntriesKept[2]).Append("/").Append(_clipCasterEntriesKept[3])
                 .Append(", issues ").Append(ClipCasterIssues)
-                .Append(", GPU constant dispatches ").Append(GpuConstantDispatches)
+                .Append(", GPU constant dispatches ").Append(GpuConstantDispatches).Append(" (blocks ").Append(GpuConstantBlocks).Append(")")
+                .Append(", main light slices computed ").Append(VpMainLightSlices.Computed).Append(" / shared ").Append(VpMainLightSlices.Shared)
                 .Append(", shared constant blocks ").Append(SharedGpuConstantBlocks);
             VpNativeDrawData ring = _drawData ?? _ringAfterDispose;
             if (ring != null && !ring.IsDisposed)
@@ -2128,7 +2220,9 @@ namespace Zantetsu.Rendering.Urp
 
                         var table = new GraphicsBuffer(GraphicsBuffer.Target.Structured, SlotCount, sizeof(uint)) { name = "VP Native Offsets " + buffer.Name };
                         table.SetData(offsets, "VpNativeDrawRoute.cs:1695");
-                        entry.gpuBlocks.Add(new GpuBlock { binding = binding, size = buffer.Size, offsets = table,
+                        var words = new int[SlotCount];
+                        for (int i = 0; i < words.Length; i++) words[i] = unchecked((int)offsets[i]);
+                        entry.gpuBlocks.Add(new GpuBlock { binding = binding, size = buffer.Size, offsets = table, offsetWords = words,
                             layoutKey = buffer.Size + ":" + string.Join(",", offsets) });
                     }
                     else
@@ -2379,8 +2473,14 @@ namespace Zantetsu.Rendering.Urp
 
                     gpuOffsets[b] = gpuConstantsUsed;
                     gpuConstantsUsed += padded;
-                    RecordConstantCopy(commands, block, gpuConstants, gpuOffsets[b], inputs);
-                    GpuConstantDispatches++;
+                    if (_copyBatchKernel >= 0) AddConstantCopy(commands, block, gpuConstants, gpuOffsets[b], inputs);
+                    else
+                    {
+                        RecordConstantCopy(commands, block, gpuConstants, gpuOffsets[b], inputs);
+                        GpuConstantDispatches++;
+                    }
+
+                    GpuConstantBlocks++;
                     if (Plugin.Vulkan && Plugin.VulkanShareGpuConstants) _copiedGpuBlocks[sharedKey] = gpuOffsets[b];
                 }
             }
@@ -2472,7 +2572,8 @@ namespace Zantetsu.Rendering.Urp
                 }
 
                 IntPtr eventData = drawData.Finish(out uint serial);
-                // Not recorded here: the pass records every event after its last constant dispatch (RecordPrepared).
+                // Not recorded here: the pass records every event after its last constant dispatch (RecordPrepared;
+                // on Direct3D 12 that dispatch is the batch's, recorded by FlushConstantCopies just before the events).
                 // A compute dispatch recorded right after a plugin event wrote nothing (play-27, 2026-10-08: of four
                 // caster splits only the first's GPU block was assembled; the other three read back as zero), so no
                 // Unity compute work of the route follows a plugin event within a pass. The block is Prepared until then.
@@ -2489,6 +2590,7 @@ namespace Zantetsu.Rendering.Urp
         /// </summary>
         private void IssuePendingEvents(CommandBuffer commands, int firstBlock = -1, bool group = false)
         {
+            FlushConstantCopies(commands);
             if (!group) { _drawData?.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.DrawEventId); return; }
             PrepareGroupEvents(commands, firstBlock);
             foreach (IntPtr block in _groupPointers)
@@ -2496,6 +2598,7 @@ namespace Zantetsu.Rendering.Urp
         }
         private void PrepareGroupEvents(CommandBuffer commands, int firstBlock)
         {
+            FlushConstantCopies(commands);
             _drawData.GroupPrepared(_groupPointers);
             // The draws' entries give way to their groups'; a compute barrier event's entry (its own event, recorded already) stays.
             for (int i = _blocks.Count - 1; i >= firstBlock; i--) if (!_blocks[i].barrier) _blocks.RemoveAt(i);
@@ -2586,6 +2689,9 @@ namespace Zantetsu.Rendering.Urp
         private void DropUnrecorded()
         {
             _drawData?.DropPrepared();
+            // Their constant blocks with them: a batch never recorded is of the Execute that ended early.
+            _copyJobs = 0;
+            _copyJobsConstants = null;
         }
 
         private static Texture TextureOrWhite(Texture texture)
@@ -3124,7 +3230,11 @@ namespace Zantetsu.Rendering.Urp
                     // refused as unprepared and the refusal halted the compaction).
                     for (int i = firstBlock; i < _route._blocks.Count; i++) if (!_route._blocks[i].barrier) _passes.colourBlocks.Add(_route._blocks[i]);
                     // Mark Recorded now so the ring and camera sentinel protect both callbacks' shared block.
-                    if (!grouped) _route._drawData.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.PrepareEventId);
+                    if (!grouped)
+                    {
+                        _route.FlushConstantCopies(commands);
+                        _route._drawData.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.PrepareEventId);
+                    }
                 }
                 else _route.IssuePendingEvents(commands, firstBlock, grouped);
                 // Diagnosis (PLANE-1): the motion output of this frame read back AFTER the plugin's draw events were issued into
@@ -3507,8 +3617,8 @@ namespace Zantetsu.Rendering.Urp
                     int resolution = ShadowUtils.GetMaxTileResolutionInAtlas(width, shadowData.mainLightShadowmapHeight, cascades);
                     for (int cascade = 0; cascade < cascades; cascade++)
                     {
-                        if (!ShadowUtils.ExtractDirectionalLightMatrix(ref cullResults, shadowData, lightIndex, cascade, width, renderTargetHeight, resolution,
-                                visibleLight.light.shadowNearPlane, out Vector4 _, out ShadowSliceData slice))
+                        if (!VpMainLightSlices.Extract(ref cullResults, shadowData, lightIndex, cascade, width, renderTargetHeight, resolution,
+                                visibleLight.light.shadowNearPlane, out ShadowSliceData slice))
                         {
                             return "invalid cascade slice " + cascade;
                         }
@@ -3570,7 +3680,8 @@ namespace Zantetsu.Rendering.Urp
                             var key = (issue.batch, issue.view);
                             if (!UsesComputeShadowSlices(computeSlices, issue) || _sliceOutputs.ContainsKey(key)) continue;
                             _sliceOutputs.Add(key, issue.batch.IssueShadowSliceCull(commands, issue.view, _sliceViewProjections, _biases, data.splitCount));
-                            _route.ShadowSliceCullDispatches += data.splitCount;
+                            _route.ShadowSliceCullDispatches++;
+                            _route.ShadowSliceCullSlices += data.splitCount;
                         }
                     }
 
@@ -3661,7 +3772,7 @@ namespace Zantetsu.Rendering.Urp
                         if (request.batch.CommandCount == 0)
                         {
                             request.sliceOutput = request.batch.IssueShadowSliceCull(commands, request.view, _sliceViewProjections, _biases, data.splitCount);
-                            _route.PrewarmShadowSliceDispatches += data.splitCount;
+                            _route.PrewarmShadowSliceDispatches++;
                         }
                         request.slicesSubmitted = true;
                     }

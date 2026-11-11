@@ -111,7 +111,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(route.PrewarmCompleted, Is.EqualTo(route.PrewarmRecorded), "every warm event was consumed successfully");
                 Assert.That(route.PrewarmCullDispatches, Is.EqualTo(populateBeforeRender ? 0 : 1));
                 Assert.That(route.PrewarmConstantDispatches, Is.EqualTo(1));
-                Assert.That(route.PrewarmShadowSliceDispatches, Is.EqualTo(shadowed && !populateBeforeRender ? route.LastSplitCount : 0));
+                Assert.That(route.PrewarmShadowSliceDispatches, Is.EqualTo(shadowed && !populateBeforeRender ? 1 : 0), "one dispatch selects for every cascade");
                 Assert.That(route.PrewarmCompactionDispatches, Is.EqualTo(populateBeforeRender ? 0 : shadowed ? 5 : 2));
                 foreach (string variant in variants) Assert.That(description, Does.Contain(variant));
                 if (!shadowed) Assert.That(description, Does.Not.Contain("caster-"), "this camera has no main-light shadow pass");
