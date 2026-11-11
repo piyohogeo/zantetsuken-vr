@@ -87,6 +87,30 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
+        /// The Player argument that keeps one dispatch a GPU constant block (the way before D-262): the comparison's
+        /// other side, and the way back on a device where the batch's kernel misbehaves. Without it a pass's blocks
+        /// are assembled by one dispatch, on Direct3D 12 and on Vulkan alike.
+        /// </summary>
+        public const string UnbatchedConstantsArgument = "-zantetsuVpNativeUnbatchedConstants";
+
+        private static bool? s_batchConstants;
+
+        /// <summary>Whether a pass's GPU constant blocks are assembled by one dispatch; a caller (a test) may set it before a route is made.</summary>
+        public static bool BatchConstantCopies
+        {
+            get
+            {
+                if (!s_batchConstants.HasValue)
+                {
+                    s_batchConstants = Array.IndexOf(Environment.GetCommandLineArgs(), UnbatchedConstantsArgument) < 0;
+                }
+
+                return s_batchConstants.Value;
+            }
+            set => s_batchConstants = value;
+        }
+
+        /// <summary>
         /// Unity-API VP3C groups commands in one indirect call when true; false issues one call per command.
         /// A host sets this before constructing a world. Native plugin draws have their own capability policy.
         /// </summary>

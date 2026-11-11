@@ -342,7 +342,8 @@ namespace Zantetsu.Rendering.Urp
         private readonly Vector4[] _stereoPos = new Vector4[2];
 
         // The batch of GPU constant blocks one dispatch assembles (VpNativeConstantCopy.compute, AssembleGlobalsBatch;
-        // the Direct3D 12 route). CopyBatchCapacity is the kernel's VP_NATIVE_BATCH.
+        // Direct3D 12 and Vulkan alike, unless the launch keeps one dispatch a block: VpNativeDrawSetup.BatchConstantCopies).
+        // CopyBatchCapacity is the kernel's VP_NATIVE_BATCH.
         private const int CopyBatchCapacity = 16;
         private static readonly int JobOffsetsId = Shader.PropertyToID("_VpNativeJobOffsets");
         private static readonly int JobIntsId = Shader.PropertyToID("_VpNativeJobInts");
@@ -600,7 +601,7 @@ namespace Zantetsu.Rendering.Urp
         private readonly List<IntPtr> _groupPointers = new List<IntPtr>(4);
         private readonly Dictionary<(string layout, int context), int> _copiedGpuBlocks = new Dictionary<(string, int), int>();
         public long DirectClipDrawsIssued { get; private set; }
-        /// <summary>The dispatches that assembled GPU constant blocks; on Direct3D 12 one takes a pass's blocks together.</summary>
+        /// <summary>The dispatches that assembled GPU constant blocks; one takes a pass's blocks together unless the launch keeps one a block.</summary>
         public long GpuConstantDispatches { get; private set; }
 
         /// <summary>The GPU constant blocks assembled (one a stage block of an issue).</summary>
@@ -1241,7 +1242,7 @@ namespace Zantetsu.Rendering.Urp
                 {
                     _copy = Resources.Load<ComputeShader>(CopyShaderResource);
                     _copyKernel = _copy.FindKernel("AssembleGlobals");
-                    if (!Plugin.Vulkan) _copyBatchKernel = _copy.FindKernel("AssembleGlobalsBatch");
+                    if (VpNativeDrawSetup.BatchConstantCopies) _copyBatchKernel = _copy.FindKernel("AssembleGlobalsBatch");
                     _drawData = new VpNativeDrawData(DrawBlocks, 16, Plugin.Vulkan ? 16 : 8, Plugin.Vulkan ? 65536 : 8192) { Name = "route ring " + (++s_ringsMade) };
                     VpNativeDrawRelease.Register(_drawData);
                 }
@@ -1538,7 +1539,8 @@ namespace Zantetsu.Rendering.Urp
             }
         }
 
-        // Direct3D 12: a block joins the pass's batch instead of taking a dispatch of its own. The batch is recorded
+        // A block joins the pass's batch instead of taking a dispatch of its own (on Vulkan: a block that is not
+        // another's shared one -- the sharing is decided before this and is unchanged). The batch is recorded
         // by FlushConstantCopies -- when it is full, when a block is of another constant buffer or of another stereo
         // state, and before the pass records its events (every dispatch of a pass precedes its events: IssueOne).
         private void AddConstantCopy(CommandBuffer commands, GpuBlock block, GraphicsBuffer gpuConstants, int destination, in GlobalsInputs inputs)
@@ -2573,7 +2575,7 @@ namespace Zantetsu.Rendering.Urp
 
                 IntPtr eventData = drawData.Finish(out uint serial);
                 // Not recorded here: the pass records every event after its last constant dispatch (RecordPrepared;
-                // on Direct3D 12 that dispatch is the batch's, recorded by FlushConstantCopies just before the events).
+                // with the batch that dispatch is the batch's, recorded by FlushConstantCopies just before the events).
                 // A compute dispatch recorded right after a plugin event wrote nothing (play-27, 2026-10-08: of four
                 // caster splits only the first's GPU block was assembled; the other three read back as zero), so no
                 // Unity compute work of the route follows a plugin event within a pass. The block is Prepared until then.

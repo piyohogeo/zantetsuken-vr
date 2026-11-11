@@ -6,10 +6,11 @@
 // frame late on the CPU. One thread a block.
 //
 // Two kernels assemble the same bytes. AssembleGlobals takes one block a dispatch: its offsets in a buffer and what
-// the pass gives in single values (the Vulkan route, which shares its blocks otherwise). AssembleGlobalsBatch takes
-// up to VP_NATIVE_BATCH blocks a dispatch, one a thread group: each block's offsets, destination and given values
-// stand in arrays at the group's index (the Direct3D 12 route: a dispatch costs the main thread about 2 microseconds
-// whatever it assembles, and a frame has about nine blocks; measured 2026-11-11, DESIGN 4.5.8).
+// the pass gives in single values (the way before D-262, kept for a launch that asks for it). AssembleGlobalsBatch
+// takes up to VP_NATIVE_BATCH blocks a dispatch, one a thread group: each block's offsets, destination and given
+// values stand in arrays at the group's index (a dispatch costs the main thread about 2 microseconds whatever it
+// assembles, and a Direct3D 12 frame has about nine blocks; measured 2026-11-11, DESIGN 4.5.8). That the two write
+// the same bytes is a test on the Editor's device, Vulkan among them (VpNativeConstantCopyTests).
 //
 // Each known value has a slot; _VpNativeOffsets[slot] is the byte offset of that value in the block, as the compiled
 // shader laid it out (VpNativeShaderBinary), or VP_NATIVE_UNUSED when the stage does not read it. A matrix is stored
