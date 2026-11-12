@@ -114,6 +114,7 @@ namespace Zantetsu.Editor.Sandbox
             "SpatialSplitCaptureSink", "SpatialSplitCaptureSession", "SpatialSplitCaptureSample", "SpatialSplitReplay", "SpatialSplitSample",
             "SpatialSplitReplayPlayer", "SpatialSplitBoneSample", "SpatialSplitMethodEval", "SpatialSplitMethodEvalPlayer",   // NPC-BONE-EVAL-1
             "NpcPiecePickSample", "NpcModelWeightTable", "NpcPiecePickCopy", "NpcPiecePickSet", "PieceCollector",   // NPC-PIECE-PICK-1
+            "FacePickSample", "FacePickCopy", "FacePickSet", "FacePickIo", "FaceCollector", "VpDrawSlotOwner",   // FACE-PICK-1
         };
 
         private static string FindTypes(string output, string[] names, string what, out bool present)

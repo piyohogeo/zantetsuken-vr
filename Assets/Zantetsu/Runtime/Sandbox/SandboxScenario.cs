@@ -531,6 +531,8 @@ namespace Zantetsu.Sandbox
             // argument asks for it (a normal launch creates nothing).
             HeadHeightDiagnosis.InstallIfAsked();
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // The face collection (FACE-PICK-1, development only): the left X button saves the drawn faces the line passes through; only when asked for.
+            FaceCollector.InstallIfAsked();
             // The piece collection (NPC-PIECE-PICK-1, development only): the left X button saves the piece the line rests on; only when asked for.
             PieceCollector.InstallIfAsked();
 #endif

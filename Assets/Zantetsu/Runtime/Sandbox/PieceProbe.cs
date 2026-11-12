@@ -18,6 +18,7 @@ namespace Zantetsu.Sandbox
     /// to the world (the line is no collider).
     /// <para>On only with the Player argument <see cref="Argument"/> (a normal launch creates nothing).</para>
     /// <para>NPC-PIECE-PICK-1: the piece collection (PieceCollector, development builds) is this probe with the press doing more.</para>
+    /// <para>FACE-PICK-1: the face collection (FaceCollector, development builds) is this probe looking at what is drawn, not at the colliders.</para>
     /// </summary>
     public class PieceProbe : MonoBehaviour
     {
@@ -26,7 +27,8 @@ namespace Zantetsu.Sandbox
         /// <summary>The Player argument that turns the probe on; without it nothing is created.</summary>
         public const string Argument = "-zantetsuPieceProbe";
 
-        private const float Reach = 10f, Radius = 0.1f;
+        protected const float Reach = 10f;
+        private const float Radius = 0.1f;
         private static readonly InputFeatureUsage<Vector3> PointerPosition = new InputFeatureUsage<Vector3>("PointerPosition");
         private static readonly InputFeatureUsage<Quaternion> PointerRotation = new InputFeatureUsage<Quaternion>("PointerRotation");
 
@@ -71,7 +73,7 @@ namespace Zantetsu.Sandbox
             bool aimed = TryAim(left, out Vector3 origin, out Vector3 direction);
             bool onPiece = false;
             RaycastHit hit = default;
-            bool found = aimed && TryTarget(origin, direction, out hit, out onPiece);
+            bool found = aimed && Target(origin, direction, out hit, out onPiece);
             Draw(aimed, origin, found ? hit.point : origin + (direction * Reach), onPiece);
 
             bool pressed = left.isValid && left.TryGetFeatureValue(CommonUsages.primaryButton, out bool down) && down;
@@ -103,6 +105,9 @@ namespace Zantetsu.Sandbox
             PlayMenuDeviceInput.ToWorld(eye != null ? eye.transform.parent : null, position, rotation, out origin, out direction);
             return true;
         }
+
+        /// <summary>What the line rests on this frame (where it ends, and whether it is drawn green): the probe's own look, or a derived collector's.</summary>
+        protected virtual bool Target(Vector3 origin, Vector3 direction, out RaycastHit hit, out bool onPiece) => TryTarget(origin, direction, out hit, out onPiece);
 
         /// <summary>What the line rests on: the nearest piece of the cut world the swept sphere meets, else the nearest thing a thin ray meets.</summary>
         private bool TryTarget(Vector3 origin, Vector3 direction, out RaycastHit hit, out bool onPiece)
