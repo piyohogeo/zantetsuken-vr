@@ -84,7 +84,13 @@ namespace Zantetsu.PhysicsCut.Tests
             return indices;
         }
 
-        private NpcBoneSplitRecord Decide(NpcBoneLineage lineage, NpcBonePiece piece, int[] convexBones, uint[] indices, out byte[] sides, string insufficient = null, byte[] boneSides = null)
+        /// <summary>
+        /// The decision over a fixture. Its topology (NPC-BONE-TOPOLOGY-1): <paramref name="topologyOfLocal"/> one id a vertex of the
+        /// lineage; left out, every render vertex is a topology vertex of its own -- a fixture with no attribute seam, which is every
+        /// case here written before the decision read the topology (their expectations are as they were).
+        /// </summary>
+        private NpcBoneSplitRecord Decide(NpcBoneLineage lineage, NpcBonePiece piece, int[] convexBones, uint[] indices, out byte[] sides, string insufficient = null, byte[] boneSides = null,
+            int[] topologyOfLocal = null, int topologyVertexCount = 0, bool noTopology = false)
         {
             var native = new NativeArray<uint>(indices, Allocator.Temp);
             int c = convexBones.Length, t = indices.Length / 3;
@@ -104,7 +110,12 @@ namespace Zantetsu.PhysicsCut.Tests
                     insufficient = insufficient, maxTriangles = 131072, maxOriginSteps = NpcBoneSplitSearch.DefaultMaxOriginSteps,
                 };
                 var record = default(NpcBoneSplitRecord);
-                NpcBoneSplitSearch.Decide(in input, (byte*)Unity.Collections.LowLevel.Unsafe.NativeArrayUnsafeUtility.GetUnsafePtr(bytes), bytes.Length, ref record);
+                using (NpcBoneTopology topology = NpcBoneTopology.OfLocal(in input.lineage, topologyOfLocal, topologyVertexCount))
+                {
+                    if (!noTopology) input.topology = topology.Map;
+                    NpcBoneSplitSearch.Decide(in input, (byte*)Unity.Collections.LowLevel.Unsafe.NativeArrayUnsafeUtility.GetUnsafePtr(bytes), bytes.Length, ref record);
+                }
+
                 sides = bytes.ToArray();
                 TestContext.Out.WriteLine(record.verdict + " (" + record.reason + "): bones held " + record.pieceBones + ", clusters " + record.clusters + ", components " + record.meshComponents
                     + ", groups " + record.groups + " (" + record.fullGroups + " full, " + record.unboundGroups + " mesh alone), weights on bones not held " + record.removedWeights
@@ -511,7 +522,8 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(up.verdict, Is.Not.EqualTo(NpcBoneSplitVerdict.Insufficient));
         }
 
-        // ----- the support rule: a mesh component's connections by its supporting vertices (NPC-BONE-SUPPORT-1, 2026-11-10) -----
+        // ----- a mesh component's connections: every cluster it supports (NPC-BONE-ANY-SUPPORT-1, 2026-11-12; the 3/10 bound of
+        // ----- NPC-BONE-SUPPORT-1, 2026-11-10, is removed: the cases below were its cases and now expect the connection) -----
 
         /// <summary>A ring of <paramref name="count"/> base vertices from <paramref name="first"/> on, joined by triangles that share vertices: one mesh component.</summary>
         private static List<uint> Ring(int first, int count)
@@ -528,14 +540,13 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         /// <summary>
-        /// **A bridge of few vertices no longer holds two clusters together.** Below the waist the trunk's skin (12 vertices on the
-        /// pelvis, two of them weighted to the hand as well) and the hand's skin (3 on the hand), a convex each: the trunk's component
-        /// supports the pelvis with 12 vertices and the hand with 2 -- 20 &lt; 36 -- so its connection to the hand is left out, and the
-        /// piece is two groups apart (before the rule the one component joined them). The hand's connection stays; nothing is lost on
-        /// the way, and each child's record holds the bones of its convexes.
+        /// **A bridge of few vertices holds two clusters together.** Below the waist the trunk's skin (12 vertices on the pelvis, two
+        /// of them weighted to the hand as well) and the hand's skin (3 on the hand), a convex each: the trunk's component supports the
+        /// pelvis with 12 vertices and the hand with 2, and both connections are used -- the piece is one group. (Under the 3/10 bound
+        /// the hand's was left out, 20 &lt; 36, and the piece came apart.)
         /// </summary>
         [Test]
-        public void AMeshComponentBridgingAClusterWithFewVertices_IsNotConnectedToIt()
+        public void AMeshComponentBridgingAClusterWithFewVertices_IsConnectedToIt()
         {
             // 0-11 the trunk's skin on the pelvis (0 and 6 on the hand too), 12-14 the hand's skin
             var weights = new ulong[15];
@@ -552,24 +563,20 @@ namespace Zantetsu.PhysicsCut.Tests
             NpcBoneSplitRecord record = Decide(lineage, below, convexBones, corners.ToArray(), out byte[] sides, boneSides: boneSides);
             Assert.That(record.clusters, Is.EqualTo(2), "the pelvis | the hand and the finger");
             Assert.That(record.meshComponents, Is.EqualTo(2), "the layout: the ring and the hand's triangle");
-            Assert.That(record.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), "the bridge of two vertices does not join the clusters");
-            Assert.That(record.connectionsKept == 2 && record.connectionsDropped == 1, Is.True, "the ring to the pelvis, the hand's skin to the hand; the ring to the hand left out");
-            Assert.That(record.groups == 2 && record.fullGroups == 2 && record.unboundGroups == 0, Is.True);
-            Assert.That(sides[0], Is.Not.EqualTo(sides[1]));
-            Assert.That(sides[0] == 1 && sides[2] == 1 && sides[2 + 5] == 1, Is.True, "the trunk (more triangles) positive with its ring");
-            Assert.That(sides[1] == 0 && sides[2 + 6] == 0, Is.True, "the hand's convex and skin negative");
-            AssertWhole(record, sides, 2, 7);
-            AssertChildrenHoldTheirConvexes(lineage, below, boneSides, sides, convexBones);
-            Assert.That(record.removedWeights, Is.Zero, "nothing of the weights is removed: the bridge's weights are on held bones, only not connected");
+            Assert.That(record.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), "the bridge of two vertices joins the clusters");
+            Assert.That(record.reason, Is.EqualTo(NpcBoneSplitSearch.ReasonOneGroup));
+            Assert.That(record.connectionsKept == 3 && record.connectionsDropped == 0, Is.True, "the ring to the pelvis and to the hand, the hand's skin to the hand");
+            Assert.That(record.groups == 1 && record.fullGroups == 1 && record.unboundGroups == 0, Is.True);
+            Assert.That(record.removedWeights, Is.Zero, "every weight is on a held bone");
         }
 
         /// <summary>
-        /// **The bound: of a peak of 10, a support of 3 stays and 2 goes; clusters tied at the peak all stay.** The ring of 10 pelvis
-        /// vertices with k of them weighted to the hand as well: k = 3 (30 &gt;= 30) keeps the connection and the piece is one group; k = 2
-        /// (20 &lt; 30) drops it and the piece is apart. All 10 weighted to both: two clusters at the peak, both kept.
+        /// **Any positive support connects: one vertex in ten as all ten; none does not.** The ring of 10 pelvis vertices with k of
+        /// them weighted to the hand as well: k = 10, 3, 2 and 1 each keep the connection and the piece is one group (under the 3/10
+        /// bound 2 and 1 went); k = 0 is no support, and the piece is apart.
         /// </summary>
         [Test]
-        public void ASupportOfThreeInTen_Stays_TwoGoes_AndClustersTiedAtThePeakAllStay()
+        public void AnyPositiveSupport_Connects_OneVertexInTenAsAllTen_AndNoneDoesNot()
         {
             NpcBoneSplitRecord Case(int bridging)
             {
@@ -585,29 +592,30 @@ namespace Zantetsu.PhysicsCut.Tests
                 return record;
             }
 
-            NpcBoneSplitRecord three = Case(3);
-            Assert.That(three.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), "3 of a peak of 10 is kept: 30 >= 30");
-            Assert.That(three.connectionsKept == 3 && three.connectionsDropped == 0, Is.True);
-            Assert.That(three.groups, Is.EqualTo(1));
+            foreach (int bridging in new[] { 10, 3, 2, 1 })
+            {
+                NpcBoneSplitRecord joined = Case(bridging);
+                Assert.That(joined.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), bridging + " of 10 vertices on the hand as well: connected");
+                Assert.That(joined.connectionsKept == 3 && joined.connectionsDropped == 0, Is.True, bridging + ": the ring to both clusters, the hand's skin to the hand");
+                Assert.That(joined.groups, Is.EqualTo(1));
+            }
 
-            NpcBoneSplitRecord two = Case(2);
-            Assert.That(two.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), "2 of a peak of 10 goes: 20 < 30");
-            Assert.That(two.connectionsKept == 2 && two.connectionsDropped == 1, Is.True);
-
-            NpcBoneSplitRecord tied = Case(10);
-            Assert.That(tied.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), "both clusters at the peak: both kept");
-            Assert.That(tied.connectionsKept == 3 && tied.connectionsDropped == 0, Is.True);
+            NpcBoneSplitRecord none = Case(0);
+            Assert.That(none.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), "no vertex of the ring on the hand: nothing joins them");
+            Assert.That(none.connectionsKept == 2 && none.connectionsDropped == 0, Is.True);
+            Assert.That(none.groups == 2 && none.fullGroups == 2, Is.True);
         }
 
         /// <summary>
-        /// **A vertex supports a cluster once**, however many triangles name it, however many bones of the cluster it is weighted to, and
-        /// however many of a cut vertex's origins reach it. The ring of 10 pelvis vertices with two more supporters of the arm's cluster:
-        /// vertex 10 in three triangles and weighted to the hand and the finger (two bones of one cluster), and a cut vertex interpolated
-        /// between two unreferenced hand vertices (both origins reach the cluster). Counted once each, the support is 2 of 10 and the
-        /// connection goes; counted twice anywhere it would be 3 or more and stay. The cut vertex is walked back as before.
+        /// **A component and a cluster are one connection**, however many vertices support it, however many triangles name a vertex,
+        /// however many bones of the cluster it is weighted to, and however many of a cut vertex's origins reach it. The ring of 10
+        /// pelvis vertices with two supporters of the arm's cluster: vertex 10 in three triangles and weighted to the hand and the
+        /// finger (two bones of one cluster), and a cut vertex interpolated between two unreferenced hand vertices (both origins reach
+        /// the cluster). The ring is connected to the arm's cluster -- once -- and the piece is one group (under the 3/10 bound the two
+        /// supporters of 10 were left out). The cut vertex is walked back as before.
         /// </summary>
         [Test]
-        public void ASupportingVertex_CountsOnce_WhateverItsTrianglesBonesOrOrigins()
+        public void AComponentAndACluster_AreOneConnection_WhateverTheVerticesTrianglesBonesOrOrigins()
         {
             // 0-9 the ring on the pelvis, 10 the doubly weighted vertex, 11-12 hand vertices no triangle names (the cut vertex's origins), 13-15 the hand's skin
             var weights = new ulong[16];
@@ -628,11 +636,66 @@ namespace Zantetsu.PhysicsCut.Tests
             NpcBoneSplitRecord record = Decide(lineage, CutBy(lineage, Whole(lineage), BodyWaist, false), convexBones, corners.ToArray(), out byte[] sides, boneSides: boneSides);
             Assert.That(record.clusters == 2 && record.meshComponents == 2 && record.referencedVertices == 15, Is.True, "the layout: the ring with 10 and the cut vertex, the hand's triangle");
             Assert.That(record.originSteps, Is.EqualTo(15 + 2), "the cut vertex walked back to its two origins");
-            Assert.That(record.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), "2 supporters of 10: the connection goes (3 would stay)");
-            Assert.That(record.connectionsKept == 2 && record.connectionsDropped == 1, Is.True);
-            Assert.That(sides[2 + 7] == sides[0] && sides[2 + 8] == sides[0], Is.True, "the doubly weighted vertex's and the cut vertex's triangles stay with the ring");
-            AssertWhole(record, sides, 2, 10);
-            AssertChildrenHoldTheirConvexes(lineage, CutBy(lineage, Whole(lineage), BodyWaist, false), boneSides, sides, convexBones);
+            Assert.That(record.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), "2 supporters of 10: connected");
+            Assert.That(record.connectionsKept == 3 && record.connectionsDropped == 0, Is.True, "the ring to the pelvis, the ring to the arm's cluster (once), the hand's skin to it");
+            Assert.That(record.groups == 1 && record.fullGroups == 1, Is.True);
+        }
+
+        // A body cut at the neck, the side below: 0 trunk (y 1.0), 1 head (y 1.6), 2 clavicle from the trunk (x 0.1, y 1.52: just
+        // across the plane y = 1.5, and without a convex -- not held), 3 upper arm from the shoulder (x 0.2, y 1.45), 4 forearm from
+        // the elbow (x 0.25, y 1.15), 5 hand from the wrist (x 0.25, y 0.85). With the clavicle not held the arm's bones are a
+        // cluster apart from the trunk's.
+        private static readonly int[] Neck = { -1, 0, 0, 2, 3, 4 };
+        private static readonly float3[] NeckJoints =
+        {
+            new float3(0f, 1.0f, 0f), new float3(0f, 1.6f, 0f), new float3(0.1f, 1.52f, 0f), new float3(0.2f, 1.45f, 0f), new float3(0.25f, 1.15f, 0f), new float3(0.25f, 0.85f, 0f),
+        };
+        private static readonly float4 NeckPlane = new float4(0f, 1f, 0f, -1.5f);
+
+        /// <summary>
+        /// **A neck cut does not send the hand's mesh away with the whole arm's convexes** (NPC-BONE-ANY-SUPPORT-1; seen on Link
+        /// 2026-11-12, picks 2-5 and 31 of face-pick\link-run-2-topology). Below the neck the trunk's convex, and the upper arm's,
+        /// the forearm's and the hand's, all three of one cluster the clavicle no longer joins to the trunk. The jacket is one mesh
+        /// component, trunk and sleeve: 12 vertices on the trunk, two of them on the upper arm as well and one on the clavicle (not
+        /// held: supports nothing). The hand is a mesh island of its own, on the hand. The sleeve's two vertices connect the jacket to
+        /// the arm's cluster and the hand connects to it too: trunk, sleeve, arm and hand are one group and nothing comes off. Under
+        /// the 3/10 bound the sleeve's 2 of 12 were left out, and the arm's three convexes left with the hand's one triangle while
+        /// the sleeve stayed with the trunk.
+        /// </summary>
+        [Test]
+        public void BelowANeckCut_TheSleeveOfFewVerticesHoldsTheArmToTheTrunk_AndTheHandDoesNotLeaveWithTheArmsConvexes()
+        {
+            // 0-11 the jacket (0 and 6 on the upper arm as well, 3 on the clavicle as well), 12-14 the hand's skin
+            var weights = new ulong[15];
+            for (int v = 0; v < 12; v++) weights[v] = W(0);
+            weights[0] = W(0, 3);
+            weights[6] = W(0, 3);
+            weights[3] = W(0, 2);
+            for (int v = 12; v < 15; v++) weights[v] = W(5);
+            NpcBoneLineage lineage = Lineage(Neck, weights, NeckJoints);
+            NpcBonePiece below = CutBy(lineage, Whole(lineage), NeckPlane, false);
+            Assert.That(below.IsJointKept(0) && below.IsJointKept(3) && below.IsJointKept(4) && below.IsJointKept(5), Is.True, "the layout: the trunk's and the arm's joints are kept");
+            Assert.That(!below.IsJointKept(1) && !below.IsJointKept(2), Is.True, "the layout: the head's and the clavicle's joints are across the plane");
+            var corners = Ring(0, 12);
+            corners.AddRange(Triangles(12, 13, 14));
+            int[] convexBones = { 0, 3, 4, 5 };
+            NpcBoneSplitRecord record = Decide(lineage, below, convexBones, corners.ToArray(), out _);
+            Assert.That(record.clusters, Is.EqualTo(2), "the trunk | the upper arm, the forearm and the hand: one cluster of the arm, apart from the trunk's");
+            Assert.That(record.meshComponents, Is.EqualTo(2), "the jacket with its sleeve; the hand");
+            Assert.That(record.removedWeights, Is.EqualTo(1), "the clavicle's weight: on a bone not held");
+            Assert.That(record.connectionsKept == 3 && record.connectionsDropped == 0, Is.True, "the jacket to the trunk and (by two vertices) to the arm, the hand to the arm");
+            Assert.That(record.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), "nothing comes off: the hand's mesh does not take the arm's convexes away");
+            Assert.That(record.reason, Is.EqualTo(NpcBoneSplitSearch.ReasonOneGroup));
+            Assert.That(record.groups == 1 && record.fullGroups == 1 && record.unboundGroups == 0, Is.True, "trunk, sleeve, arm and hand: one group");
+
+            // Without the sleeve's two vertices nothing of the jacket supports the arm: the arm and its hand are a limb of their own.
+            weights[0] = W(0);
+            weights[6] = W(0);
+            NpcBoneLineage bare = Lineage(Neck, weights, NeckJoints);
+            NpcBoneSplitRecord apart = Decide(bare, CutBy(bare, Whole(bare), NeckPlane, false), convexBones, corners.ToArray(), out byte[] sides);
+            Assert.That(apart.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), "the layout: only the sleeve's vertices held them together");
+            Assert.That(sides[1] == sides[2] && sides[2] == sides[3] && sides[3] != sides[0], Is.True, "the arm's three convexes together, apart from the trunk's");
+            AssertWhole(apart, sides, 4, 7);
         }
 
         // ----- the smallest independent group first (2026-11-07) ---------------------------------------------------------
@@ -753,6 +816,207 @@ namespace Zantetsu.PhysicsCut.Tests
             NpcBoneSplitRecord other = Decide(lineage, below, reversed, reversedTriangles, out sides);
             Assert.That(sides, Is.EqualTo(new byte[] { 0, 1, 0, 0, 1, 0, 0, 0 }), "the same hand in the other order: " + ConvexSides(sides, reversed));
             AssertWhole(other, sides, 3, 5);
+        }
+
+
+        // ----- NPC-BONE-TOPOLOGY-1: the mesh components are of the topology, not of the render vertices --------------------
+
+        /// <summary>
+        /// Each side's surface by its topology: every edge between two topology vertices with how many triangles of the side use it,
+        /// and whether the two that use an inner edge run it in opposite senses. Closed: no edge used once, none used more than twice,
+        /// every edge's two uses opposite.
+        /// </summary>
+        private static (int triangles, int boundary, int nonManifold, int badWinding) Surface(uint[] indices, int[] topologyOfLocal, byte[] sides, int convexes, int side)
+        {
+            var uses = new Dictionary<(int, int), int>();
+            var directed = new Dictionary<(int, int), int>();
+            int triangles = 0;
+            for (int k = 0; k < indices.Length / 3; k++)
+            {
+                if (side >= 0 && sides[convexes + k] != side) continue;
+                triangles++;
+                for (int e = 0; e < 3; e++)
+                {
+                    int a = topologyOfLocal[indices[(3 * k) + e] - BaseStart], b = topologyOfLocal[indices[(3 * k) + ((e + 1) % 3)] - BaseStart];
+                    (int, int) key = a < b ? (a, b) : (b, a);
+                    uses[key] = uses.TryGetValue(key, out int n) ? n + 1 : 1;
+                    directed[(a, b)] = directed.TryGetValue((a, b), out int m) ? m + 1 : 1;
+                }
+            }
+
+            int boundary = 0, nonManifold = 0, badWinding = 0;
+            foreach (KeyValuePair<(int, int), int> edge in uses)
+            {
+                if (edge.Value == 1) boundary++;
+                else if (edge.Value > 2) nonManifold++;
+                else if (!(directed.TryGetValue(edge.Key, out int forward) && forward == 1 && directed.TryGetValue((edge.Key.Item2, edge.Key.Item1), out int back) && back == 1)) badWinding++;
+            }
+
+            return (triangles, boundary, nonManifold, badWinding);
+        }
+
+        /// <summary>
+        /// **A closed surface with attribute seams goes to one side whole: a closed parent gives closed children.** A closed cube whose
+        /// six faces have render vertices of their own (a UV's, a normal's seams: 24 render vertices of 8 topology vertices) and a
+        /// closed tetrahedron apart from it, the same way (12 of 4). The cube's skin is weighted to bone 0 but for the four corners of
+        /// one face, weighted to bone 2 -- a bone the rig knows and the piece no longer holds -- so that one face has no weight on a
+        /// held bone at all; the tetrahedron's to bone 1. Convexes of bones 0 and 1.
+        /// <para>
+        /// With every render vertex taken for a topology vertex of its own -- the decision before it read the topology -- each face is
+        /// a mesh component: the face of bone 2 is a mesh alone, sent to the other side from the rest of its cube, and both children
+        /// are open (four boundary edges each). With the geometry's topology the cube is one component and the tetrahedron another:
+        /// each goes whole, every topology edge of each child has its two faces, in opposite senses.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void AClosedSurfaceWithAttributeSeams_GoesToOneSideWhole_AndBothChildrenStayClosed()
+        {
+            float3[] cube = { new float3(-1, -1, -1), new float3(1, -1, -1), new float3(1, 1, -1), new float3(-1, 1, -1), new float3(-1, -1, 1), new float3(1, -1, 1), new float3(1, 1, 1), new float3(-1, 1, 1) };
+            int[][] quads = { new[] { 0, 3, 2, 1 }, new[] { 4, 5, 6, 7 }, new[] { 0, 4, 7, 3 }, new[] { 1, 2, 6, 5 }, new[] { 0, 1, 5, 4 }, new[] { 3, 7, 6, 2 } };
+            int[][] tetra = { new[] { 0, 2, 1 }, new[] { 0, 1, 3 }, new[] { 0, 3, 2 }, new[] { 1, 2, 3 } };
+            Assert.That(cube.Length, Is.EqualTo(8));
+            var weights = new List<ulong>();
+            var topology = new List<int>();
+            var corners = new List<int>();
+            foreach (int[] face in quads)
+            {
+                int first = weights.Count;
+                foreach (int corner in face)
+                {
+                    topology.Add(corner);
+                    weights.Add(W(corner == 2 || corner == 3 || corner == 6 || corner == 7 ? 2 : 0));   // the y = +1 corners on the bone not held
+                }
+
+                corners.AddRange(new[] { first, first + 1, first + 2, first, first + 2, first + 3 });
+            }
+
+            foreach (int[] face in tetra)
+            {
+                int first = weights.Count;
+                foreach (int corner in face)
+                {
+                    topology.Add(8 + corner);
+                    weights.Add(W(1));
+                }
+
+                corners.AddRange(new[] { first, first + 1, first + 2 });
+            }
+
+            // Three bones with no connection between them, the piece the side of a plane that keeps the joints of bones 0 and 1 and not
+            // bone 2's: bones 0 and 1 are held (their convexes, their joints), bone 2 is known to the rig and not held.
+            NpcBoneLineage lineage = Lineage(new[] { -1, -1, -1 }, weights.ToArray(), new[] { new float3(0f, 2f, 0f), new float3(4f, 2f, 0f), new float3(0f, 0f, 0f) });
+            NpcBonePiece piece = CutBy(lineage, Whole(lineage), new float4(0f, 1f, 0f, -1f), true);
+            Assert.That(piece.IsJointKept(0) && piece.IsJointKept(1) && !piece.IsJointKept(2), Is.True, "the layout: bone 2's joint is not kept");
+            uint[] triangles = Triangles(corners.ToArray());
+            int[] convexBones = { 0, 1 };
+            int[] topologyOfLocal = topology.ToArray();
+            Assert.That(Surface(triangles, topologyOfLocal, null, 2, -1), Is.EqualTo((16, 0, 0, 0)), "the layout: the parent is closed -- 16 triangles, every topology edge two faces in opposite senses");
+
+            // Before: every render vertex a topology vertex of its own.
+            NpcBoneSplitRecord before = Decide(lineage, piece, convexBones, triangles, out byte[] sidesBefore);
+            Assert.That(before.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable));
+            Assert.That(before.meshComponents == 10 && before.unboundGroups == 1 && before.fullGroups == 2 && before.seamVertices == 0, Is.True, "ten faces, ten components; the face of the bone not held a mesh alone");
+            (int triangles, int boundary, int nonManifold, int badWinding) upBefore = Surface(triangles, topologyOfLocal, sidesBefore, 2, 1), downBefore = Surface(triangles, topologyOfLocal, sidesBefore, 2, 0);
+            Assert.That(upBefore, Is.EqualTo((10, 4, 0, 0)), "the cube without one face: open along that face's four edges");
+            Assert.That(downBefore, Is.EqualTo((6, 4, 0, 0)), "the tetrahedron and the cube's one face: open along the same four");
+
+            // With the geometry's topology.
+            var boneSides = new byte[6];
+            NpcBoneSplitRecord after = Decide(lineage, piece, convexBones, triangles, out byte[] sides, boneSides: boneSides, topologyOfLocal: topologyOfLocal, topologyVertexCount: 12);
+            Assert.That(after.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable));
+            Assert.That(after.meshComponents == 2 && after.groups == 2 && after.fullGroups == 2 && after.unboundGroups == 0, Is.True, "the cube and the tetrahedron, each with its convex");
+            Assert.That(after.topologyVertices == 12 && after.seamVertices == 24, Is.True, "36 render vertices of 12 topology vertices: 24 joined to the one met first");
+            Assert.That(after.referencedVertices, Is.EqualTo(36), "every render vertex still read by its own number");
+            Assert.That(after.removedWeights, Is.EqualTo(12), "the twelve render vertices on the bone not held: left out of the connections, the cube connected by the others");
+            Assert.That(after.connectionsKept == 2 && after.connectionsDropped == 0, Is.True);
+            AssertWhole(after, sides, 2, 16);
+            Assert.That(sides, Is.EqualTo(new byte[] { 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0 }), "the cube (more triangles) and its convex positive, the tetrahedron and its convex negative");
+            Assert.That(Surface(triangles, topologyOfLocal, sides, 2, 1), Is.EqualTo((12, 0, 0, 0)), "the positive child closed: every topology edge two faces, in opposite senses");
+            Assert.That(Surface(triangles, topologyOfLocal, sides, 2, 0), Is.EqualTo((4, 0, 0, 0)), "the negative child closed");
+            Assert.That(boneSides[0] == 1 && boneSides[1] == 0 && boneSides[2] == 2, Is.True, "bone 0 with the cube, bone 1 with the tetrahedron, bone 2 not held");
+            AssertChildrenHoldTheirConvexes(lineage, piece, boneSides, sides, convexBones);
+        }
+
+        /// <summary>
+        /// **A seam's render vertices are one component, and its connections are the component's.** Two triangles sewn along an
+        /// edge whose two ends have a render vertex on each side of the seam: by topology one component of six render vertices, read
+        /// each by its own number. Five are weighted to the pelvis, one to the hand: the component is connected to both clusters, one
+        /// connection each, and the piece is one group (under the 3/10 bound the hand's 1 of 5 was left out). Taken render vertex by
+        /// render vertex the second triangle is a component of its own and connects to both as well: one connection more.
+        /// </summary>
+        [Test]
+        public void ASeamsRenderVertices_AreOneComponent_ConnectedOnceToEachClusterItSupports()
+        {
+            // 0 1 2: a triangle on the pelvis; 3 4 5: its neighbour across the edge (topology 1-0), its two seam vertices on the pelvis, its far corner on the hand;
+            // 6 7 8: the hand's own skin.
+            ulong[] weights = { W(0), W(0), W(0), W(0), W(0), W(4), W(4), W(4), W(4) };
+            int[] topologyOfLocal = { 0, 1, 2, 1, 0, 3, 4, 5, 6 };
+            NpcBoneLineage lineage = Lineage(TwoArms, weights, TwoArmJoints);
+            NpcBonePiece below = CutBy(lineage, Whole(lineage), BodyWaist, false);
+            int[] convexBones = { 0, 4 };
+            uint[] triangles = Triangles(0, 1, 2, 3, 4, 5, 6, 7, 8);
+
+            NpcBoneSplitRecord sewn = Decide(lineage, below, convexBones, triangles, out byte[] sides, topologyOfLocal: topologyOfLocal, topologyVertexCount: 7);
+            Assert.That(sewn.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), "the hand's one render vertex joins the sewn pair to the hand");
+            Assert.That(sewn.meshComponents == 2 && sewn.seamVertices == 2 && sewn.referencedVertices == 9, Is.True, "the two sewn triangles one component; the hand's own another");
+            Assert.That(sewn.connectionsKept == 3 && sewn.connectionsDropped == 0, Is.True, "the sewn pair to the pelvis and to the hand, the hand's own skin to the hand");
+            Assert.That(sewn.groups, Is.EqualTo(1));
+
+            NpcBoneSplitRecord apart = Decide(lineage, below, convexBones, triangles, out _);
+            Assert.That(apart.meshComponents == 3 && apart.seamVertices == 0, Is.True, "render vertex by render vertex: three components");
+            Assert.That(apart.connectionsKept == 4 && apart.connectionsDropped == 0, Is.True, "the first triangle to the pelvis, the second to both, the hand's own to the hand");
+            Assert.That(apart.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), "and it joins the pelvis and the hand");
+        }
+
+        /// <summary>
+        /// **The smallest independent group is measured with the topology's components.** Below the waist: the pelvis (four triangles),
+        /// the left hand -- one triangle on the hand and two sewn to it that are weighted to the forearm alone, a bone the piece no
+        /// longer holds -- and the right hand (two triangles). By topology the left hand's three triangles are one component and go
+        /// together: the right hand, of two, is the smallest and comes off alone. Render vertex by render vertex the left hand is one
+        /// triangle, comes off first, and leaves the two sewn to it behind.
+        /// </summary>
+        [Test]
+        public void TheSmallestGroup_IsMeasuredWithTheTopologysComponents()
+        {
+            var weights = new List<ulong>();
+            for (int i = 0; i < 12; i++) weights.Add(W(0));          // 0-11 the pelvis's four triangles
+            for (int i = 0; i < 3; i++) weights.Add(W(4));           // 12-14 the left hand's triangle
+            for (int i = 0; i < 6; i++) weights.Add(W(3));           // 15-20 two triangles sewn to it, on the left forearm (not held below the waist)
+            for (int i = 0; i < 6; i++) weights.Add(W(7));           // 21-26 the right hand's two triangles
+            var topologyOfLocal = new int[27];
+            for (int i = 0; i < 27; i++) topologyOfLocal[i] = i;
+            topologyOfLocal[15] = 13; topologyOfLocal[16] = 12;      // the first sewn triangle runs the left hand's edge 12-13 the other way
+            topologyOfLocal[18] = 17; topologyOfLocal[19] = 12;      // the second runs the first's edge (12, 17) the other way
+            NpcBoneLineage lineage = Lineage(TwoArms, weights.ToArray(), TwoArmJoints);
+            NpcBonePiece below = CutBy(lineage, Whole(lineage), BodyWaist, false);
+            int[] convexBones = { 0, 4, 7 };
+            var corners = new int[27];
+            for (int i = 0; i < 27; i++) corners[i] = i;
+            uint[] triangles = Triangles(corners);
+
+            NpcBoneSplitRecord sewn = Decide(lineage, below, convexBones, triangles, out byte[] sides, topologyOfLocal: topologyOfLocal, topologyVertexCount: 27);
+            Assert.That(sewn.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable));
+            Assert.That(sewn.fullGroups == 3 && sewn.unboundGroups == 0, Is.True, "the pelvis, the left hand with what is sewn to it, the right hand");
+            Assert.That(sides, Is.EqualTo(new byte[] { 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1 }), "the right hand (two triangles) is the smallest: " + ConvexSides(sides, convexBones));
+            AssertWhole(sewn, sides, 3, 9);
+
+            NpcBoneSplitRecord apart = Decide(lineage, below, convexBones, triangles, out byte[] sidesApart);
+            Assert.That(apart.fullGroups == 3 && apart.unboundGroups == 2, Is.True, "render vertex by render vertex: the sewn triangles are two meshes alone");
+            Assert.That(sidesApart, Is.EqualTo(new byte[] { 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0 }), "and the left hand's one triangle comes off without them");
+        }
+
+        /// <summary>**Without the geometry's topology nothing is decided**: the mapping is required, and a vertex outside it is not guessed.</summary>
+        [Test]
+        public void WithoutTheTopology_NothingIsDecided()
+        {
+            NpcBoneLineage lineage = ULineage(new[] { W(0), W(0), W(0), W(2), W(2), W(2) });
+            uint[] triangles = Triangles(0, 1, 2, 3, 4, 5);
+            NpcBoneSplitRecord none = Decide(lineage, Below(lineage), new[] { 0, 2 }, triangles, out _, noTopology: true);
+            Assert.That(none.verdict == NpcBoneSplitVerdict.Insufficient && none.reason == NpcBoneSplitSearch.ReasonTopology, Is.True, none.reason);
+            NpcBoneSplitRecord outside = Decide(lineage, Below(lineage), new[] { 0, 2 }, triangles, out _, topologyOfLocal: new[] { 0, 1, 2, 3, 4, 9 }, topologyVertexCount: 6);
+            Assert.That(outside.verdict == NpcBoneSplitVerdict.Insufficient && outside.reason == NpcBoneSplitSearch.ReasonTopologyVertex, Is.True, outside.reason);
+            NpcBoneSplitRecord known = Decide(lineage, Below(lineage), new[] { 0, 2 }, triangles, out _, topologyOfLocal: new[] { 0, 1, 2, 3, 4, 5 }, topologyVertexCount: 6);
+            Assert.That(known.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable));
         }
 
         /// <summary>A joint or a part exactly on the plane stays on both sides (each side is closed).</summary>

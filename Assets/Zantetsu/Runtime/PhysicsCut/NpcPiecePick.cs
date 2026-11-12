@@ -728,7 +728,14 @@ namespace Zantetsu.PhysicsCut
         /// convexes' bones, the sample's indices (the storage's ids, which the saved lineage numbers). The sides (convexes then triangles) are
         /// written to <paramref name="sides"/>; the bones' sides to <paramref name="boneSides"/> (2n).
         /// </summary>
-        internal static NpcBoneSplitRecord Decide(Pick pick, out byte[] sides, out byte[] boneSides)
+        internal static NpcBoneSplitRecord Decide(Pick pick, out byte[] sides, out byte[] boneSides) => Decide(pick, null, 0, out sides, out boneSides);
+
+        /// <summary>
+        /// NPC-BONE-TOPOLOGY-1: the same with the geometry's topology, one id a vertex of the saved lineage's numbering (ids below
+        /// <paramref name="topologyVertexCount"/>). A pick holds none of its own: null decides with each render vertex its own topology
+        /// vertex, which is what the live decision did when the pick was taken.
+        /// </summary>
+        internal static NpcBoneSplitRecord Decide(Pick pick, int[] topologyOfLocal, int topologyVertexCount, out byte[] sides, out byte[] boneSides)
         {
             SpatialSplitBoneSample b = pick.bones;
             int n = b.nodeCount;
@@ -763,7 +770,12 @@ namespace Zantetsu.PhysicsCut
                     insufficient = b.insufficient, maxTriangles = pick.sample.limits.maxTriangles, maxOriginSteps = b.maxOriginSteps,   // the search limits the live decision read
                 };
                 var record = default(NpcBoneSplitRecord);
-                NpcBoneSplitSearch.Decide(in input, (byte*)bytes.GetUnsafePtr(), c + t, ref record);
+                using (NpcBoneTopology topology = NpcBoneTopology.OfLocal(in input.lineage, topologyOfLocal, topologyVertexCount))
+                {
+                    input.topology = topology.Map;
+                    NpcBoneSplitSearch.Decide(in input, (byte*)bytes.GetUnsafePtr(), c + t, ref record);
+                }
+
                 sides = new byte[c + t];
                 NativeArray<byte>.Copy(bytes, sides, c + t);
                 return record;

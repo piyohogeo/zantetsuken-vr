@@ -4,8 +4,10 @@
 using System;
 using System.Globalization;
 using System.Text;
+using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Zantetsu.MeshCut;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut
 {
@@ -131,8 +133,15 @@ namespace Zantetsu.PhysicsCut
             if (insufficient == null && !shape.HasConvexBones) insufficient = "the shape carries no convex bones";
             unsafe
             {
+                // NPC-BONE-TOPOLOGY-1: the geometry's render vertex to topology vertex mapping, as a cut of this geometry takes it, read under
+                // the attempt's index lease and kept with the attempt; a geometry that gives none is not known to the decision.
+                RenderCutTopologyMap topology = default;
+                if (NpcBoneTopology.TryOfGeometry(_world.Storage, attempt.input.geometry, out attempt.boneTopology, out string noTopology)) topology = attempt.boneTopology.Map;
+                else if (insufficient == null) insufficient = noTopology;
+
                 attempt.boneInput = new NpcBoneSplitSearch.Input
                 {
+                    topology = topology,
                     convexCount = convexes,
                     convexBones = convexBones,
                     lineage = new NpcBoneSplitSearch.Lineage
@@ -218,10 +227,11 @@ namespace Zantetsu.PhysicsCut
             if (LastBone.Entered)
             {
                 text.Append("; the last: ").Append(LastBone.verdict).Append(" (").Append(LastBone.reason).Append("), clusters ").Append(LastBone.clusters)
-                    .Append(" of ").Append(LastBone.bones).Append(" bones, mesh components ").Append(LastBone.meshComponents).Append(", groups ").Append(LastBone.groups)
+                    .Append(" of ").Append(LastBone.bones).Append(" bones, mesh components ").Append(LastBone.meshComponents).Append(" by topology (").Append(LastBone.topologyVertices)
+                    .Append(" topology vertices, ").Append(LastBone.seamVertices).Append(" seam vertices joined), groups ").Append(LastBone.groups)
                     .Append(", bones held ").Append(LastBone.pieceBones).Append(", weights on bones no longer held ").Append(LastBone.removedWeights)
                     .Append(" (").Append(LastBone.fullGroups).Append(" with a convex and triangles), connections kept ").Append(LastBone.connectionsKept)
-                    .Append(", left out by the support rule ").Append(LastBone.connectionsDropped);
+                    .Append(" (every cluster a component supports; left out ").Append(LastBone.connectionsDropped).Append(')');
             }
 
             text.Append("; fallback to the method as before (NPC-BONE-FALLBACK-1) ").Append(BoneFallback ? "on" : "off").Append(": fell back ").Append(BoneFellBack)
@@ -243,6 +253,8 @@ namespace Zantetsu.PhysicsCut
             internal bool boneLed;
             internal NpcBoneLineage boneLineage;
             internal NpcBoneSplitSearch.Input boneInput;
+            // NPC-BONE-TOPOLOGY-1: the decision's topology map (one range a vertex block of the geometry), the attempt's own.
+            internal NpcBoneTopology boneTopology;
             internal NpcBoneSplitRecord bone;
             // NPC-BONE-ACTIVE-2: the fragment's part of the rig at the issue (the capture's sidecar writes it).
             internal NpcBonePiece bonePiece;
@@ -274,6 +286,9 @@ namespace Zantetsu.PhysicsCut
             {
                 boneLineage?.Release();
                 boneLineage = null;
+                boneInput.topology = default;
+                boneTopology?.Dispose();
+                boneTopology = null;
             }
         }
     }

@@ -3,6 +3,7 @@ using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using Zantetsu.MeshCut;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut
 {
@@ -34,8 +35,15 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The rig's bones; the bone clusters once the cuts' connections are taken off.</summary>
         public int bones, clusters;
 
-        /// <summary>Mesh components (triangles joined by shared vertices); groups (connected by the bones) with a convex or triangles; of them, with both.</summary>
+        /// <summary>Mesh components (triangles joined by shared topology vertices); groups (connected by the bones) with a convex or triangles; of them, with both.</summary>
         public int meshComponents, groups, fullGroups;
+
+        /// <summary>
+        /// NPC-BONE-TOPOLOGY-1: the topology vertices the geometry's mapping addresses; and the render vertices the triangles name that
+        /// share their topology vertex with one named before them (an attribute seam's other sides: joined to it, each still read by
+        /// its own number for its weights and origins).
+        /// </summary>
+        public int topologyVertices, seamVertices;
 
         /// <summary>Vertices the triangles name; the lineage's vertices; steps of the walk from cut vertices to the base vertices they came from.</summary>
         public int referencedVertices, lineageVertices;
@@ -54,9 +62,10 @@ namespace Zantetsu.PhysicsCut
         public int unboundGroups;
 
         /// <summary>
-        /// NPC-BONE-SUPPORT-1: of the connections from a mesh component to a bone cluster it supports (a vertex of the component weighted,
-        /// through its origins, to a bone of the cluster), how many were used -- the cluster's supporting vertices at least 3/10 of the
-        /// component's most supported cluster's -- and how many were left out as a bridge of few vertices.
+        /// The connections from a mesh component to a bone cluster it supports (a vertex of the component weighted, through its origins,
+        /// to a bone of the cluster): one a component and cluster, every one of them used (<see cref="connectionsKept"/>). Nothing is
+        /// left out for being supported by few vertices (NPC-BONE-ANY-SUPPORT-1, 2026-11-12: the 3/10 bound of NPC-BONE-SUPPORT-1 is
+        /// removed), so <see cref="connectionsDropped"/> is always 0; the field stays for the readers of the record.
         /// </summary>
         public int connectionsKept, connectionsDropped;
 
@@ -86,27 +95,32 @@ namespace Zantetsu.PhysicsCut
     /// </para>
     /// <para>
     /// **The connections**, one union-find over the clusters, the convexes and the lineage's vertices: a convex joins its bone's
-    /// cluster; the three corners of a triangle are joined (a mesh component is triangles that share a vertex; one is never
-    /// divided); a vertex supports the cluster of every bone it has a positive weight on -- a base vertex its model's weights, a
+    /// cluster; the three corners of a triangle are joined, and so is every render vertex with the others of its **topology
+    /// vertex** (NPC-BONE-TOPOLOGY-1, 2026-11-12: the current geometry's render vertex to topology vertex mapping, the one the
+    /// cut kernel reads, <see cref="Input.topology"/>) -- a mesh component is triangles that share a topology vertex, so faces an
+    /// attribute seam (a UV's, a normal's) gives render vertices of their own are one component with their neighbours, and one
+    /// component is never divided: a closed surface goes to one side whole and each side's surface stays closed. Only the
+    /// components are made by topology: indices, attributes, weights and a cut vertex's origins are read by the render vertex's
+    /// own number, as before. A vertex supports the cluster of every bone it has a positive weight on -- a base vertex its model's weights, a
     /// vertex a cut made the weights of the vertices it interpolates (both where it lies strictly between them, the one where
     /// it lies on it), walked back to the base, a cap's auxiliary vertex none -- **among the bones the piece holds**: a weight on
     /// a bone not held supports nothing (no other bone is chosen for it); a held bone counts whether it is held by its convex or by
-    /// its joint. **The support rule (NPC-BONE-SUPPORT-1, 2026-11-10):** a mesh component M is connected to a cluster c where the
-    /// vertices of M that support c, s(M, c), are at least three tenths of the vertices supporting M's most supported cluster,
-    /// peak(M): s &gt; 0 and 10 s &gt;= 3 peak (in long; clusters tied at the peak all stay) -- so a bridge of few vertices between
-    /// a limb and a trunk, a seam's or a cut's weights, no longer holds the two together, while a component weighted to several
-    /// clusters in earnest still connects them. A vertex counts once for a cluster however many of its origins, bones of that
-    /// cluster or triangles reach it (the support is counted per vertex and cluster; the clusters are numbered before any component
-    /// joins them). So a convex and a convex of one cluster are connected, a convex and a mesh component supporting that cluster,
-    /// two mesh components supporting the bones of one cluster -- and a mesh component supporting several clusters in that measure
-    /// connects them. Nothing of the weights is removed: the others are only left out of the connections, and counted
-    /// (<see cref="NpcBoneSplitRecord.connectionsKept"/>, <see cref="NpcBoneSplitRecord.connectionsDropped"/>).
+    /// its joint. **The connection rule (NPC-BONE-ANY-SUPPORT-1, 2026-11-12):** a mesh component M is connected to every cluster c
+    /// one of its vertices supports, s(M, c) &gt; 0 -- a single vertex is enough. (From 2026-11-10 to this change a cluster under
+    /// three tenths of M's most supported cluster's vertices was left out, NPC-BONE-SUPPORT-1: it let a limb's convexes leave with
+    /// the one mesh island of their own -- a hand -- while the sleeve, one component with the trunk, stayed behind without them.)
+    /// The clusters are numbered before any component joins them, and a component and cluster are one connection however many
+    /// vertices, origins, bones of that cluster or triangles reach it. So a convex and a convex of one cluster are connected, a
+    /// convex and a mesh component supporting that cluster, two mesh components supporting the bones of one cluster -- and a mesh
+    /// component supporting several clusters connects them. The connections are counted
+    /// (<see cref="NpcBoneSplitRecord.connectionsKept"/>; <see cref="NpcBoneSplitRecord.connectionsDropped"/> is 0).
     /// </para>
     /// <para>
-    /// **The scratch of the support rule**, beside the decision's own: 2 L + 2 (T + 1) + 4 N ints (L the lineage's vertices, T the
-    /// triangles, N the rig's bones) -- each vertex's component, the referenced vertices grouped by component, the components' ends
-    /// and the placing cursors, each held bone's cluster, and a component's counts, stamps and touched clusters -- taken with the
-    /// rest and given back before the decision returns (counted in <see cref="NpcBoneSplitRecord.nativeBytes"/>).
+    /// **The scratch of the support rule and of the topology**, beside the decision's own: 2 L + 2 (T + 1) + 4 N + K ints (L the
+    /// lineage's vertices, T the triangles, N the rig's bones, K the geometry's topology vertices) -- each vertex's component, the
+    /// referenced vertices grouped by component, the components' ends and the placing cursors, each held bone's cluster, a
+    /// component's counts, stamps and touched clusters, and for each topology vertex the render vertex first met of it -- taken with
+    /// the rest and given back before the decision returns (counted in <see cref="NpcBoneSplitRecord.nativeBytes"/>).
     /// </para>
     /// <para>
     /// **The placement.** Every group (a connected set holding a convex or triangles) must be known: triangles weighted to no
@@ -159,6 +173,14 @@ namespace Zantetsu.PhysicsCut
             internal string insufficient;
             internal int maxTriangles;
             internal long maxOriginSteps;
+
+            /// <summary>
+            /// NPC-BONE-TOPOLOGY-1: the current geometry's render vertex to topology vertex mapping, by its vertex blocks -- the map a
+            /// cut of the same geometry reads (the storage's blocks: the base geometry's and each cut's), handed over with the indices
+            /// and good for as long as they are. Required: without it the decision does not know which render vertices are one point of
+            /// the surface, and ends as not known rather than divide a surface at its seams.
+            /// </summary>
+            internal RenderCutTopologyMap topology;
         }
 
         /// <summary>The walk from a cut vertex back to the base: most steps a decision may take before it ends over the limits.</summary>
@@ -176,6 +198,8 @@ namespace Zantetsu.PhysicsCut
         internal const string ReasonInput = "the input is malformed";
         internal const string ReasonConvexesOfOneBone = "two convexes of one bone in the piece (one is expected)";
         internal const string ReasonSeparable = "apart by the bones";
+        internal const string ReasonTopology = "the geometry's topology is not known";
+        internal const string ReasonTopologyVertex = "a vertex the triangles name has no topology vertex";
 
         /// <summary>
         /// Decides one owner: the sides of its convexes then its triangles into <paramref name="sides"/> (1 positive, 0 negative;
@@ -211,6 +235,15 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
+            // The geometry's topology (NPC-BONE-TOPOLOGY-1): required, never guessed from positions or from the render vertices' numbers.
+            int topologyCount = input.topology.topologyVertexCount;
+            if (input.topology.ranges == null || input.topology.rangeCount < 1 || topologyCount < 1)
+            {
+                End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonTopology);
+                return;
+            }
+
+            record.topologyVertices = topologyCount;
             int l = input.lineage.localCount;
             // The elements: a node for each bone, the convexes, the lineage's vertices.
             long elements = (long)n + c + l;
@@ -243,8 +276,9 @@ namespace Zantetsu.PhysicsCut
                 int* held = convexesOfBone + n;
                 // The support rule's scratch (NPC-BONE-SUPPORT-1): each lineage vertex's component (L), the referenced vertices grouped by
                 // component (L), the components' ends and the placing cursors (T + 1 each), each held bone's cluster (N), and a component's
-                // counts, stamps and touched clusters (3 N).
-                support = new NativeArray<int>(checked((2 * l) + (2 * (t + 1)) + (4 * n)), Allocator.Persistent, NativeArrayOptions.ClearMemory);
+                // counts, stamps and touched clusters (3 N); and, for each topology vertex, the render vertex first met of it, plus one (K;
+                // NPC-BONE-TOPOLOGY-1).
+                support = new NativeArray<int>(checked((2 * l) + (2 * (t + 1)) + (4 * n) + topologyCount), Allocator.Persistent, NativeArrayOptions.ClearMemory);
                 int* componentOf = (int*)support.GetUnsafePtr();
                 int* order = componentOf + l;
                 int* ends = order + l;
@@ -253,6 +287,7 @@ namespace Zantetsu.PhysicsCut
                 int* supportCount = clusterOf + n;
                 int* stamp = supportCount + n;
                 int* touched = stamp + n;
+                int* firstOfTopology = touched + n;
                 record.nativeBytes = ((long)uf.Length * sizeof(int)) + ((long)tally.Length * sizeof(int)) + ((long)triangleFirst.Length * sizeof(int)) + marks.Length + ((long)stack.Length * sizeof(int))
                     + piece.Length + ((long)parts.Length * sizeof(int)) + ((long)support.Length * sizeof(int));
                 int* parent = (int*)uf.GetUnsafePtr();
@@ -301,8 +336,12 @@ namespace Zantetsu.PhysicsCut
                 // Each held bone's cluster (its root, a bone: the lowest index stays), numbered here, before any mesh component joins clusters.
                 for (int k = 0; k < n; k++) clusterOf[k] = held[k] != 0 ? Find(parent, k) : -1;
 
-                // 3. The mesh components: the corners of each triangle joined, every vertex in the lineage's own numbering.
+                // 3. The mesh components: the corners of each triangle joined, every vertex in the lineage's own numbering -- and every
+                // render vertex joined to the first one met of its topology vertex (NPC-BONE-TOPOLOGY-1), so that the faces an attribute
+                // seam gives vertices of their own are one component with the faces they are sewn to. The render vertices keep their own
+                // numbers for everything else (the weights, the origins, the support's count).
                 byte* referenced = (byte*)marks.GetUnsafePtr();
+                int lastRange = -1;
                 for (int k = 0; k < t; k++)
                 {
                     int a = Local(in input.lineage, input.indices[3 * k]);
@@ -317,9 +356,29 @@ namespace Zantetsu.PhysicsCut
                     Union(parent, vertexBase + a, vertexBase + b);
                     Union(parent, vertexBase + a, vertexBase + d);
                     triangleFirst[k] = vertexBase + a;
-                    referenced[a] = 1;
-                    referenced[b] = 1;
-                    referenced[d] = 1;
+                    for (int corner = 0; corner < 3; corner++)
+                    {
+                        int x = corner == 0 ? a : corner == 1 ? b : d;
+                        int topologyVertex = RenderCutTopologyMap.TopologyOf(in input.topology, input.indices[(3 * k) + corner], ref lastRange);
+                        if ((uint)topologyVertex >= (uint)topologyCount)
+                        {
+                            End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonTopologyVertex);
+                            return;
+                        }
+
+                        int first = firstOfTopology[topologyVertex] - 1;
+                        if (first < 0)
+                        {
+                            firstOfTopology[topologyVertex] = x + 1;
+                        }
+                        else if (first != x)
+                        {
+                            if (referenced[x] == 0) record.seamVertices++;
+                            Union(parent, vertexBase + x, vertexBase + first);
+                        }
+
+                        referenced[x] = 1;
+                    }
                 }
 
                 int m = 0;   // the mesh components
@@ -347,7 +406,7 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 // 4. Every vertex the triangles name, walked back to the base, supports the clusters of the held bones it is weighted to (once
-                //    a cluster a vertex); then, component by component, the connections the support rule keeps (NPC-BONE-SUPPORT-1).
+                //    a cluster a vertex); then, component by component, its connections: every cluster it supports (NPC-BONE-ANY-SUPPORT-1).
                 int* walk = (int*)stack.GetUnsafePtr();
                 long steps = 0;
                 for (int component = 0; component < m; component++)
@@ -433,24 +492,14 @@ namespace Zantetsu.PhysicsCut
                         }
                     }
 
-                    // The connections of this component: the clusters it supports with at least 3/10 of its most supported cluster's vertices
-                    // (10 s >= 3 peak, in long; ties at the peak all stay). The rest are left out as bridges of few vertices, and counted.
-                    int peak = 0;
-                    for (int i = 0; i < touchedCount; i++) peak = Math.Max(peak, supportCount[touched[i]]);
+                    // The connections of this component: every cluster one of its vertices supports (any positive support; no bound by
+                    // the number of supporting vertices). One connection a component and cluster.
                     int anchor = vertexBase + order[start];
                     for (int i = 0; i < touchedCount; i++)
                     {
                         int cluster = touched[i];
-                        if (10L * supportCount[cluster] >= 3L * peak)
-                        {
-                            Union(parent, anchor, cluster);
-                            record.connectionsKept++;
-                        }
-                        else
-                        {
-                            record.connectionsDropped++;
-                        }
-
+                        Union(parent, anchor, cluster);
+                        record.connectionsKept++;
                         supportCount[cluster] = 0;
                     }
                 }
@@ -627,6 +676,97 @@ namespace Zantetsu.PhysicsCut
             int ra = Find(parent, a), rb = Find(parent, b);
             if (ra == rb) return;
             if (ra < rb) parent[rb] = ra; else parent[ra] = rb;   // the lower root stays: deterministic
+        }
+    }
+
+    /// <summary>
+    /// NPC-BONE-TOPOLOGY-1: a topology map for one bone-aware decision (<see cref="NpcBoneSplitSearch.Input.topology"/>), with the ranges it
+    /// is made of; given back by <see cref="Dispose"/> once the decision is done with it.
+    /// <para>
+    /// <see cref="TryOfGeometry"/> is the product's: the geometry's render vertex to topology vertex mapping as a cut of the geometry takes
+    /// it (<see cref="VpStorageCutInput"/>) -- one range a vertex block of the geometry (the base's and each cut's), over the storage's own
+    /// mapping entries, which are never moved or rewritten once committed. To be read while the geometry's index range is leased (its
+    /// metadata is readable then). <see cref="OfLocal"/> is for a caller that holds the mapping as one id a vertex of the lineage's own
+    /// numbering (a test's fixture, a saved input worked out again); with no ids it makes every render vertex a topology vertex of its
+    /// own -- a surface with no attribute seam, and what the decision did before it read the topology.
+    /// </para>
+    /// </summary>
+    internal sealed unsafe class NpcBoneTopology : IDisposable
+    {
+        private NativeArray<RenderTopologyRange> _ranges;
+        private NativeArray<int> _ids;
+
+        internal RenderCutTopologyMap Map { get; private set; }
+
+        internal static bool TryOfGeometry(VpCpuGeometryStorage storage, VpStoredGeometry geometry, out NpcBoneTopology topology, out string why)
+        {
+            topology = null;
+            why = null;
+            if (storage == null || !storage.TryGetVertexBlocks(geometry, out NativeArray<VpGeometryVertexBlock>.ReadOnly blocks, out int topologyVertexCount)
+                || blocks.Length == 0 || topologyVertexCount <= 0)
+            {
+                why = "the geometry gives no topology mapping";
+                return false;
+            }
+
+            NativeArray<int>.ReadOnly topologyOfVertex = storage.TopologyOfVertex;
+            for (int b = 0; b < blocks.Length; b++)
+            {
+                VpGeometryVertexBlock block = blocks[b];
+                if (block.vertexStart < 0 || block.vertexCount < 0 || (long)block.vertexStart + block.vertexCount > topologyOfVertex.Length)
+                {
+                    why = "a vertex block of the geometry is outside the storage's committed topology";
+                    return false;
+                }
+            }
+
+            int* topologyBase = (int*)topologyOfVertex.GetUnsafeReadOnlyPtr();
+            var made = new NpcBoneTopology { _ranges = new NativeArray<RenderTopologyRange>(blocks.Length, Allocator.Persistent) };
+            for (int b = 0; b < blocks.Length; b++)
+            {
+                VpGeometryVertexBlock block = blocks[b];
+                made._ranges[b] = new RenderTopologyRange { vertexBase = (uint)block.vertexStart, count = block.vertexCount, topologyVertex = topologyBase + block.vertexStart };
+            }
+
+            made.Map = new RenderCutTopologyMap { ranges = (RenderTopologyRange*)made._ranges.GetUnsafePtr(), rangeCount = blocks.Length, topologyVertexCount = topologyVertexCount };
+            topology = made;
+            return true;
+        }
+
+        /// <summary>
+        /// The map over the lineage's own vertex ranges (the base geometry's, then each cut's chunk): <paramref name="topologyOfLocal"/> one
+        /// topology id a vertex of the lineage's numbering, ids below <paramref name="topologyVertexCount"/>; null: each render vertex its own.
+        /// </summary>
+        internal static NpcBoneTopology OfLocal(in NpcBoneSplitSearch.Lineage lineage, int[] topologyOfLocal, int topologyVertexCount)
+        {
+            int l = Math.Max(0, lineage.localCount);
+            if (topologyOfLocal != null && topologyOfLocal.Length < l) throw new ArgumentException("one topology id a vertex of the lineage is needed", nameof(topologyOfLocal));
+            int chunks = lineage.chunks != null ? lineage.chunks.Length : 0;
+            var made = new NpcBoneTopology
+            {
+                _ids = new NativeArray<int>(Math.Max(1, l), Allocator.Persistent), _ranges = new NativeArray<RenderTopologyRange>(1 + chunks, Allocator.Persistent),
+            };
+            for (int i = 0; i < l; i++) made._ids[i] = topologyOfLocal != null ? topologyOfLocal[i] : i;
+            int* ids = (int*)made._ids.GetUnsafePtr();
+            made._ranges[0] = new RenderTopologyRange { vertexBase = lineage.baseStart, count = Math.Min(lineage.baseCount, l), topologyVertex = ids };
+            for (int k = 0; k < chunks; k++)
+            {
+                NpcVertexChunk chunk = lineage.chunks[k];
+                made._ranges[1 + k] = new RenderTopologyRange { vertexBase = chunk.start, count = chunk.count, topologyVertex = ids + chunk.localBase };
+            }
+
+            made.Map = new RenderCutTopologyMap
+            {
+                ranges = (RenderTopologyRange*)made._ranges.GetUnsafePtr(), rangeCount = 1 + chunks, topologyVertexCount = topologyOfLocal != null ? topologyVertexCount : Math.Max(1, l),
+            };
+            return made;
+        }
+
+        public void Dispose()
+        {
+            Map = default;
+            if (_ranges.IsCreated) _ranges.Dispose();
+            if (_ids.IsCreated) _ids.Dispose();
         }
     }
 }

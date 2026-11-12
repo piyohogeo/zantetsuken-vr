@@ -68,6 +68,8 @@ namespace Zantetsu.PhysicsCut
             internal SpatialSplitSample sample;
             internal SpatialSplitBoneSample bones;
             internal NativeArray<ulong> baseBones;
+            // NPC-BONE-TOPOLOGY-1: the captured input holds no topology; each render vertex its own topology vertex (the decision as captured).
+            internal NpcBoneTopology topology;
             internal NativeArray<uint2>[] origins;
             internal NpcVertexChunk[] chunks;
             internal SpatialSplitBoneResultLine live;
@@ -328,6 +330,8 @@ namespace Zantetsu.PhysicsCut
         private static void FreeNative(Input i)
         {
             if (i.baseBones.IsCreated) i.baseBones.Dispose();
+            i.topology?.Dispose();
+            i.topology = null;
             if (i.origins != null) foreach (NativeArray<uint2> o in i.origins) if (o.IsCreated) o.Dispose();
             i.origins = null;
         }
@@ -440,6 +444,8 @@ namespace Zantetsu.PhysicsCut
                         maxTriangles = attempt.limits.maxTriangles,
                         maxOriginSteps = b.maxOriginSteps,
                     };
+                    i.topology ??= NpcBoneTopology.OfLocal(in attempt.boneInput.lineage, null, 0);
+                    attempt.boneInput.topology = i.topology.Map;
                     attempt.graphSides = PhysicsCutBlocks.Take<byte>(c + (n / 3));
                     if (method == BoneFallback)
                     {

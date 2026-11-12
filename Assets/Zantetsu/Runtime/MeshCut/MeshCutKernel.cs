@@ -331,20 +331,7 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>Topology vertex of a global render vertex through the map's blocks (last hit cached), -1 when unmapped.</summary>
-        static int TopologyOf(in RenderCutTopologyMap map, uint r, ref int lastRange)
-        {
-            if (lastRange >= 0 && lastRange < map.rangeCount)
-            {
-                ref RenderTopologyRange t = ref map.ranges[lastRange];
-                if (r >= t.vertexBase && r < t.vertexBase + (uint)t.count) return t.topologyVertex[r - t.vertexBase];
-            }
-            for (int i = 0; i < map.rangeCount; i++)
-            {
-                ref RenderTopologyRange t = ref map.ranges[i];
-                if (r >= t.vertexBase && r < t.vertexBase + (uint)t.count) { lastRange = i; return t.topologyVertex[r - t.vertexBase]; }
-            }
-            return -1;
-        }
+        static int TopologyOf(in RenderCutTopologyMap map, uint r, ref int lastRange) => RenderCutTopologyMap.TopologyOf(in map, r, ref lastRange);
 
 
         [BurstDiscard]

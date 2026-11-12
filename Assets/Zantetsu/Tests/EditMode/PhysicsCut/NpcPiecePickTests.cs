@@ -163,7 +163,12 @@ namespace Zantetsu.PhysicsCut.Tests
                     insufficient = lineage.Insufficient, maxTriangles = 131072, maxOriginSteps = NpcBoneSplitSearch.DefaultMaxOriginSteps,
                 };
                 var record = default(NpcBoneSplitRecord);
-                NpcBoneSplitSearch.Decide(in input, (byte*)bytes.GetUnsafePtr(), bytes.Length, ref record);
+                // NPC-BONE-TOPOLOGY-1: each render vertex its own topology vertex (the fixture has no attribute seam).
+                using (NpcBoneTopology topology = NpcBoneTopology.OfLocal(in input.lineage, null, 0))
+                {
+                    input.topology = topology.Map;
+                    NpcBoneSplitSearch.Decide(in input, (byte*)bytes.GetUnsafePtr(), bytes.Length, ref record);
+                }
                 sides = bytes.ToArray();
                 return record;
             }

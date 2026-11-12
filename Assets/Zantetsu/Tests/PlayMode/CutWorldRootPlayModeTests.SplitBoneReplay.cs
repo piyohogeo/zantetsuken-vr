@@ -93,7 +93,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     insufficient = lineage.Insufficient, maxTriangles = 1 << 20, maxOriginSteps = NpcBoneSplitSearch.DefaultMaxOriginSteps,
                 };
                 var record = default(NpcBoneSplitRecord);
-                NpcBoneSplitSearch.Decide(in input, (byte*)bytes.GetUnsafePtr(), bytes.Length, ref record);
+                // NPC-BONE-TOPOLOGY-1: each render vertex its own topology vertex (as the saved input is decided: the capture holds no topology).
+                using (NpcBoneTopology topology = NpcBoneTopology.OfLocal(in input.lineage, null, 0))
+                {
+                    input.topology = topology.Map;
+                    NpcBoneSplitSearch.Decide(in input, (byte*)bytes.GetUnsafePtr(), bytes.Length, ref record);
+                }
                 return record;
             }
             finally

@@ -42,6 +42,26 @@ namespace Zantetsu.MeshCut
         public int rangeCount;
         /// <summary>Upper bound (exclusive) of the topology vertex ids in use. New ids created by a cut start here.</summary>
         public int topologyVertexCount;
+
+        /// <summary>
+        /// Topology vertex of a global render vertex through the map's blocks (the block hit last is tried first), -1 when unmapped.
+        /// The one lookup of the map: the cut kernel's, and the bone-aware split's decision (NPC-BONE-TOPOLOGY-1).
+        /// </summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public static int TopologyOf(in RenderCutTopologyMap map, uint r, ref int lastRange)
+        {
+            if (lastRange >= 0 && lastRange < map.rangeCount)
+            {
+                ref RenderTopologyRange t = ref map.ranges[lastRange];
+                if (r >= t.vertexBase && r < t.vertexBase + (uint)t.count) return t.topologyVertex[r - t.vertexBase];
+            }
+            for (int i = 0; i < map.rangeCount; i++)
+            {
+                ref RenderTopologyRange t = ref map.ranges[i];
+                if (r >= t.vertexBase && r < t.vertexBase + (uint)t.count) { lastRange = i; return t.topologyVertex[r - t.vertexBase]; }
+            }
+            return -1;
+        }
     }
 
     /// <summary>One index range of the global index buffer; one range per submesh (draw range) of the geometry.</summary>

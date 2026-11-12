@@ -29,7 +29,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         /// 2 the hand (y -0.5), hanging from the shoulder, 3 a hip below the waist (y -0.9): below the waist the trunk is held by its
         /// convex and joined to the hip, and -- with the shoulder above the waist (no joint, no convex below) -- apart from it the hand.
         /// </summary>
-        private LogicalFragmentId AddNpcBodyWithAHand(CutWorldRoot root, Vector3 at, bool npc, float handLowX = HandLowX, int handMeshBone = 2, float shoulderJointY = 0.9f, float trunkJointY = 0.5f)
+        private LogicalFragmentId AddNpcBodyWithAHand(CutWorldRoot root, Vector3 at, bool npc, float handLowX = HandLowX, int handMeshBone = 2, float shoulderJointY = 0.9f, float trunkJointY = 0.5f,
+            int trunkBottomBone = 0)
         {
             float3[] trunk = BoxCornersAt(float3.zero, new float3(1f));
             float3[] hand = BoxCornersAt(new float3(handLowX + 0.25f, -0.5f, 0f), new float3(0.25f));
@@ -73,7 +74,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     for (int face = 0; face < k_faces.Length; face++)
                     {
                         if (k_faces[face].submesh != submesh) continue;
-                        ushort bone = (ushort)(box == 0 ? 0 : handMeshBone);
+                        // NPC-BONE-TOPOLOGY-1: the trunk's bottom face (corners 0-3) may be given a bone of its own.
+                        ushort bone = (ushort)(box != 0 ? handMeshBone : face == 4 ? trunkBottomBone : 0);
                         for (int k = 0; k < 4; k++) weights.Add(NpcVertexBones.Pack(bone, NpcVertexBones.None, NpcVertexBones.None, NpcVertexBones.None));
                     }
                 }
@@ -87,6 +89,130 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             table.Release();   // the lineage's hold is the one left
             root.NpcBones.RegisterRoot(fragment, lineage);
             return fragment;
+        }
+
+
+        /// <summary>The surface of a stored geometry by its own topology: triangles, edges used once, edges used more than twice, inner edges whose two faces run the same way.</summary>
+        private static (int triangles, int boundary, int nonManifold, int badWinding) TopologySurfaceOf(CutWorldRoot root, VpStoredGeometry geometry, out int blocks, out int seamVertices)
+        {
+            Assert.That(NpcBoneTopology.TryOfGeometry(root.Storage, geometry, out NpcBoneTopology topology, out string why), Is.True, why);
+            Assert.That(root.Storage.TryGetVertexBlocks(geometry, out Unity.Collections.NativeArray<VpGeometryVertexBlock>.ReadOnly vertexBlocks, out _), Is.True);
+            blocks = vertexBlocks.Length;
+            try
+            {
+                List<(uint, uint, uint)> triangles = TrianglesOf(root, geometry);
+                var uses = new Dictionary<(int, int), int>();
+                var directed = new Dictionary<(int, int), int>();
+                var renderOfTopology = new Dictionary<int, uint>();
+                var seams = new HashSet<uint>();
+                int last = -1;
+                RenderCutTopologyMap map = topology.Map;
+                foreach ((uint, uint, uint) triangle in triangles)
+                {
+                    uint[] corner = { triangle.Item1, triangle.Item2, triangle.Item3 };
+                    var t = new int[3];
+                    for (int e = 0; e < 3; e++)
+                    {
+                        t[e] = RenderCutTopologyMap.TopologyOf(in map, corner[e], ref last);
+                        Assert.That(t[e] >= 0 && t[e] < map.topologyVertexCount, Is.True, "render vertex " + corner[e] + " has its topology vertex");
+                        if (!renderOfTopology.TryGetValue(t[e], out uint first)) renderOfTopology[t[e]] = corner[e];
+                        else if (first != corner[e]) seams.Add(corner[e]);
+                    }
+
+                    for (int e = 0; e < 3; e++)
+                    {
+                        int a = t[e], b = t[(e + 1) % 3];
+                        (int, int) key = a < b ? (a, b) : (b, a);
+                        uses[key] = uses.TryGetValue(key, out int n) ? n + 1 : 1;
+                        directed[(a, b)] = directed.TryGetValue((a, b), out int m) ? m + 1 : 1;
+                    }
+                }
+
+                int boundary = 0, nonManifold = 0, badWinding = 0;
+                foreach (KeyValuePair<(int, int), int> edge in uses)
+                {
+                    if (edge.Value == 1) boundary++;
+                    else if (edge.Value > 2) nonManifold++;
+                    else if (!(directed.TryGetValue(edge.Key, out int forward) && forward == 1 && directed.TryGetValue((edge.Key.Item2, edge.Key.Item1), out int back) && back == 1)) badWinding++;
+                }
+
+                seamVertices = seams.Count;
+                return (triangles.Count, boundary, nonManifold, badWinding);
+            }
+            finally
+            {
+                topology.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// **Through the product's own path -- a real cut's cap, the surface's attribute seams, a geometry of several vertex blocks --
+        /// a closed piece is split into closed pieces (NPC-BONE-TOPOLOGY-1).** The trunk and the hand, every box face with render
+        /// vertices of its own (the seams), the trunk's bottom face weighted to the shoulder alone: a bone the piece below the waist
+        /// does not hold. The waist cut -- the cut kernel's: new vertices in a block of their own, a cap sewn to the cut surface by
+        /// the kernel's topology -- leaves a closed lower side. Render vertex by render vertex the bottom face was a mesh alone and
+        /// went with the hand, opening both children; by the geometry's topology the trunk's lower part is one component with its
+        /// cap and its bottom face. The split's two children, read back from the storage with their own topology: every triangle on
+        /// exactly one side, every topology edge of each child with its two faces in opposite senses, each with the convex of its bone.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SplitBone_Topology_AClosedCutPieceWithSeamsAndACap_IsSplitIntoClosedPieces()
+        {
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[1];
+            CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            LogicalFragmentId body = AddNpcBodyWithAHand(root, new Vector3(0f, 0f, 0f), true, handLowX: 0.8f, trunkBottomBone: 1);
+            yield return null;
+            Assert.That(root.Geometry.TryGetGeometry(body, out VpStoredGeometry whole), Is.True);
+            Assert.That(TopologySurfaceOf(root, whole, out int wholeBlocks, out int wholeSeams), Is.EqualTo((24, 0, 0, 0)), "the layout: two closed boxes");
+            Assert.That(wholeBlocks == 1 && wholeSeams == 32, Is.True, "one block; 48 render vertices of 16 topology vertices");
+            var sides = new LogicalFragmentId[2];
+            yield return CutAtTheWaist(root, body, sides);
+            LogicalFragmentId lower = sides[1];
+            Assert.That(root.Geometry.TryGetGeometry(lower, out VpStoredGeometry lowerGeometry), Is.True);
+            (int triangles, int boundary, int nonManifold, int badWinding) parent = TopologySurfaceOf(root, lowerGeometry, out int lowerBlocks, out int lowerSeams);
+            TestContext.Out.WriteLine("the lower side: " + parent + ", vertex blocks " + lowerBlocks + ", seam render vertices " + lowerSeams);
+            Assert.That(parent.boundary == 0 && parent.nonManifold == 0 && parent.badWinding == 0, Is.True, "the cut's lower side is closed: the kernel's cap is sewn to the cut surface by its topology");
+            Assert.That(lowerBlocks, Is.GreaterThanOrEqualTo(2), "the layout: the base's vertices and the cut's, in blocks of their own");
+            Assert.That(lowerSeams, Is.GreaterThan(0), "the layout: attribute seams (the faces', the cap's)");
+            Assert.That(root.NpcBones.TryGet(lower, out NpcBoneFragment lowerRecord), Is.True);
+            Assert.That(!lowerRecord.Piece.IsJointKept(1) && root.Owners.TryGet(lower, out PhysicsFragmentOwner lowerOwner) && lowerOwner.Shape.ConvexCount == 2, Is.True, "the layout: the shoulder not held below; the trunk's and the hand's convexes");
+
+            remaining[0] = 1.0;
+            yield return Until(() => !split.HasAttempt && split.BoneSearches >= 1, "the lower side was decided");
+            remaining[0] = 0.0;
+            TestContext.Out.WriteLine(split.DescribeBone());
+            NpcBoneSplitRecord bones = split.LastBone;
+            Assert.That(bones.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), DescribeBoneRecord(bones));
+            Assert.That(split.PublishedBone, Is.EqualTo(1));
+            Assert.That(bones.meshComponents == 2 && bones.groups == 2 && bones.fullGroups == 2 && bones.unboundGroups == 0, Is.True,
+                "the trunk's lower part with its cap and its bottom face one component, the hand another: " + DescribeBoneRecord(bones) + ", components " + bones.meshComponents + ", mesh alone " + bones.unboundGroups);
+            Assert.That(bones.seamVertices > 0 && bones.topologyVertices > 16, Is.True, "seams joined by the topology; the cut's nodes among the topology vertices");
+            Assert.That(bones.removedWeights, Is.GreaterThan(0), "the bottom face's weights on the shoulder: left out of the connections, the face kept with its surface");
+            Assert.That(bones.positiveTriangles + bones.negativeTriangles, Is.EqualTo(parent.triangles), "no triangle lost or counted twice");
+            Assert.That(bones.positiveConvexes == 1 && bones.negativeConvexes == 1, Is.True, "no convex lost or counted twice");
+
+            LogicalFragmentId a = split.LastPositive, b = split.LastNegative;
+            Assert.That(root.Geometry.TryGetGeometry(a, out VpStoredGeometry ga) && root.Geometry.TryGetGeometry(b, out VpStoredGeometry gb), Is.True);
+            root.Geometry.TryGetGeometry(a, out ga);
+            root.Geometry.TryGetGeometry(b, out gb);
+            (int triangles, int boundary, int nonManifold, int badWinding) up = TopologySurfaceOf(root, ga, out _, out _), down = TopologySurfaceOf(root, gb, out _, out _);
+            TestContext.Out.WriteLine("the children: positive " + up + ", negative " + down);
+            Assert.That(up.triangles == bones.positiveTriangles && down.triangles == bones.negativeTriangles && up.triangles + down.triangles == parent.triangles, Is.True, "every triangle of the parent in exactly one child");
+            Assert.That(up.boundary == 0 && up.nonManifold == 0 && up.badWinding == 0, Is.True, "the positive child is closed: " + up);
+            Assert.That(down.boundary == 0 && down.nonManifold == 0 && down.badWinding == 0, Is.True, "the negative child is closed: " + down);
+            Assert.That(down.triangles, Is.EqualTo(12), "the hand's box, whole");
+            Assert.That(root.Owners.TryGet(a, out PhysicsFragmentOwner ownerA) && root.Owners.TryGet(b, out PhysicsFragmentOwner ownerB), Is.True);
+            root.Owners.TryGet(a, out ownerA);
+            root.Owners.TryGet(b, out ownerB);
+            Assert.That(ownerA.Shape.ConvexCount == 1 && ownerB.Shape.ConvexCount == 1 && ownerA.Shape.ConvexBone(0) == 0 && ownerB.Shape.ConvexBone(0) == 2, Is.True, "the trunk's convex with the trunk's surface, the hand's with the hand's");
+            Assert.That(root.NpcBones.TryGet(a, out NpcBoneFragment ra) && root.NpcBones.TryGet(b, out NpcBoneFragment rb), Is.True);
+            root.NpcBones.TryGet(a, out ra);
+            root.NpcBones.TryGet(b, out rb);
+            Assert.That(ra.Piece.Present[0] && !ra.Piece.Present[2] && rb.Piece.Present[2] && !rb.Piece.Present[0], Is.True, "each child's bone record is its convex's");
+            split.Settings = default;
+            yield return EndWorld(root);
         }
 
         private static string DescribeBoneRecord(in NpcBoneSplitRecord b)

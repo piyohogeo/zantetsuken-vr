@@ -22,10 +22,27 @@ namespace Zantetsu.EditorTools.Sandbox
         /// <summary>NPC-BONE-SUPPORT-1: a JSON line a pick (the saved decision's counts and placement) beside the report, for the comparison with an independent analysis.</summary>
         public const string JsonArgument = "-zantetsuPiecePickJson";
 
+        /// <summary>
+        /// NPC-BONE-TOPOLOGY-1: a folder of <c>pick-&lt;n&gt;.json</c> files ({topologyCount, ids: one topology id a vertex of the pick's
+        /// saved lineage}), worked out apart from what a pick holds (a pick holds no topology). With it each pick is decided with its
+        /// topology, and the JSON line carries every triangle's side; a pick with no file there is decided as before (each render vertex
+        /// its own topology vertex) and its line says so.
+        /// </summary>
+        public const string TopologyArgument = "-zantetsuPiecePickTopology";
+
+        [Serializable]
+        private sealed class PickTopology
+        {
+            public int pick, topologyCount;
+            public bool exact;
+            public int[] ids;
+        }
+
         public static void Run()
         {
             string[] arguments = Environment.GetCommandLineArgs();
             string folder = ValueOf(arguments, FolderArgument), report = ValueOf(arguments, ReportArgument), json = ValueOf(arguments, JsonArgument);
+            s_topologyFolder = ValueOf(arguments, TopologyArgument);
             if (folder == null || report == null || !Directory.Exists(folder))
             {
                 Debug.LogError("PIECE PICK VERIFY: " + FolderArgument + " <an existing folder> and " + ReportArgument + " <a file> are needed");
@@ -53,6 +70,8 @@ namespace Zantetsu.EditorTools.Sandbox
         /// <summary>The report of <paramref name="folder"/>; 0 where every pick that did not fail at the time is whole and its saved decision agrees with its note of this geometry, 1 otherwise.</summary>
         public static string Verify(string folder, out int code) => Verify(folder, out code, null);
 
+        private static string s_topologyFolder;
+
         public static string Verify(string folder, out int code, string jsonPath)
         {
             CultureInfo inv = CultureInfo.InvariantCulture;
@@ -66,7 +85,16 @@ namespace Zantetsu.EditorTools.Sandbox
             {
                 if (!pick.IsWhole) continue;
                 NpcPiecePickSample r = pick.record;
-                NpcBoneSplitRecord d = NpcPiecePickSet.Decide(pick, out byte[] sides, out byte[] boneSides);
+                PickTopology topology = null;
+                if (s_topologyFolder != null)
+                {
+                    string file = Path.Combine(s_topologyFolder, "pick-" + r.pick.ToString(inv) + ".json");
+                    if (File.Exists(file)) topology = JsonUtility.FromJson<PickTopology>(File.ReadAllText(file));
+                }
+
+                NpcBoneSplitRecord d = topology != null && topology.ids != null
+                    ? NpcPiecePickSet.Decide(pick, topology.ids, topology.topologyCount, out byte[] sides, out byte[] boneSides)
+                    : NpcPiecePickSet.Decide(pick, out sides, out boneSides);
                 string key = d.verdict + (d.verdict == NpcBoneSplitVerdict.Separable ? "" : " (" + d.reason + ")");
                 if (jsonPath != null)
                 {
@@ -98,7 +126,12 @@ namespace Zantetsu.EditorTools.Sandbox
                         .Append(",\"positiveConvexIndices\":[").Append(string.Join(",", positiveConvexes)).Append("],\"positiveConvexBones\":[").Append(string.Join(",", positiveBones))
                         .Append("],\"bonesPositive\":[").Append(string.Join(",", bonesPositive)).Append("],\"bonesNegative\":[").Append(string.Join(",", bonesNegative))
                         .Append("],\"noteVerdict\":").Append(SpatialSplitCaptureSink.Json(r.noteBoneVerdict)).Append(",\"noteGroups\":").Append(r.noteGroups).Append(",\"noteFullGroups\":").Append(r.noteFullGroups)
-                        .Append(",\"nativeBytes\":").Append(d.nativeBytes).Append("}\n");
+                        .Append(",\"nativeBytes\":").Append(d.nativeBytes)
+                        .Append(",\"topology\":").Append(SpatialSplitCaptureSink.Json(topology == null ? "none (each render vertex its own)" : topology.exact ? "given, exact" : "given, not exact"))
+                        .Append(",\"topologyVertices\":").Append(d.topologyVertices).Append(",\"seamVertices\":").Append(d.seamVertices)
+                        .Append(",\"triangleSides\":\"");
+                    for (int i = convexes; i < sides.Length; i++) json.Append(d.verdict == NpcBoneSplitVerdict.Separable ? (char)('0' + sides[i]) : '-');
+                    json.Append("\"}\n");
                 }
                 verdicts[key] = verdicts.TryGetValue(key, out int n) ? n + 1 : 1;
                 string agreement;
