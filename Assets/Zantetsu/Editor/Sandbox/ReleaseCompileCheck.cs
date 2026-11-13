@@ -114,6 +114,7 @@ namespace Zantetsu.Editor.Sandbox
             "SpatialSplitCaptureSink", "SpatialSplitCaptureSession", "SpatialSplitCaptureSample", "SpatialSplitReplay", "SpatialSplitSample",
             "SpatialSplitReplayPlayer", "SpatialSplitBoneSample", "SpatialSplitMethodEval", "SpatialSplitMethodEvalPlayer",   // NPC-BONE-EVAL-1
             "NpcPiecePickSample", "NpcModelWeightTable", "NpcPiecePickCopy", "NpcPiecePickSet", "PieceCollector",   // NPC-PIECE-PICK-1
+            "NpcPieceTopologySample",   // NPC-PIECE-TOPOLOGY-1
             "FacePickSample", "FacePickCopy", "FacePickSet", "FacePickIo", "FaceCollector", "VpDrawSlotOwner",   // FACE-PICK-1
         };
 

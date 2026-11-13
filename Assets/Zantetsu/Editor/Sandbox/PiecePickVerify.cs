@@ -79,14 +79,15 @@ namespace Zantetsu.EditorTools.Sandbox
             var text = new StringBuilder();
             var json = new StringBuilder();
             text.Append("PIECE PICK VERIFY: ").Append(Path.GetFileName(folder)).Append(": ").Append(NpcPiecePickSet.Describe(picks)).Append('\n');
-            int disagree = 0, compared = 0, notOfThisGeometry = 0, noNote = 0;
+            int disagree = 0, compared = 0, notOfThisGeometry = 0, noNote = 0, savedTopology = 0, outsideTopology = 0, noTopology = 0, splitChildren = 0;
             var verdicts = new Dictionary<string, int>();
             foreach (NpcPiecePickSet.Pick pick in picks)
             {
                 if (!pick.IsWhole) continue;
                 NpcPiecePickSample r = pick.record;
+                // NPC-PIECE-TOPOLOGY-1: a pick's own saved table first, as it stands; an outside file only for a pick that saved none.
                 PickTopology topology = null;
-                if (s_topologyFolder != null)
+                if (!pick.HasTopology && s_topologyFolder != null)
                 {
                     string file = Path.Combine(s_topologyFolder, "pick-" + r.pick.ToString(inv) + ".json");
                     if (File.Exists(file)) topology = JsonUtility.FromJson<PickTopology>(File.ReadAllText(file));
@@ -95,6 +96,10 @@ namespace Zantetsu.EditorTools.Sandbox
                 NpcBoneSplitRecord d = topology != null && topology.ids != null
                     ? NpcPiecePickSet.Decide(pick, topology.ids, topology.topologyCount, out byte[] sides, out byte[] boneSides)
                     : NpcPiecePickSet.Decide(pick, out sides, out boneSides);
+                string topologySource = pick.HasTopology ? "saved with the pick, exact" : topology == null ? "none (each render vertex its own)" : topology.exact ? "given, exact" : "given, not exact";
+                if (pick.HasTopology) savedTopology++; else if (topology != null) outsideTopology++; else noTopology++;
+                bool splitChild = r.splitSource != 0 || r.noteMadeBy.Length > 0;
+                if (splitChild) splitChildren++;
                 string key = d.verdict + (d.verdict == NpcBoneSplitVerdict.Separable ? "" : " (" + d.reason + ")");
                 if (jsonPath != null)
                 {
@@ -127,7 +132,13 @@ namespace Zantetsu.EditorTools.Sandbox
                         .Append("],\"bonesPositive\":[").Append(string.Join(",", bonesPositive)).Append("],\"bonesNegative\":[").Append(string.Join(",", bonesNegative))
                         .Append("],\"noteVerdict\":").Append(SpatialSplitCaptureSink.Json(r.noteBoneVerdict)).Append(",\"noteGroups\":").Append(r.noteGroups).Append(",\"noteFullGroups\":").Append(r.noteFullGroups)
                         .Append(",\"nativeBytes\":").Append(d.nativeBytes)
-                        .Append(",\"topology\":").Append(SpatialSplitCaptureSink.Json(topology == null ? "none (each render vertex its own)" : topology.exact ? "given, exact" : "given, not exact"))
+                        .Append(",\"topology\":").Append(SpatialSplitCaptureSink.Json(topologySource))
+                        .Append(",\"format\":").Append(r.formatVersion).Append(",\"generation\":").Append(r.generation).Append(",\"rootFragment\":").Append(r.rootFragment)
+                        .Append(",\"splitSource\":").Append(r.splitSource).Append(",\"splitChild\":").Append(splitChild ? "true" : "false").Append(",\"madeBy\":").Append(SpatialSplitCaptureSink.Json(r.noteMadeBy))
+                        .Append(",\"noteIsOfThisGeometry\":").Append(r.noteIsOfThisGeometry ? "true" : "false").Append(",\"noteAttempted\":").Append(r.noteAttempted ? "true" : "false")
+                        .Append(",\"noteReason\":").Append(SpatialSplitCaptureSink.Json(r.noteBoneReason)).Append(",\"noteClusters\":").Append(r.noteClusters)
+                        .Append(",\"noteFellBack\":").Append(r.noteFellBack ? "true" : "false").Append(",\"noteEnd\":").Append(SpatialSplitCaptureSink.Json(r.noteEnd))
+                        .Append(",\"convexes\":").Append(r.convexCount).Append(",\"triangles\":").Append(r.indexCount / 3)
                         .Append(",\"topologyVertices\":").Append(d.topologyVertices).Append(",\"seamVertices\":").Append(d.seamVertices)
                         .Append(",\"triangleSides\":\"");
                     for (int i = convexes; i < sides.Length; i++) json.Append(d.verdict == NpcBoneSplitVerdict.Separable ? (char)('0' + sides[i]) : '-');
@@ -142,7 +153,11 @@ namespace Zantetsu.EditorTools.Sandbox
                     compared++;
                     bool same = d.verdict.ToString() == r.noteBoneVerdict && d.clusters == r.noteClusters && d.groups == r.noteGroups && d.fullGroups == r.noteFullGroups
                         && d.meshComponents == r.noteMeshComponents && d.pieceBones == r.notePieceBones && d.referencedVertices == r.noteReferencedVertices && d.originSteps == r.noteOriginSteps
-                        && d.removedWeights == r.noteRemovedWeights && d.unboundGroups == r.noteUnboundGroups;
+                        && d.removedWeights == r.noteRemovedWeights && d.unboundGroups == r.noteUnboundGroups
+                        && d.positiveConvexes == r.notePositiveConvexes && d.negativeConvexes == r.noteNegativeConvexes
+                        && d.positiveTriangles == r.notePositiveTriangles && d.negativeTriangles == r.noteNegativeTriangles
+                        && (r.formatVersion < 2 || (d.topologyVertices == r.noteTopologyVertices && d.seamVertices == r.noteSeamVertices
+                            && d.connectionsKept == r.noteConnectionsKept && d.connectionsDropped == r.noteConnectionsDropped));
                     if (!same) disagree++;
                     agreement = same ? "SAME as the live note" : "DIFFERS from the live note (" + r.noteBoneVerdict + ", clusters " + r.noteClusters + ", groups " + r.noteGroups + "/" + r.noteFullGroups
                         + ", components " + r.noteMeshComponents + ", held " + r.notePieceBones + ", referenced " + r.noteReferencedVertices + ", steps " + r.noteOriginSteps + ", removed " + r.noteRemovedWeights + ")";
@@ -155,13 +170,19 @@ namespace Zantetsu.EditorTools.Sandbox
                     .Append(", components ").Append(d.meshComponents).Append(", groups ").Append(d.groups).Append(" (").Append(d.fullGroups).Append(" full, ").Append(d.unboundGroups).Append(" mesh alone), removed weights ")
                     .Append(d.removedWeights).Append(", referenced ").Append(d.referencedVertices).Append(" of ").Append(d.lineageVertices).Append("; ").Append(agreement)
                     .Append("; the split's look ").Append(r.examine).Append(r.noteFellBack ? "; fell back, ended " + r.noteEnd : "").Append(r.noteMadeBy.Length > 0 ? "; made by " + r.noteMadeBy : "")
-                    .Append("; weights kept ").Append(r.weightsKept ? "yes" : "NO").Append('\n');
+                    .Append("; weights kept ").Append(r.weightsKept ? "yes" : "NO")
+                    .Append("; format ").Append(r.formatVersion).Append(", topology ").Append(topologySource)
+                    .Append(pick.HasTopology ? " (" + pick.topology.vertexIds.Length + " render vertices of " + pick.topology.blockStarts.Length + " blocks to " + pick.topology.topologyVertexCount + " topology vertices; decided: "
+                        + d.topologyVertices + " topology vertices, " + d.seamVertices + " seam vertices joined, connections " + d.connectionsKept + ")" : "")
+                    .Append(splitChild ? "; ALREADY A SPLIT'S CHILD (source " + r.splitSource + ")" : "; not made by a split").Append('\n');
             }
 
             text.Append("saved decisions:");
             foreach (KeyValuePair<string, int> v in verdicts) text.Append(' ').Append(v.Key).Append(' ').Append(v.Value).Append(';');
             text.Append(" compared with the live note ").Append(compared).Append(" (differ ").Append(disagree).Append("), note of an earlier geometry ").Append(notOfThisGeometry)
                 .Append(", no attempt noted ").Append(noNote).Append('\n');
+            text.Append("topology: saved with the pick ").Append(savedTopology).Append(", given from outside ").Append(outsideTopology).Append(", none ").Append(noTopology)
+                .Append("; already a split's child ").Append(splitChildren).Append('\n');
             int broken = 0;
             foreach (NpcPiecePickSet.Pick p in picks) if (p.failure == null && !p.IsWhole) broken++;
             if (jsonPath != null) File.WriteAllText(jsonPath, json.ToString(), new UTF8Encoding(false));

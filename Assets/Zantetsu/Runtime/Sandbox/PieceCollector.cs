@@ -135,7 +135,7 @@ namespace Zantetsu.Sandbox
         public long FailedToWrite => Interlocked.Read(ref _failedToWrite);
         public string Folder => _sink != null ? _sink.directory : null;
 
-        /// <summary>One pick's three items, told by the writer thread (any order): saved when all were written, failed at the first that was not.</summary>
+        /// <summary>One pick's items (the sample, the bones, the topology table, the record), told by the writer thread (any order): saved when all were written, failed at the first that was not.</summary>
         private sealed class Outcome
         {
             internal PieceCollector owner;
@@ -154,7 +154,7 @@ namespace Zantetsu.Sandbox
                 if (Interlocked.Increment(ref told) == NpcPiecePickCopy.ItemsPerPick && Volatile.Read(ref failed) == 0)
                 {
                     Interlocked.Increment(ref owner._saved);
-                    Debug.Log(Prefix + "#" + pick + " saved (fragment " + fragment + "): its sample, bones and record are committed");
+                    Debug.Log(Prefix + "#" + pick + " saved (fragment " + fragment + "): its sample, bones, topology table and record are committed");
                 }
             }
         }

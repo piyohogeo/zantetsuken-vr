@@ -143,7 +143,21 @@ namespace Zantetsu.PhysicsCut.Tests
             return corners.ToArray();
         }
 
-        private NpcBoneSplitRecord DecideLive(NpcBoneLineage lineage, NpcBonePiece piece, uint[] indices, out byte[] sides, out byte[] boneSides)
+        /// <summary>
+        /// The fixture's topology (NPC-PIECE-TOPOLOGY-1), one id a vertex of the lineage's numbering (24 base vertices, then the cut's
+        /// 200, 201, 202): every render vertex its own topology vertex, but base 3 -- a render vertex of the same topology vertex as base 0,
+        /// as an attribute seam leaves them. The lower body's first two triangles are then one mesh component.
+        /// </summary>
+        private const int TopologyVertices = 27;
+        private static int[] TopologyOfLocal()
+        {
+            var ids = new int[27];
+            for (int i = 0; i < ids.Length; i++) ids[i] = i;
+            ids[3] = 0;
+            return ids;
+        }
+
+        private NpcBoneSplitRecord DecideLive(NpcBoneLineage lineage, NpcBonePiece piece, uint[] indices, out byte[] sides, out byte[] boneSides, int[] topologyOfLocal = null, int topologyVertexCount = 0)
         {
             var native = new NativeArray<uint>(indices, Allocator.Temp);
             int c = ConvexBones.Length, t = indices.Length / 3;
@@ -163,8 +177,8 @@ namespace Zantetsu.PhysicsCut.Tests
                     insufficient = lineage.Insufficient, maxTriangles = 131072, maxOriginSteps = NpcBoneSplitSearch.DefaultMaxOriginSteps,
                 };
                 var record = default(NpcBoneSplitRecord);
-                // NPC-BONE-TOPOLOGY-1: each render vertex its own topology vertex (the fixture has no attribute seam).
-                using (NpcBoneTopology topology = NpcBoneTopology.OfLocal(in input.lineage, null, 0))
+                // NPC-BONE-TOPOLOGY-1: the topology given, or each render vertex its own topology vertex.
+                using (NpcBoneTopology topology = NpcBoneTopology.OfLocal(in input.lineage, topologyOfLocal, topologyVertexCount))
                 {
                     input.topology = topology.Map;
                     NpcBoneSplitSearch.Decide(in input, (byte*)bytes.GetUnsafePtr(), bytes.Length, ref record);
@@ -278,6 +292,7 @@ namespace Zantetsu.PhysicsCut.Tests
             internal NpcPiecePickSample record;
             internal NpcBoneSplitRecord live;
             internal byte[] liveSides, liveBoneSides;
+            internal NpcPieceTopologySample topology;   // null for a pick written in the format before
             internal readonly List<(bool ok, string why)> told = new List<(bool, string)>();
         }
 
@@ -285,13 +300,15 @@ namespace Zantetsu.PhysicsCut.Tests
         private readonly Dictionary<NpcVertexBones, (string file, string hash)> _models = new Dictionary<NpcVertexBones, (string, string)>();
 
         /// <summary>One pick (number <paramref name="pick"/>) of the piece into <paramref name="sink"/>; <paramref name="strayVertex"/>: an index names a vertex no lineage has (a sample of another geometry).</summary>
-        private Written WritePick(SpatialSplitCaptureSink sink, int pick, NpcVertexBones table, NpcBoneLineage lineage, bool strayVertex = false)
+        /// <remarks><paramref name="formatBefore"/>: the pick as the collections up to 2026-11-12 wrote it -- format 1, no topology table, decided with each render vertex its own.</remarks>
+        private Written WritePick(SpatialSplitCaptureSink sink, int pick, NpcVertexBones table, NpcBoneLineage lineage, bool strayVertex = false, bool formatBefore = false)
         {
             var w = new Written { folder = sink.directory, lineage = lineage, table = table };
             w.piece = NpcBonePiece.Whole(lineage.Parent, lineage.Present).Cut(BodyWaist, false, lineage.Parent, lineage.Present, lineage.Joints);
             w.indices = Indices();
             if (strayVertex) w.indices[w.indices.Length - 1] = 999;
-            w.live = DecideLive(lineage, w.piece, w.indices, out w.liveSides, out w.liveBoneSides);
+            int[] topologyOfLocal = formatBefore ? null : TopologyOfLocal();
+            w.live = DecideLive(lineage, w.piece, w.indices, out w.liveSides, out w.liveBoneSides, topologyOfLocal, TopologyVertices);
             PhysicsOwnerShape shape = BoxesShape(
                 new[] { new float3(-0.3f, 0f, -0.3f), new float3(-0.4f, 0.5f, -0.1f), new float3(0.1f, 0.5f, -0.1f) },
                 new[] { new float3(0.3f, 1.05f, 0.3f), new float3(-0.1f, 0.9f, 0.1f), new float3(0.4f, 0.9f, 0.1f) });
@@ -338,7 +355,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 {
                     sessionId = sink.sessionId, codeVersion = sink.codeVersion, pick = pick, frame = 40 + pick, realtimeSeconds = 12.5 + pick, utc = "2026-11-09T01:02:03.0000000Z",
                     world = 1, ledgerRevision = 77, fragment = 5, rootFragment = 2, splitSource = 0, generation = 1, epoch = 3,
-                    geometry = new NpcPieceGeometryIdentity { vertexStart = (int)BaseStart, vertexCount = 24, topologyVertexCount = 24, submeshStart = 4, submeshCount = 1, blockStart = 9, blockCount = 2 },
+                    geometry = new NpcPieceGeometryIdentity { vertexStart = (int)BaseStart, vertexCount = 24, topologyVertexCount = TopologyVertices, submeshStart = 4, submeshCount = 1, blockStart = 9, blockCount = 2 },
                     objectName = "NPC c_1", modelName = table.ModelName, modelFile = model.file, modelSha256 = model.hash, weightsKept = table.HasWeights,
                     sampleFile = SpatialSplitCaptureSink.SampleFileName(1, pick), bonesFile = SpatialSplitBoneSample.FileName(1, pick),
                     aimOrigin = new float3(0.1f, 1.5f, -2f), aimDirection = math.normalize(new float3(0.2f, -0.3f, 1f)), hitWorld = new float3(0.123456f, 0.654321f, 1.1f), hitDistance = 3.3f, hitCollider = "collider 2",
@@ -352,12 +369,41 @@ namespace Zantetsu.PhysicsCut.Tests
                     noteBones = 9, noteClusters = 1, noteMeshComponents = 5, noteGroups = 1, noteFullGroups = 1, noteReferencedVertices = 26, noteLineageVertices = 27, notePieceBones = 5, noteUnboundGroups = 0,
                     notePositiveConvexes = 0, noteNegativeConvexes = 0, notePositiveTriangles = 0, noteNegativeTriangles = 0, noteOriginSteps = 31, noteRemovedWeights = 2,
                 };
+                // The topology table, as the collector takes it from the storage: every vertex the indices name, ascending, each once.
+                SpatialSplitBoneItem topologyItem = null;
+                if (formatBefore)
+                {
+                    w.record.formatVersion = NpcPiecePickSample.FormatWithoutTopology;
+                }
+                else
+                {
+                    uint[] ids = w.indices.Distinct().OrderBy(v => v).ToArray();
+                    w.topology = new NpcPieceTopologySample
+                    {
+                        sessionId = sink.sessionId, world = 1, pick = pick, fragment = 5, epoch = 3, geometry = w.record.geometry, topologyVertexCount = TopologyVertices,
+                        blockStarts = new[] { (int)BaseStart, 200 }, blockCounts = new[] { 24, 3 }, vertexIds = ids,
+                        topologyIds = ids.Select(v => v >= 200 && v < 203 ? topologyOfLocal[24 + (int)(v - 200)] : v - BaseStart < 24 ? topologyOfLocal[(int)(v - BaseStart)] : 0).ToArray(),
+                    };
+                    topologyItem = NpcPiecePickCopy.MakeTopologyItem(w.topology, done, out string topologyHash);
+                    w.record.topologyFile = topologyItem.file;
+                    w.record.topologySha256 = topologyHash;
+                    w.record.topologyVertices = TopologyVertices;
+                    w.record.topologyEntries = ids.Length;
+                    w.record.noteTopologyVertices = 27; w.record.noteSeamVertices = 1; w.record.noteConnectionsKept = 6; w.record.noteConnectionsDropped = 0;
+                }
+
                 SpatialSplitBoneItem item = NpcPiecePickCopy.MakeRecordItem(w.record, done);
                 Assert.That(sink.TryReserve(item.bytes, false), Is.True);
                 sink.NoteIssued(sample);
                 var settings = new CutSpatialSplitSettings();
                 Assert.That(SpatialSplitBoneSample.Write(sink, 1, pick, 5, 3, lineage, w.piece, ConvexBones, null, NpcBoneSplitSearch.DefaultMaxOriginSteps, table.Pointer, lineage.Chunks, lineage.LocalCount,
                     in settings, false, done), Is.True, "the bones handed");
+                if (topologyItem != null)
+                {
+                    Assert.That(sink.TryReserve(topologyItem.bytes, false), Is.True);
+                    sink.HandBone(topologyItem);
+                }
+
                 sink.HandBone(item);
             }
             finally
@@ -398,7 +444,7 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(w.live.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), "the layout: three full groups below the waist (the pelvis, the two hands)");
             Assert.That(w.live.fullGroups, Is.EqualTo(3));
             Assert.That(w.live.originSteps, Is.GreaterThan(w.live.referencedVertices), "the cut's vertices were walked back");
-            lock (w.told) Assert.That(w.told.Select(t => t.ok).ToArray(), Is.EqualTo(new[] { true, true, true }), "the sample, the bones and the record: each told once, written: " + string.Join("; ", w.told.Select(t => t.why)));
+            lock (w.told) Assert.That(w.told.Select(t => t.ok).ToArray(), Is.EqualTo(new[] { true, true, true, true }), "the sample, the bones, the topology table and the record: each told once, written: " + string.Join("; ", w.told.Select(t => t.why)));
             Assert.That(sink.Saved, Is.EqualTo(1));
             Assert.That(sink.Lost + sink.NotCapturedInAll + sink.Returned, Is.Zero);
             Assert.That(sink.QueuedItems == 0 && sink.QueuedBytes == 0, Is.True, "everything given back");
@@ -417,6 +463,33 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(again.nativeBytes, Is.EqualTo(w.live.nativeBytes));
             Assert.That(sides, Is.EqualTo(w.liveSides), "every convex and triangle on the same side");
             Assert.That(boneSides, Is.EqualTo(w.liveBoneSides), "every bone and connection on the same side");
+
+            // The topology table read back is the one written, entry for entry, and it is what decided: with each render vertex its own
+            // topology vertex the seam's two triangles would be two components.
+            Assert.That(pick.HasTopology && pick.record.formatVersion == 2, Is.True);
+            Assert.That(pick.topology.vertexIds, Is.EqualTo(w.topology.vertexIds), "every vertex the indices name, ascending, each once");
+            Assert.That(pick.topology.topologyIds, Is.EqualTo(w.topology.topologyIds), "its topology vertex, as saved");
+            Assert.That(pick.topology.vertexIds, Is.EqualTo(w.indices.Distinct().OrderBy(v => v).ToArray()));
+            Assert.That(pick.topology.TopologyOf(BaseStart + 3) == 0 && pick.topology.TopologyOf(BaseStart + 0) == 0, Is.True, "the seam: two render vertices of one topology vertex");
+            Assert.That(pick.topology.TopologyOf(200) == 24 && pick.topology.TopologyOf(201) == 25 && pick.topology.TopologyOf(202) == 26, Is.True, "the cut's vertices and the cap's auxiliary one, of the second block");
+            Assert.That(pick.topology.TopologyOf(BaseStart + 24), Is.EqualTo(-1), "a vertex the indices do not name has no entry");
+            Assert.That(pick.topology.topologyVertexCount == TopologyVertices && pick.topology.blockStarts.SequenceEqual(new[] { (int)BaseStart, 200 }) && pick.topology.blockCounts.SequenceEqual(new[] { 24, 3 }), Is.True);
+            Assert.That(pick.topology.sha256 == pick.record.topologySha256 && pick.record.topologyFile == NpcPieceTopologySample.FileName(1, 1) && pick.record.topologyEntries == w.topology.vertexIds.Length, Is.True, "named by the record with its hash");
+            Assert.That(pick.record.noteTopologyVertices == 27 && pick.record.noteSeamVertices == 1 && pick.record.noteConnectionsKept == 6 && pick.record.noteConnectionsDropped == 0, Is.True, "the note's counts of format 2");
+            Assert.That(again.seamVertices == 1 && again.topologyVertices == TopologyVertices, Is.True, "decided with the saved table: one seam vertex joined");
+            NpcBoneSplitRecord identity = NpcPiecePickSet.Decide(pick, null, 0, out _, out _);
+            Assert.That(identity.seamVertices == 0 && identity.meshComponents == again.meshComponents + 1, Is.True, "each render vertex its own: the seam's two triangles apart (" + identity.meshComponents + " components, " + again.meshComponents + " with the table)");
+            int[] savedIds = NpcPiecePickSet.SavedTopologyOfLocal(pick, out int savedCount);
+            Assert.That(savedCount, Is.EqualTo(TopologyVertices));
+            int[] expected = TopologyOfLocal();
+            foreach (uint v in w.indices)
+            {
+                int local = NpcPiecePickSet.LocalOf(pick.bones, v);
+                Assert.That(savedIds[local], Is.EqualTo(expected[local]), "vertex " + v + " in the lineage's numbering");
+            }
+
+            Assert.That(File.ReadAllLines(Path.Combine(w.folder, NpcPieceTopologySample.Index)), Has.Length.EqualTo(1));
+            StringAssert.Contains("\"format\":2", File.ReadAllLines(Path.Combine(w.folder, "picks.jsonl"))[0]);
 
             // The record's own values, as written.
             NpcPiecePickSample r = pick.record;
@@ -494,6 +567,71 @@ namespace Zantetsu.PhysicsCut.Tests
             {
                 NpcVertexBones.KeepWeights = before;
             }
+        }
+
+        /// <summary>
+        /// **A pick of the format before is told apart and still read; a topology table that is missing, changed or of another geometry is
+        /// told and never decided with** (NPC-PIECE-TOPOLOGY-1). Pick 1 in format 1 (no table): whole, without a topology, decided with each
+        /// render vertex its own -- the live decision of its time. Picks 2 to 5 in format 2: 2 whole; 3's table deleted; 4's listed hash
+        /// changed; 5's table replaced by 2's (another pick's). None of 3, 4, 5 is whole, and none keeps a table to decide with.
+        /// </summary>
+        [Test]
+        public void APickOfTheFormatBefore_IsStillRead_AndATopologyTableMissingChangedOrOfAnotherPick_IsTold()
+        {
+            ulong[] bones = Weights();
+            NpcVertexBones table = Table(bones, WeightValues(bones));
+            NpcBoneLineage lineage = Lineage(table, bones.Length);
+            AddCutChunk(lineage);
+            SpatialSplitCaptureSink sink = NewSink("formats");
+            // The writer's queue holds 16 items: each pick is let through before the next (a person's presses are seconds apart).
+            void Drained() => Assert.That(System.Threading.SpinWait.SpinUntil(() => sink.QueuedItems == 0, 10000), Is.True, "the writer took the pick's items");
+            Written before = WritePick(sink, 1, table, lineage, formatBefore: true);
+            Drained();
+            Written two = WritePick(sink, 2, table, lineage);
+            Drained();
+            WritePick(sink, 3, table, lineage);
+            Drained();
+            WritePick(sink, 4, table, lineage);
+            Drained();
+            WritePick(sink, 5, table, lineage);
+            Assert.That(sink.Close(10.0), Is.True, "the writer ended");
+            string folder = sink.directory;
+            lock (before.told) Assert.That(before.told.Count(t => t.ok), Is.EqualTo(3), "the format before: three items");
+
+            List<NpcPiecePickSet.Pick> whole = NpcPiecePickSet.Read(folder);
+            string all = NpcPiecePickSet.Describe(whole);
+            TestContext.Out.WriteLine(all);
+            Assert.That(whole.Count(p => p.IsWhole), Is.EqualTo(5), all);
+            StringAssert.Contains("with their own topology table 4, of the format before (no topology saved) 1", all);
+            Assert.That(whole[0].record.formatVersion == 1 && !whole[0].HasTopology && whole[0].record.topologyFile == "", Is.True, "format 1: told apart, no table");
+            NpcBoneSplitRecord old = NpcPiecePickSet.Decide(whole[0], out byte[] oldSides, out _);
+            Assert.That(Describe(in old), Is.EqualTo(Describe(in before.live)), "decided as it was: each render vertex its own");
+            Assert.That(oldSides, Is.EqualTo(before.liveSides));
+            Assert.That(old.seamVertices, Is.Zero);
+            NpcBoneSplitRecord saved = NpcPiecePickSet.Decide(whole[1], out byte[] savedSides, out _);
+            Assert.That(Describe(in saved), Is.EqualTo(Describe(in two.live)));
+            Assert.That(savedSides, Is.EqualTo(two.liveSides));
+            Assert.That(saved.meshComponents, Is.EqualTo(old.meshComponents - 1), "the same piece with its table: the seam joined");
+            StringAssert.Contains("\"format\":1", File.ReadAllLines(Path.Combine(folder, "picks.jsonl"))[0]);
+
+            File.Delete(Path.Combine(folder, NpcPieceTopologySample.FileName(1, 3)));
+            string index = Path.Combine(folder, NpcPieceTopologySample.Index);
+            string[] lines = File.ReadAllLines(index);
+            Assert.That(lines, Has.Length.EqualTo(4), "one line a table; the format before wrote none");
+            int fourth = Array.FindIndex(lines, l => l.Contains("\"attempt\":4,"));
+            Assert.That(fourth, Is.GreaterThanOrEqualTo(0));
+            lines[fourth] = System.Text.RegularExpressions.Regex.Replace(lines[fourth], "\"sha256\":\"[0-9a-f]{8}", "\"sha256\":\"00000000");
+            File.WriteAllLines(index, lines);
+            File.Copy(Path.Combine(folder, NpcPieceTopologySample.FileName(1, 2)), Path.Combine(folder, NpcPieceTopologySample.FileName(1, 5)), true);
+
+            List<NpcPiecePickSet.Pick> read = NpcPiecePickSet.Read(folder);
+            string description = NpcPiecePickSet.Describe(read);
+            TestContext.Out.WriteLine(description);
+            Assert.That(read[0].IsWhole && read[1].IsWhole && read[1].HasTopology, Is.True, description);
+            Assert.That(!read[2].IsWhole && read[2].problems.Any(p => p.Contains("the topology is missing")), Is.True, string.Join("; ", read[2].problems));
+            Assert.That(!read[3].IsWhole && read[3].problems.Any(p => p.Contains("the topology's hash is not the listed one")), Is.True, string.Join("; ", read[3].problems));
+            Assert.That(!read[4].IsWhole && read[4].problems.Any(p => p.Contains("the topology is of another pick")) && read[4].problems.Any(p => p.Contains("not the one the pick named")), Is.True, string.Join("; ", read[4].problems));
+            Assert.That(read[2].HasTopology || read[3].HasTopology || read[4].HasTopology, Is.False, "a table that does not agree is not kept to decide with");
         }
 
         /// <summary>

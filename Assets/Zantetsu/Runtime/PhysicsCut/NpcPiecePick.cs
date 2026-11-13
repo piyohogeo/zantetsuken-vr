@@ -165,11 +165,190 @@ namespace Zantetsu.PhysicsCut
         }
     }
 
-    /// <summary>The pick's own record (NPC-PIECE-PICK-1): who, when, where the line pointed, the owner's pose, the split's note and the model's table.</summary>
+    /// <summary>
+    /// The picked geometry's own topology table (NPC-PIECE-TOPOLOGY-1, 2026-11-13; .zst.gz and topologies.jsonl): for every render
+    /// vertex the geometry's indices name -- of whichever vertex block, the base's, a cut's, a cap's auxiliary ones -- the topology
+    /// vertex the storage holds for it in this geometry, read through the map the cut kernel and the bone-aware split's decision
+    /// read (<see cref="NpcBoneTopology.TryOfGeometry"/>, <see cref="RenderCutTopologyMap.TopologyOf"/>) while the pick holds the
+    /// geometry's index lease. Nothing is worked out from positions or origins, when it is written or when it is read: a pick read
+    /// back is decided with this table as it stands. The vertex ids are the storage's, ascending, each once.
+    /// </summary>
+    internal sealed unsafe class NpcPieceTopologySample
+    {
+        internal const string Magic = "ZTKSTPL1", End = "END!", Index = "topologies.jsonl";
+        internal const int FormatVersion = 1;
+
+        internal string sessionId, sha256;
+        internal long world;
+        internal int pick, fragment, epoch;
+        internal NpcPieceGeometryIdentity geometry;
+        internal int topologyVertexCount;
+        internal int[] blockStarts, blockCounts;   // the geometry's vertex blocks, in its order
+        internal uint[] vertexIds;                 // every render vertex the indices name: ascending, each once
+        internal int[] topologyIds;                // its topology vertex, in the same places
+
+        internal static string FileName(long world, long pick) =>
+            "w" + world.ToString("D3", CultureInfo.InvariantCulture) + "-a" + pick.ToString("D7", CultureInfo.InvariantCulture) + ".zst.gz";
+
+        /// <summary>
+        /// The table of <paramref name="geometry"/> for the vertices <paramref name="indices"/> name; null with <paramref name="why"/> where
+        /// the geometry gives no mapping or a vertex is of none of its blocks. The caller holds the geometry's index lease.
+        /// </summary>
+        internal static NpcPieceTopologySample Take(VpCpuGeometryStorage storage, VpStoredGeometry geometry, uint* indices, int indexCount, out string why)
+        {
+            if (!NpcBoneTopology.TryOfGeometry(storage, geometry, out NpcBoneTopology topology, out why)) return null;
+            try
+            {
+                if (!storage.TryGetVertexBlocks(geometry, out NativeArray<VpGeometryVertexBlock>.ReadOnly blocks, out int count)) { why = "the geometry's vertex blocks are not readable"; return null; }
+                var made = new NpcPieceTopologySample
+                {
+                    geometry = NpcPieceGeometryIdentity.Of(in geometry), topologyVertexCount = count, blockStarts = new int[blocks.Length], blockCounts = new int[blocks.Length],
+                };
+                for (int b = 0; b < blocks.Length; b++)
+                {
+                    made.blockStarts[b] = blocks[b].vertexStart;
+                    made.blockCounts[b] = blocks[b].vertexCount;
+                }
+
+                var ids = new uint[Math.Max(0, indexCount)];
+                for (int i = 0; i < ids.Length; i++) ids[i] = indices[i];
+                Array.Sort(ids);
+                int n = 0;
+                for (int i = 0; i < ids.Length; i++)
+                {
+                    if (i == 0 || ids[i] != ids[i - 1]) ids[n++] = ids[i];
+                }
+
+                Array.Resize(ref ids, n);
+                var of = new int[n];
+                RenderCutTopologyMap map = topology.Map;
+                int last = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    int t = RenderCutTopologyMap.TopologyOf(in map, ids[i], ref last);
+                    if ((uint)t >= (uint)count) { why = "vertex " + ids[i] + " has no topology vertex in the geometry's blocks (" + t + " of " + count + ")"; return null; }
+                    of[i] = t;
+                }
+
+                made.vertexIds = ids;
+                made.topologyIds = of;
+                return made;
+            }
+            finally
+            {
+                topology.Dispose();
+            }
+        }
+
+        /// <summary>The topology vertex saved for a storage vertex id; -1 where the table has none.</summary>
+        internal int TopologyOf(uint id)
+        {
+            int at = Array.BinarySearch(vertexIds, id);
+            return at >= 0 ? topologyIds[at] : -1;
+        }
+
+        /// <summary>What is wrong with the table as read, or null: ids ascending and each once, inside a block, topology ids inside the count.</summary>
+        internal string Check()
+        {
+            if (vertexIds.Length != topologyIds.Length) return "the two columns differ in length";
+            if (blockStarts.Length != blockCounts.Length || blockStarts.Length != geometry.blockCount) return "the vertex blocks are not the geometry's " + geometry.blockCount;
+            if (topologyVertexCount != geometry.topologyVertexCount) return "the topology vertex count " + topologyVertexCount + " is not the geometry's " + geometry.topologyVertexCount;
+            for (int i = 0; i < vertexIds.Length; i++)
+            {
+                if (i > 0 && vertexIds[i] <= vertexIds[i - 1]) return "vertex ids not ascending at " + i;
+                if ((uint)topologyIds[i] >= (uint)topologyVertexCount) return "vertex " + vertexIds[i] + " has topology vertex " + topologyIds[i] + " of " + topologyVertexCount;
+                bool inside = false;
+                for (int b = 0; b < blockStarts.Length && !inside; b++) inside = vertexIds[i] >= (uint)blockStarts[b] && vertexIds[i] - (uint)blockStarts[b] < (uint)blockCounts[b];
+                if (!inside) return "vertex " + vertexIds[i] + " is in none of the geometry's vertex blocks";
+            }
+
+            return null;
+        }
+
+        internal byte[] Make(out string hash, out long raw)
+        {
+            using (var memory = new MemoryStream())
+            {
+                using (var gzip = new GZipStream(memory, System.IO.Compression.CompressionLevel.Fastest, true))
+                using (var w = new SpatialSplitHashWriter(gzip, new byte[1 << 16]))
+                {
+                    w.Ascii(Magic);
+                    w.Int(FormatVersion);
+                    w.String(sessionId);
+                    w.Long(world); w.Int(pick); w.Int(fragment); w.Int(epoch);
+                    geometry.Write(w);
+                    w.Int(topologyVertexCount);
+                    w.Int(blockStarts.Length);
+                    for (int b = 0; b < blockStarts.Length; b++) { w.Int(blockStarts[b]); w.Int(blockCounts[b]); }
+                    w.Int(vertexIds.Length);
+                    if (vertexIds.Length > 0)
+                    {
+                        fixed (uint* ids = vertexIds) w.Bytes(ids, (long)vertexIds.Length * sizeof(uint));
+                        fixed (int* of = topologyIds) w.Bytes(of, (long)topologyIds.Length * sizeof(int));
+                    }
+
+                    w.Ascii(End);
+                    hash = w.Finish();
+                    raw = w.Length;
+                }
+
+                return memory.ToArray();
+            }
+        }
+
+        internal static NpcPieceTopologySample Read(string path)
+        {
+            using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (var gzip = new GZipStream(file, CompressionMode.Decompress))
+            using (var r = new SpatialSplitHashReader(gzip))
+            {
+                var s = new NpcPieceTopologySample();
+                r.Expect(Magic);
+                int version = r.Int();
+                if (version != FormatVersion) throw new InvalidDataException("topology format " + version + ", this reads " + FormatVersion);
+                s.sessionId = r.String();
+                s.world = r.Long(); s.pick = r.Int(); s.fragment = r.Int(); s.epoch = r.Int();
+                s.geometry = NpcPieceGeometryIdentity.Read(r);
+                s.topologyVertexCount = r.Int();
+                int blocks = r.Count("vertex block", 1 << 24);
+                s.blockStarts = new int[blocks];
+                s.blockCounts = new int[blocks];
+                for (int b = 0; b < blocks; b++) { s.blockStarts[b] = r.Int(); s.blockCounts[b] = r.Int(); }
+                int n = r.Count("topology entry", 1 << 28);
+                s.vertexIds = r.Array<uint>(n);
+                s.topologyIds = r.Array<int>(n);
+                r.Expect(End);
+                s.sha256 = r.Finish();
+                return s;
+            }
+        }
+
+        /// <summary>The topologies.jsonl line.</summary>
+        internal string Line(string file, string hash, long raw, int fileBytes) =>
+            "{\"world\":" + world + ",\"attempt\":" + pick + ",\"pick\":" + pick + ",\"file\":" + SpatialSplitCaptureSink.Json(file) + ",\"sha256\":" + SpatialSplitCaptureSink.Json(hash)
+            + ",\"rawBytes\":" + raw + ",\"fileBytes\":" + fileBytes + ",\"format\":" + FormatVersion + ",\"fragment\":" + fragment + ",\"epoch\":" + epoch
+            + ",\"topologyVertices\":" + topologyVertexCount + ",\"vertices\":" + vertexIds.Length + ",\"blocks\":" + blockStarts.Length + "}";
+    }
+
+    /// <summary>
+    /// The pick's own record (NPC-PIECE-PICK-1): who, when, where the line pointed, the owner's pose, the split's note and the model's table.
+    /// **Format 2 (NPC-PIECE-TOPOLOGY-1, 2026-11-13)** names the pick's topology table (<see cref="NpcPieceTopologySample"/>: its file, its
+    /// content hash, its counts) and keeps four more counts of the split's note; format 1 (the collections up to 2026-11-12) holds none of
+    /// these and is still read -- <see cref="formatVersion"/> says which a record is.
+    /// </summary>
     internal sealed class NpcPiecePickSample
     {
         internal const string Magic = "ZTKSPIK1", End = "END!";
-        internal const int FormatVersion = 1;
+        internal const int FormatVersion = 2, FormatWithoutTopology = 1;
+
+        /// <summary>The format this record was read as, or is written as (<see cref="FormatVersion"/> unless a test writes the one before).</summary>
+        internal int formatVersion = FormatVersion;
+
+        // Format 2: the topology table's file, its content hash, the geometry's topology vertices and the table's entries; and of the note,
+        // the decision's topology vertices, seam vertices joined and connections.
+        internal string topologyFile = "", topologySha256 = "";
+        internal int topologyVertices, topologyEntries;
+        internal int noteTopologyVertices, noteSeamVertices, noteConnectionsKept, noteConnectionsDropped;
 
         internal string sessionId, codeVersion, sha256;
         internal int pick, frame;
@@ -211,7 +390,7 @@ namespace Zantetsu.PhysicsCut
                 using (var w = new SpatialSplitHashWriter(gzip, new byte[1 << 16]))
                 {
                     w.Ascii(Magic);
-                    w.Int(FormatVersion);
+                    w.Int(formatVersion);
                     w.String(sessionId); w.String(codeVersion);
                     w.Int(pick); w.Int(frame); w.Double(realtimeSeconds); w.String(utc);
                     w.Long(world); w.Long(ledgerRevision);
@@ -231,6 +410,12 @@ namespace Zantetsu.PhysicsCut
                     w.Int(notePieceBones); w.Int(noteUnboundGroups);
                     w.Int(notePositiveConvexes); w.Int(noteNegativeConvexes); w.Int(notePositiveTriangles); w.Int(noteNegativeTriangles);
                     w.Long(noteOriginSteps); w.Long(noteRemovedWeights);
+                    if (formatVersion >= 2)
+                    {
+                        w.String(topologyFile); w.String(topologySha256); w.Int(topologyVertices); w.Int(topologyEntries);
+                        w.Int(noteTopologyVertices); w.Int(noteSeamVertices); w.Int(noteConnectionsKept); w.Int(noteConnectionsDropped);
+                    }
+
                     w.Ascii(End);
                     hash = w.Finish();
                     raw = w.Length;
@@ -253,7 +438,8 @@ namespace Zantetsu.PhysicsCut
                 var s = new NpcPiecePickSample();
                 r.Expect(Magic);
                 int version = r.Int();
-                if (version != FormatVersion) throw new InvalidDataException("pick format " + version + ", this reads " + FormatVersion);
+                if (version != FormatVersion && version != FormatWithoutTopology) throw new InvalidDataException("pick format " + version + ", this reads " + FormatWithoutTopology + " and " + FormatVersion);
+                s.formatVersion = version;
                 s.sessionId = r.String(); s.codeVersion = r.String();
                 s.pick = r.Int(); s.frame = r.Int(); s.realtimeSeconds = r.Double(); s.utc = r.String();
                 s.world = r.Long(); s.ledgerRevision = r.Long();
@@ -273,6 +459,12 @@ namespace Zantetsu.PhysicsCut
                 s.noteLineageVertices = r.Int(); s.notePieceBones = r.Int(); s.noteUnboundGroups = r.Int();
                 s.notePositiveConvexes = r.Int(); s.noteNegativeConvexes = r.Int(); s.notePositiveTriangles = r.Int(); s.noteNegativeTriangles = r.Int();
                 s.noteOriginSteps = r.Long(); s.noteRemovedWeights = r.Long();
+                if (version >= 2)
+                {
+                    s.topologyFile = r.String(); s.topologySha256 = r.String(); s.topologyVertices = r.Int(); s.topologyEntries = r.Int();
+                    s.noteTopologyVertices = r.Int(); s.noteSeamVertices = r.Int(); s.noteConnectionsKept = r.Int(); s.noteConnectionsDropped = r.Int();
+                }
+
                 r.Expect(End);
                 s.sha256 = r.Finish();
                 return s;
@@ -288,6 +480,7 @@ namespace Zantetsu.PhysicsCut
             return "{\"pick\":" + pick + ",\"world\":" + world + ",\"frame\":" + frame + ",\"seconds\":" + realtimeSeconds.ToString("R", inv) + ",\"utc\":" + J(utc)
                 + ",\"failure\":" + J(failure)
                 + ",\"file\":" + J(file) + ",\"sha256\":" + J(hash) + ",\"rawBytes\":" + raw + ",\"fileBytes\":" + fileBytes
+                + ",\"format\":" + formatVersion + ",\"topology\":" + J(topologyFile) + ",\"topologyVertices\":" + topologyVertices + ",\"topologyEntries\":" + topologyEntries
                 + ",\"sample\":" + J(sampleFile) + ",\"bones\":" + J(bonesFile) + ",\"model\":" + J(modelFile) + ",\"modelName\":" + J(modelName) + ",\"weightsKept\":" + (weightsKept ? "true" : "false")
                 + ",\"fragment\":" + fragment + ",\"rootFragment\":" + rootFragment + ",\"splitSource\":" + splitSource + ",\"generation\":" + generation + ",\"epoch\":" + epoch
                 + ",\"ledgerRevision\":" + ledgerRevision + ",\"vertexStart\":" + geometry.vertexStart + ",\"vertexCount\":" + geometry.vertexCount
@@ -315,8 +508,8 @@ namespace Zantetsu.PhysicsCut
             internal string hitCollider;
         }
 
-        /// <summary>The parts of one pick handed to the writer: the sample, the bones and the pick's own record (three items, each told apart).</summary>
-        internal const int ItemsPerPick = 3;
+        /// <summary>The parts of one pick handed to the writer: the sample, the bones, the topology table and the pick's own record (four items, each told apart).</summary>
+        internal const int ItemsPerPick = 4;
 
         private static readonly List<float3> s_anchors = new List<float3>();
 
@@ -444,9 +637,28 @@ namespace Zantetsu.PhysicsCut
                     return false;
                 }
 
-                // 4. The pick's own record, then the bones; everything handed in the order sample, bones, pick (the sample first: its file is the one the others name).
+                // 3b. The geometry's own topology table (NPC-PIECE-TOPOLOGY-1): every render vertex the indices name, of every vertex block, to
+                //     its topology vertex -- read under the same index lease, through the map the decision reads.
+                NpcPieceTopologySample topologySample = NpcPieceTopologySample.Take(storage, geometry, (uint*)indexView.GetUnsafeReadOnlyPtr(), indexView.Length, out string noTopology);
+                if (topologySample == null)
+                {
+                    sink.Return(sample);
+                    sample = null;
+                    failure = "fragment " + fragment.value + "'s topology table could not be copied: " + noTopology;
+                    return false;
+                }
+
+                topologySample.sessionId = sink.sessionId;
+                topologySample.world = captureIdentity.world;
+                topologySample.pick = pick;
+                topologySample.fragment = fragment.value;
+                topologySample.epoch = captureIdentity.epoch;
+                SpatialSplitBoneItem topologyItem = MakeTopologyItem(topologySample, done, out string topologyHash);
+
+                // 4. The pick's own record, then the bones; everything handed in the order sample, bones, topology, pick (the sample first: its file is the one the others name).
                 record = new NpcPiecePickSample
                 {
+                    topologyFile = topologyItem.file, topologySha256 = topologyHash, topologyVertices = topologySample.topologyVertexCount, topologyEntries = topologySample.vertexIds.Length,
                     sessionId = sink.sessionId, codeVersion = codeVersion, pick = pick, frame = Time.frameCount, realtimeSeconds = Time.realtimeSinceStartupAsDouble,
                     utc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture), world = captureIdentity.world, ledgerRevision = ledger.Revision,
                     fragment = fragment.value, rootFragment = captureIdentity.rootFragment, splitSource = captureIdentity.splitSource, generation = captureIdentity.generation, epoch = captureIdentity.epoch,
@@ -485,6 +697,8 @@ namespace Zantetsu.PhysicsCut
                     record.notePositiveConvexes = note.bone.positiveConvexes; record.noteNegativeConvexes = note.bone.negativeConvexes;
                     record.notePositiveTriangles = note.bone.positiveTriangles; record.noteNegativeTriangles = note.bone.negativeTriangles;
                     record.noteOriginSteps = note.bone.originSteps; record.noteRemovedWeights = note.bone.removedWeights;
+                    record.noteTopologyVertices = note.bone.topologyVertices; record.noteSeamVertices = note.bone.seamVertices;
+                    record.noteConnectionsKept = note.bone.connectionsKept; record.noteConnectionsDropped = note.bone.connectionsDropped;
                 }
 
                 SpatialSplitBoneItem pickItem = MakeRecordItem(record, done);
@@ -504,6 +718,8 @@ namespace Zantetsu.PhysicsCut
                 bool bonesHanded = SpatialSplitBoneSample.Write(sink, captureIdentity.world, pick, fragment.value, captureIdentity.epoch, lineage, piece, convexBones, insufficient,
                     NpcBoneSplitSearch.DefaultMaxOriginSteps, table != null && !table.IsReleased ? table.Pointer : null, lineage.Chunks, lineage.LocalCount, in settings, SpatialSplitGraph.IsPrepared, done);
                 if (!bonesHanded) done?.Invoke(false, "the bones' sidecar was not handed to the writer");
+                if (sink.TryReserve(topologyItem.bytes, false)) sink.HandBone(topologyItem);
+                else done?.Invoke(false, "no room in the queue for the topology table (" + sink.LastRefusal + ")");
                 sink.HandBone(pickItem);
                 return true;
             }
@@ -550,6 +766,18 @@ namespace Zantetsu.PhysicsCut
             sink.HandBone(item);
             why = null;
             return true;
+        }
+
+        /// <summary>The topology table as one item of the writer's (its file and its topologies.jsonl line); the caller reserves its room and hands it.</summary>
+        internal static SpatialSplitBoneItem MakeTopologyItem(NpcPieceTopologySample table, Action<bool, string> done, out string hash)
+        {
+            string name = NpcPieceTopologySample.FileName(table.world, table.pick);
+            byte[] content = table.Make(out hash, out long raw);
+            return new SpatialSplitBoneItem
+            {
+                file = name, content = content, index = NpcPieceTopologySample.Index, line = table.Line(name, hash, raw, content.Length),
+                bytes = content.Length + SpatialSplitCaptureResult.Overhead, done = done,
+            };
         }
 
         /// <summary>The pick's own record as one item of the writer's (its file and its picks.jsonl line); the caller reserves its room and hands it.</summary>
@@ -601,10 +829,18 @@ namespace Zantetsu.PhysicsCut
             internal SpatialSplitSample sample;
             internal SpatialSplitBoneSample bones;
             internal NpcModelWeightTable model;
+            internal NpcPieceTopologySample topology;   // format 2; null for a pick of the format before (it saved none)
             internal readonly List<string> problems = new List<string>();
 
-            /// <summary>Whole: every file there, every hash as listed, the three records of one pick and one geometry, the table with weights.</summary>
-            internal bool IsWhole => failure == null && problems.Count == 0 && record != null && sample != null && bones != null;
+            /// <summary>
+            /// Whole: every file there, every hash as listed, the records of one pick and one geometry, the table with weights -- and, for a
+            /// pick of format 2, its topology table covering every vertex the sample names.
+            /// </summary>
+            internal bool IsWhole => failure == null && problems.Count == 0 && record != null && sample != null && bones != null
+                && (record.formatVersion < 2 || topology != null);
+
+            /// <summary>The pick holds its geometry's own topology table (format 2, read and agreeing).</summary>
+            internal bool HasTopology => topology != null;
         }
 
         [Serializable]
@@ -624,6 +860,7 @@ namespace Zantetsu.PhysicsCut
             Dictionary<string, string> sampleHashes = Hashes(Path.Combine(folder, "samples.jsonl"));
             Dictionary<string, string> boneHashes = Hashes(Path.Combine(folder, "bones.jsonl"));
             Dictionary<string, string> modelHashes = Hashes(Path.Combine(folder, "models.jsonl"));
+            Dictionary<string, string> topologyHashes = Hashes(Path.Combine(folder, NpcPieceTopologySample.Index));
             foreach (string text in File.ReadAllLines(index))
             {
                 if (string.IsNullOrWhiteSpace(text)) continue;
@@ -649,6 +886,34 @@ namespace Zantetsu.PhysicsCut
                 else
                 {
                     pick.problems.Add("no model's table is named");
+                }
+
+                if (pick.record != null && pick.record.formatVersion >= 2)
+                {
+                    // The topology table: the file the record names, with the hash its index line lists and the hash the record keeps.
+                    string named = pick.record.topologyFile;
+                    pick.topology = ReadOne(folder, named, topologyHashes.TryGetValue(named ?? "", out string th) ? th : null, "the topology", pick.problems, NpcPieceTopologySample.Read, r => r.sha256);
+                    if (pick.topology != null)
+                    {
+                        NpcPieceTopologySample t = pick.topology;
+                        string check = t.Check();
+                        if (check != null) pick.problems.Add("the topology: " + check);
+                        if (!string.Equals(t.sha256, pick.record.topologySha256, StringComparison.Ordinal)) pick.problems.Add("the topology is not the one the pick named (hash)");
+                        if (t.world != pick.record.world || t.pick != pick.record.pick || t.fragment != pick.record.fragment || t.epoch != pick.record.epoch || t.sessionId != pick.record.sessionId)
+                            pick.problems.Add("the topology is of another pick (world " + t.world + ", pick " + t.pick + ", fragment " + t.fragment + ")");
+                        if (!t.geometry.Equals(pick.record.geometry)) pick.problems.Add("the topology is of another geometry (" + t.geometry + ") than the pick's (" + pick.record.geometry + ")");
+                        if (t.topologyVertexCount != pick.record.topologyVertices || t.vertexIds.Length != pick.record.topologyEntries) pick.problems.Add("the topology's counts are not the pick's");
+                        if (pick.sample != null)
+                        {
+                            if (t.vertexIds.Length != pick.sample.vertexIds.Length) pick.problems.Add("the topology has " + t.vertexIds.Length + " vertices, the sample names " + pick.sample.vertexIds.Length);
+                            foreach (uint id in pick.sample.vertexIds)
+                            {
+                                if (t.TopologyOf(id) < 0) { pick.problems.Add("the topology has no entry for vertex " + id + " the sample names"); break; }
+                            }
+                        }
+
+                        if (pick.problems.Count > 0) pick.topology = null;   // never decided with a table that does not agree
+                    }
                 }
 
                 if (pick.record != null && pick.sample != null && pick.bones != null)
@@ -728,12 +993,40 @@ namespace Zantetsu.PhysicsCut
         /// convexes' bones, the sample's indices (the storage's ids, which the saved lineage numbers). The sides (convexes then triangles) are
         /// written to <paramref name="sides"/>; the bones' sides to <paramref name="boneSides"/> (2n).
         /// </summary>
-        internal static NpcBoneSplitRecord Decide(Pick pick, out byte[] sides, out byte[] boneSides) => Decide(pick, null, 0, out sides, out boneSides);
+        /// <remarks>
+        /// NPC-PIECE-TOPOLOGY-1: a pick of format 2 is decided with its own saved topology table, as it stands (nothing worked out from
+        /// positions or origins); a pick of the format before holds none and is decided with each render vertex its own topology vertex --
+        /// which is what the live decision did when those were taken.
+        /// </remarks>
+        internal static NpcBoneSplitRecord Decide(Pick pick, out byte[] sides, out byte[] boneSides)
+        {
+            int[] ids = SavedTopologyOfLocal(pick, out int count);
+            return Decide(pick, ids, count, out sides, out boneSides);
+        }
 
         /// <summary>
-        /// NPC-BONE-TOPOLOGY-1: the same with the geometry's topology, one id a vertex of the saved lineage's numbering (ids below
-        /// <paramref name="topologyVertexCount"/>). A pick holds none of its own: null decides with each render vertex its own topology
-        /// vertex, which is what the live decision did when the pick was taken.
+        /// The pick's saved topology table in the saved lineage's numbering (one id a lineage vertex; a vertex no index names keeps 0 and is
+        /// never looked up), with the geometry's topology vertex count; null for a pick that saved none.
+        /// </summary>
+        internal static int[] SavedTopologyOfLocal(Pick pick, out int topologyVertexCount)
+        {
+            topologyVertexCount = 0;
+            if (pick.topology == null || pick.bones == null) return null;
+            var ids = new int[Math.Max(0, pick.bones.localCount)];
+            NpcPieceTopologySample t = pick.topology;
+            for (int i = 0; i < t.vertexIds.Length; i++)
+            {
+                int local = LocalOf(pick.bones, t.vertexIds[i]);
+                if (local >= 0 && local < ids.Length) ids[local] = t.topologyIds[i];
+            }
+
+            topologyVertexCount = t.topologyVertexCount;
+            return ids;
+        }
+
+        /// <summary>
+        /// NPC-BONE-TOPOLOGY-1: the same with a topology given from outside, one id a vertex of the saved lineage's numbering (ids below
+        /// <paramref name="topologyVertexCount"/>); null decides with each render vertex its own topology vertex.
         /// </summary>
         internal static NpcBoneSplitRecord Decide(Pick pick, int[] topologyOfLocal, int topologyVertexCount, out byte[] sides, out byte[] boneSides)
         {
@@ -793,16 +1086,24 @@ namespace Zantetsu.PhysicsCut
         internal static string Describe(List<Pick> picks)
         {
             var text = new StringBuilder();
-            int whole = 0, failed = 0, broken = 0;
+            int whole = 0, failed = 0, broken = 0, withTopology = 0, formatBefore = 0;
             foreach (Pick p in picks)
             {
                 if (p.failure != null) { failed++; text.Append("pick #").Append(p.number).Append(": failed at the time: ").Append(p.failure).Append('\n'); continue; }
-                if (p.IsWhole) { whole++; continue; }
+                if (p.IsWhole)
+                {
+                    whole++;
+                    if (p.HasTopology) withTopology++; else formatBefore++;
+                    continue;
+                }
+
                 broken++;
                 text.Append("pick #").Append(p.number).Append(": ").Append(string.Join("; ", p.problems)).Append('\n');
             }
 
-            return "picks " + picks.Count + ": whole " + whole + ", failed at the time " + failed + ", missing or not agreeing " + broken + (text.Length > 0 ? "\n" + text.ToString().TrimEnd('\n') : "");
+            return "picks " + picks.Count + ": whole " + whole + ", failed at the time " + failed + ", missing or not agreeing " + broken
+                + "; of the whole: with their own topology table " + withTopology + ", of the format before (no topology saved) " + formatBefore
+                + (text.Length > 0 ? "\n" + text.ToString().TrimEnd('\n') : "");
         }
     }
 }

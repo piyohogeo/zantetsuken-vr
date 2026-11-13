@@ -21,7 +21,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     /// </summary>
     public unsafe partial class CutWorldRootPlayModeTests
     {
-        private static NpcBoneSplitRecord LiveDecide(NpcBoneLineage lineage, NpcBonePiece piece, PhysicsOwnerShape shape, List<(uint, uint, uint)> triangles, out byte[] sides)
+        private static NpcBoneSplitRecord LiveDecide(NpcBoneLineage lineage, NpcBonePiece piece, PhysicsOwnerShape shape, List<(uint, uint, uint)> triangles, out byte[] sides, NpcBoneTopology liveTopology = null)
         {
             var flat = new uint[triangles.Count * 3];
             for (int k = 0; k < triangles.Count; k++) { flat[3 * k] = triangles[k].Item1; flat[3 * k + 1] = triangles[k].Item2; flat[3 * k + 2] = triangles[k].Item3; }
@@ -44,8 +44,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     insufficient = lineage.Insufficient, maxTriangles = 131072, maxOriginSteps = NpcBoneSplitSearch.DefaultMaxOriginSteps,
                 };
                 var record = default(NpcBoneSplitRecord);
-                // NPC-BONE-TOPOLOGY-1: each render vertex its own topology vertex (as the saved pick is decided: the pick holds no topology).
-                using (NpcBoneTopology topology = NpcBoneTopology.OfLocal(in input.lineage, null, 0))
+                // NPC-PIECE-TOPOLOGY-1: the geometry's own topology where it is given (as the product's decision reads it, and as a pick
+                // of format 2 saves it); else each render vertex its own topology vertex.
+                using (NpcBoneTopology topology = liveTopology ?? NpcBoneTopology.OfLocal(in input.lineage, null, 0))
                 {
                     input.topology = topology.Map;
                     NpcBoneSplitSearch.Decide(in input, (byte*)bytes.GetUnsafePtr(), bytes.Length, ref record);
@@ -121,14 +122,31 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(third.hasNote && !third.noteAttempted && third.noteMadeBy.Length == 0 || !third.hasNote, Is.True, "no attempt of the lower side yet (the split is closed)");
                 Assert.That(models.Count, Is.EqualTo(1), "the same model's table");
                 List<(uint, uint, uint)> lowerTriangles = TrianglesOf(root, lowerGeometry);
-                NpcBoneSplitRecord live = LiveDecide(lowerRecord.Lineage, lowerRecord.Piece, lowerOwner.Shape, lowerTriangles, out byte[] liveSides);
+                Assert.That(NpcBoneTopology.TryOfGeometry(root.Storage, lowerGeometry, out NpcBoneTopology lowerTopology, out string noTopology), Is.True, noTopology);
+                // What the storage says of every vertex the lower side's triangles name, read here and now: what pick 3's table must hold.
+                var expectedTopology = new SortedDictionary<uint, int>();
+                NativeArray<int>.ReadOnly storageTopology = root.Storage.TopologyOfVertex;
+                foreach ((uint a, uint b, uint c) triangle in lowerTriangles)
+                {
+                    expectedTopology[triangle.a] = storageTopology[(int)triangle.a];
+                    expectedTopology[triangle.b] = storageTopology[(int)triangle.b];
+                    expectedTopology[triangle.c] = storageTopology[(int)triangle.c];
+                }
+
+                Assert.That(root.Storage.TryGetVertexBlocks(lowerGeometry, out NativeArray<VpGeometryVertexBlock>.ReadOnly lowerBlocks, out int lowerTopologyCount), Is.True);
+                int lowerBlockCount = lowerBlocks.Length;
+                Assert.That(lowerBlockCount, Is.GreaterThanOrEqualTo(2), "the layout: the base's vertex block and the waist cut's");
+                NpcBoneSplitRecord live = LiveDecide(lowerRecord.Lineage, lowerRecord.Piece, lowerOwner.Shape, lowerTriangles, out byte[] liveSides, lowerTopology);
+                Assert.That(third.formatVersion == 2 && third.topologyFile == NpcPieceTopologySample.FileName(split.CaptureWorld, 3) && third.topologyVertices == lowerTopologyCount && third.topologyEntries == expectedTopology.Count, Is.True,
+                    "the record names its topology table: " + third.topologyFile + ", " + third.topologyVertices + " topology vertices, " + third.topologyEntries + " entries");
                 TestContext.Out.WriteLine("PIECE PICK live lower side: " + DescribePick(in live));
 
                 Assert.That(sink.Close(10.0), Is.True, "the writer ended");
                 lock (told)
                 {
-                    Assert.That(told.Count(t => t.pick == 1 && t.ok), Is.EqualTo(NpcPiecePickCopy.ItemsPerPick), "pick 1's three items written: " + string.Join("; ", told.Select(t => t.pick + ":" + t.ok + ":" + t.why)));
-                    Assert.That(told.Count(t => t.pick == 3 && t.ok), Is.EqualTo(NpcPiecePickCopy.ItemsPerPick), "pick 3's three items written");
+                    Assert.That(NpcPiecePickCopy.ItemsPerPick, Is.EqualTo(4), "the sample, the bones, the topology table, the record");
+                    Assert.That(told.Count(t => t.pick == 1 && t.ok), Is.EqualTo(NpcPiecePickCopy.ItemsPerPick), "pick 1's four items written: " + string.Join("; ", told.Select(t => t.pick + ":" + t.ok + ":" + t.why)));
+                    Assert.That(told.Count(t => t.pick == 3 && t.ok), Is.EqualTo(NpcPiecePickCopy.ItemsPerPick), "pick 3's four items written");
                     Assert.That(told.Any(t => !t.ok), Is.False);
                 }
 
@@ -144,7 +162,19 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(picks[2].bones.chunkStarts.Length, Is.EqualTo(1), "the waist cut's new vertices, with their origins");
                 Assert.That(picks[2].sample.indices.Length, Is.EqualTo(lowerTriangles.Count * 3));
                 Assert.That(picks[2].model.vertexCount, Is.EqualTo(lowerRecord.Lineage.BaseCount));
+                // NPC-PIECE-TOPOLOGY-1: the saved table is the storage's, entry for entry -- the base's vertices, the cut's and the cap's
+                // auxiliary ones, of both vertex blocks -- and the saved decision reads it as it stands.
+                Assert.That(picks[0].HasTopology && picks[2].HasTopology, Is.True);
+                NpcPieceTopologySample savedTopology = picks[2].topology;
+                Assert.That(savedTopology.vertexIds, Is.EqualTo(expectedTopology.Keys.ToArray()), "every vertex the triangles name, ascending, each once");
+                Assert.That(savedTopology.topologyIds, Is.EqualTo(expectedTopology.Values.ToArray()), "its topology vertex as the storage held it");
+                Assert.That(savedTopology.blockStarts.Length == lowerBlockCount && savedTopology.topologyVertexCount == lowerTopologyCount, Is.True);
+                Assert.That(savedTopology.vertexIds.Any(v => v >= (uint)savedTopology.blockStarts[1]), Is.True, "vertices of the cut's block are in it");
+                Assert.That(savedTopology.vertexIds.Length, Is.GreaterThan(savedTopology.topologyIds.Distinct().Count()), "the layout: render vertices sharing a topology vertex (the seams, the cap)");
+                Assert.That(picks[0].topology.blockStarts.Length, Is.EqualTo(1), "the whole body: one vertex block");
                 NpcBoneSplitRecord saved = NpcPiecePickSet.Decide(picks[2], out byte[] savedSides, out byte[] _);
+                Assert.That(saved.topologyVertices == live.topologyVertices && saved.seamVertices == live.seamVertices && saved.seamVertices > 0, Is.True,
+                    "the same topology: " + saved.topologyVertices + " vertices, " + saved.seamVertices + " seam vertices joined (live " + live.topologyVertices + ", " + live.seamVertices + ")");
                 TestContext.Out.WriteLine("PIECE PICK saved lower side: " + DescribePick(in saved));
                 Assert.That(DescribePick(in saved), Is.EqualTo(DescribePick(in live)), "the decision over the saved parts is the live one");
                 Assert.That(savedSides, Is.EqualTo(liveSides), "every convex and triangle on the same side");
