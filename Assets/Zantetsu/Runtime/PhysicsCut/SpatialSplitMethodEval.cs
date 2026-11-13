@@ -52,9 +52,19 @@ namespace Zantetsu.PhysicsCut
     /// </list>
     /// The total is their sum. A run that failed has no times (never 0). Main thread; the pool replay's real Background pool, no competitor.
     /// </summary>
-    public static unsafe class SpatialSplitMethodEval
+    public static unsafe partial class SpatialSplitMethodEval
     {
         public const string Legacy = "legacy", Bone = "bone", BoneFallback = "bone-fallback";
+
+        /// <summary>NPC-PAIR-EVAL-1: the pairwise combination of the bones and the geometry, then the method as before where it places nothing; plain, and with the main supporting mesh's protection.</summary>
+        public const string PairOr = "pair-or", PairProtect = "pair-or-protect";
+
+        /// <summary>NPC-PAIR-EVAL-3: the protected combination with A (each component's own main bone protected too), and with B (an isolated mesh node moved to its main convexes' side).</summary>
+        public const string PairProtectA = "pair-or-protect-a", PairProtectB = "pair-or-protect-b";
+
+        private static bool IsPair(string method) => PairModeOf(method) != 0;
+
+        private static int PairModeOf(string method) => method == PairOr ? 1 : method == PairProtect ? 2 : method == PairProtectA ? 3 : method == PairProtectB ? 4 : 0;
 
         // The methods of one position: the two alternating, then -- asked for -- the bones with the fallback (NPC-BONE-FALLBACK-1) last.
         private static string[] Methods(int parity, bool boneFallback)
@@ -76,6 +86,13 @@ namespace Zantetsu.PhysicsCut
             internal NativeArray<uint2>[] origins;
             internal NpcVertexChunk[] chunks;
             internal SpatialSplitBoneResultLine live;
+            // NPC-PAIR-EVAL-1: a saved pick's input -- its number, its topology (one id a vertex of the saved lineage; null: each render
+            // vertex its own) and where that came from.
+            internal int pick = -1;
+            internal int[] topologyIds;
+            internal int topologyCount;
+            internal string topologySource = "";
+            internal NpcPiecePickSample record;
         }
 
         private sealed class Run
@@ -88,6 +105,15 @@ namespace Zantetsu.PhysicsCut
             internal int pieceBones = -1, unboundGroups = -1;
             internal long removedWeights = -1;
             internal bool? liveMatch;
+            // NPC-PAIR-EVAL-1: the pairwise combination's record; the legacy graph stage's nodes and candidates where it ran; and the
+            // placement as sides (a byte a convex: 1 positive, 0 negative, 2 cut by the plane; a byte a triangle: 1 positive, 0 negative),
+            // null where the run placed nothing or the placement is not told by sides or a plane (the bent partition).
+            internal SpatialSplitPairRecord pair;
+            internal bool pairLed;
+            internal int graphNodes = -1, graphMeshComponents = -1;
+            internal long graphCandidates = -1;
+            internal byte[] convexSides, triangleSides;
+            internal string placement = "";
         }
 
         /// <summary>
@@ -422,13 +448,13 @@ namespace Zantetsu.PhysicsCut
                 attempt.arena = new PhysicsCutArena(default, c);
                 attempt.anchors = sample.anchors != null && sample.anchors.Length > 0 ? (float3[])sample.anchors.Clone() : null;
                 SpatialSplitBoneSample b = i.bones;
-                if (method == Bone || method == BoneFallback)
+                if (method == Bone || method == BoneFallback || IsPair(method))
                 {
                     // TakeBone's part: the convexes' bones copied, the decision's input from the lineage's references, the sides' bytes.
                     var convexBones = new int[c];
                     for (int k = 0; k < c; k++) convexBones[k] = b.convexBones[k];
                     string insufficient = b.insufficient;
-                    attempt.boneLed = true;
+                    attempt.boneLed = !IsPair(method);
                     attempt.boneInput = new NpcBoneSplitSearch.Input
                     {
                         convexCount = c,
@@ -447,9 +473,23 @@ namespace Zantetsu.PhysicsCut
                         maxTriangles = attempt.limits.maxTriangles,
                         maxOriginSteps = b.maxOriginSteps,
                     };
-                    i.topology ??= NpcBoneTopology.OfLocal(in attempt.boneInput.lineage, null, 0);
+                    i.topology ??= NpcBoneTopology.OfLocal(in attempt.boneInput.lineage, i.topologyIds, i.topologyCount);
                     attempt.boneInput.topology = i.topology.Map;
                     attempt.graphSides = PhysicsCutBlocks.Take<byte>(c + (n / 3));
+                    if (IsPair(method))
+                    {
+                        // NPC-PAIR-EVAL-1, the issue's part: the combination's switch, its limits (the issue's graph limits, or the
+                        // defaults where the issue had no graph stage), and the method as before prepared behind it as a fallback's is.
+                        attempt.pairMode = PairModeOf(method);
+                        attempt.pairFallback = true;
+                        attempt.graphLimits = b.graphSearch ? b.graphLimits : SpatialSplitGraphLimits.Default;
+                        if (b.graphSearch && attempt.anchors == null && c >= 2)
+                        {
+                            attempt.graphSearch = true;
+                            attempt.graphFirst = b.graphFirst;
+                        }
+                    }
+
                     if (method == BoneFallback)
                     {
                         // NPC-BONE-FALLBACK-1, the issue's part: the graph's switch as the product prepares it for such an owner (the
@@ -530,8 +570,20 @@ namespace Zantetsu.PhysicsCut
                 r.graphVerdict = attempt.graph.verdict.ToString();
                 r.graphBurstRan = attempt.graph.burstRan;
                 r.kernelManaged = attempt.classified && attempt.kernel.executedManaged != 0;
-                r.fellBack = attempt.boneFellBack;
+                r.fellBack = attempt.boneFellBack || attempt.pairFellBack;
+                r.pair = attempt.pair;
+                r.pairLed = attempt.pairLed;
+                if (attempt.graph.Entered) { r.graphNodes = attempt.graph.nodes; r.graphMeshComponents = attempt.graph.meshComponents; r.graphCandidates = attempt.graph.candidates; }
                 bool boneRoute = method == Bone || (method == BoneFallback && !attempt.boneFellBack);
+                if (attempt.pair != null)
+                {
+                    // the bones' own record (their decision ran once, for the attributes), and the combination's placement where it led
+                    NpcBoneSplitRecord own = attempt.bone;
+                    r.boneVerdict = own.verdict.ToString();
+                    r.boneReason = own.reason;
+                    r.clusters = own.clusters; r.groups = own.groups; r.fullGroups = own.fullGroups; r.meshComponents = own.meshComponents;
+                    r.pieceBones = own.pieceBones; r.removedWeights = own.removedWeights; r.unboundGroups = own.unboundGroups;
+                }
                 if (method == BoneFallback && attempt.boneFellBack)
                 {
                     // the bones' record of a fallback, beside the method as before's numbers (NPC-BONE-FALLBACK-1)
@@ -578,6 +630,13 @@ namespace Zantetsu.PhysicsCut
                             && i.live.positiveTriangles == rec.positiveTriangles && i.live.negativeTriangles == rec.negativeTriangles;
                     }
                 }
+                else if (attempt.pairLed)
+                {
+                    r.workerNativeBytes = attempt.pair.graphBytes + attempt.pair.attributeBytes + attempt.pair.boneBytes;
+                    r.positiveTriangles = attempt.pair.positiveTriangles; r.negativeTriangles = attempt.pair.negativeTriangles;
+                    r.positiveConvexes = attempt.pair.positiveConvexes; r.negativeConvexes = attempt.pair.negativeConvexes;
+                    if (attempt.graphSides.IsCreated) r.sidesHash = SpatialSplitReplay.SidesHash((byte*)attempt.graphSides.GetUnsafeReadOnlyPtr() + c, n / 3);
+                }
                 else
                 {
                     r.workerNativeBytes = attempt.graph.Entered ? attempt.graph.nativeBytes : -1;
@@ -602,13 +661,47 @@ namespace Zantetsu.PhysicsCut
                     int pos = 0, neg = 0;
                     IReadOnlyList<ConvexSide> sides = attempt.classification.Sides;
                     for (int k = 0; k < sides.Count; k++) { if (sides[k] == ConvexSide.Positive) pos++; else if (sides[k] == ConvexSide.Negative) neg++; }
-                    if (!boneRoute && !attempt.graphLed) { r.positiveConvexes = pos; r.negativeConvexes = neg; }
+                    if (!boneRoute && !attempt.graphLed && !attempt.pairLed) { r.positiveConvexes = pos; r.negativeConvexes = neg; }
                 }
 
-                r.detail = boneRoute ? r.boneVerdict + ": " + r.boneReason
+                // NPC-PAIR-EVAL-1: the placement as sides (not timed), for a run that would be published.
+                if (r.end == "Published" || r.end == "NotBuildable")
+                {
+                    int triangles = n / 3;
+                    if ((boneRoute || attempt.graphLed || attempt.pairLed) && attempt.graphSides.IsCreated)
+                    {
+                        // the sides' bytes after the sharing out: the convexes' recoded to ConvexSide, the triangles' as written
+                        byte* sides = (byte*)attempt.graphSides.GetUnsafeReadOnlyPtr();
+                        r.convexSides = new byte[c];
+                        r.triangleSides = new byte[triangles];
+                        for (int k = 0; k < c; k++) r.convexSides[k] = sides[k] == (byte)ConvexSide.Positive ? (byte)1 : (byte)0;
+                        for (int k = 0; k < triangles; k++) r.triangleSides[k] = sides[c + k] != 0 ? (byte)1 : (byte)0;
+                        r.placement = attempt.pairLed ? "pair" : boneRoute ? "bone" : "graph";
+                    }
+                    else if (!r.bent && attempt.classified && attempt.classification != null)
+                    {
+                        // a plane's: a triangle by its first corner (the sharing out verified each wholly on one side), a convex by its class
+                        float3 normal = attempt.search.planeGeometry.xyz;
+                        float w = attempt.search.planeGeometry.w;
+                        VpRenderVertex* view = (VpRenderVertex*)vertices.GetUnsafeReadOnlyPtr();
+                        r.triangleSides = new byte[triangles];
+                        for (int k = 0; k < triangles; k++) r.triangleSides[k] = math.dot(normal, view[indices[3 * k]].position) + w > 0f ? (byte)1 : (byte)0;
+                        IReadOnlyList<ConvexSide> classes = attempt.classification.Sides;
+                        r.convexSides = new byte[c];
+                        for (int k = 0; k < c && k < classes.Count; k++) r.convexSides[k] = classes[k] == ConvexSide.Split ? (byte)2 : classes[k] == ConvexSide.Negative ? (byte)0 : (byte)1;
+                        r.placement = r.meshLed ? (attempt.cut ? "mesh-led-cut" : "mesh-led") : "plane";
+                    }
+                    else
+                    {
+                        r.placement = r.bent ? "bent" : "";
+                    }
+                }
+
+                r.detail = attempt.pairLed ? "pair " + attempt.pair.verdict
+                    : boneRoute ? r.boneVerdict + ": " + r.boneReason
                     : attempt.graphLed ? "graph " + r.graphVerdict
                     : r.bent ? "bent" : r.meshLed ? (attempt.cut ? "mesh-led, convexes cut" : "mesh-led") : "plane " + r.searchOutcome + (attempt.graph.Entered ? " (graph " + r.graphVerdict + ")" : "");
-                if (r.fellBack) r.detail = "fallback after the bones' " + r.boneVerdict + ": " + r.detail;
+                if (r.fellBack) r.detail = (attempt.pairFellBack ? "fallback after the pairs' " + attempt.pair.verdict : "fallback after the bones' " + r.boneVerdict) + ": " + r.detail;
             }
             catch (SpatialSplitReplayPoolStopException)
             {
@@ -625,7 +718,7 @@ namespace Zantetsu.PhysicsCut
                 {
                     attempt?.Free(null);
                     shape?.Dispose();
-                    if (mesh != null) UnityEngine.Object.Destroy(mesh);
+                    if (mesh != null) UnityEngine.Object.DestroyImmediate(mesh);   // (no frame passes between the runs of a long list: Destroy would keep every run's mesh)
                     vertices.Dispose();
                     indices.Dispose();
                 }
@@ -638,7 +731,15 @@ namespace Zantetsu.PhysicsCut
         private static string EndOf(CutSpatialSplit.Attempt a, string method)
         {
             if (a.cancelled || a.failure != null || !a.ran) return "NotRun";
-            if (method == Bone || (method == BoneFallback && !a.boneFellBack))
+            if (a.pairLed)
+            {
+                // the combination placed it: shared out by its sides, as the graph's placement
+            }
+            else if (a.pair != null && !a.pairFellBack)
+            {
+                return a.pair.invalid ? "NotClassified" : a.pair.unfinished ? "Unfinished" : "NotFound";
+            }
+            else if (method == Bone || (method == BoneFallback && !a.boneFellBack))
             {
                 if (a.bone.verdict != NpcBoneSplitVerdict.Separable) return a.bone.verdict == NpcBoneSplitVerdict.OverTheLimits ? "OverTheLimits" : "NotFound";
             }

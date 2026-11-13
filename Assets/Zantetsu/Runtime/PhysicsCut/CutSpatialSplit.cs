@@ -2970,7 +2970,29 @@ namespace Zantetsu.PhysicsCut
                 if (beganAt == 0) beganAt = begin;   // t2 (the existing clock reading: not a new one)
                 try
                 {
-                    if (boneLed)
+                    if (pairMode != 0)
+                    {
+                        // NPC-PAIR-EVAL-1 (the evaluation's switch): the pairwise combination of the bones and the geometry decides
+                        // first; a placement it makes is shared out as the graph's is. Where it places nothing, the method as before
+                        // goes on when asked (pairFallback), as after the bones' NotSeparable; an invalid input ends here.
+                        ran = true;
+                        RunPair();
+                        if (pair.separable)
+                        {
+                            NoteDecided();
+                            pairLed = true;
+                            BeginBySides();
+                            return;
+                        }
+
+                        if (pair.invalid || !pairFallback)
+                        {
+                            return;
+                        }
+
+                        pairFellBack = true;
+                    }
+                    else if (boneLed)
                     {
                         // An NPC's fragment (NPC-BONE-SPLIT-1): its bones alone decide, and no geometric search runs for it; a
                         // placement they make is shared out as the graph's is.

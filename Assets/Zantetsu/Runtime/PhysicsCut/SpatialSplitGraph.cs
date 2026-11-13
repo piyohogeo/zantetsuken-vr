@@ -7,6 +7,7 @@ using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using Unity.Profiling.LowLevel.Unsafe;
 using Zantetsu.ConvexCut;
+using Zantetsu.MeshCut;
 using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut
@@ -88,6 +89,9 @@ namespace Zantetsu.PhysicsCut
             /// <summary>The worker path's contract: refuse to run the bodies unless <see cref="Prepare"/> ran on the main thread (Unfinished(notPrepared)).</summary>
             public bool requirePrepared;
 
+            /// <summary>NPC-PAIR-EVAL-1 (the evaluation's): the topology and the bones' attributes of the nodes, and the counts by pair kind; null in the product.</summary>
+            public PairInput pair;
+
             /// <summary>Tests only: the allocation with this ordinal (1-based) fails. -1 in use.</summary>
             public int testFailNativeAllocation = -1;
 
@@ -97,6 +101,79 @@ namespace Zantetsu.PhysicsCut
             /// <summary>Tests only: this many sentinel bytes after every search area; a sentinel changed by a body is an error (a write past an area). 0 in use.</summary>
             public int testGuardBytes;
         }
+
+        /// <summary>
+        /// NPC-PAIR-EVAL-1: what the pairwise combination of the bones and the geometry gives one decision, and what it counted.
+        /// <para>
+        /// **The nodes** are the engine's -- each convex, then each mesh component -- with the components made by the geometry's
+        /// topology (<see cref="topology"/>: triangles sharing a topology vertex are one component, so that an attribute seam does
+        /// not divide a surface) instead of by render vertex. **The bones** come as one row a node (<see cref="rows"/>): the bone
+        /// clusters the node is connected to (a convex its bone's cluster; a mesh component the clusters the bone rule adopted for
+        /// it) and, for a mesh component, the convexes its connection to is protected (it is the most supporting mesh of that
+        /// convex's bone). A pair whose rows share no cluster is not connected by the bones: it is left out before its boxes are
+        /// read. The pairs left go through the engine as before (the boxes, then the hulls of the pairs a cut needs). With
+        /// <see cref="protect"/> a protected pair is a candidate whatever its boxes say and is never tried or taken off by the hulls.
+        /// Without rows (the bones not known) no pair is left out by the bones.
+        /// </para>
+        /// <para>
+        /// **The placement** with the bones' rows is the bone-aware split's among the full groups (a convex and triangles each): with
+        /// three or more, the one of fewest triangles alone on the positive side (of equal triangles the one of fewer convexes); with
+        /// two, the one of more triangles; of groups still equal, the one whose rows name the lowest cluster -- the group the bones
+        /// alone meet first, whatever the order of the convexes -- so that what
+        /// the bones alone would place is placed the same way, and a difference between the methods is a difference of connection.
+        /// With fewer than two full groups, and without rows, the engine's own deal.
+        /// </para>
+        /// </summary>
+        internal sealed class PairInput
+        {
+            public bool useTopology;
+            public RenderCutTopologyMap topology;
+            /// <summary><see cref="nodes"/> rows of <see cref="rowWords"/> words: <see cref="clusterWords"/> of clusters, then the protected convexes (a bit a convex).</summary>
+            public ulong* rows;
+            public int nodes, clusterWords, rowWords;
+            /// <summary>
+            /// NPC-PAIR-EVAL-3: the words of one set of convex bits. After the clusters a row holds the protected convexes, then (where
+            /// the row is that long) the mesh component's own main convexes -- the convexes of the bones it supports by the most vertices.
+            /// </summary>
+            public int convexWords;
+            /// <summary>
+            /// B (NPC-PAIR-EVAL-3): after a placement, a mesh node left with no edge at all (to a convex or to a mesh) is moved to the side
+            /// of its own main convexes where they are all on one side; a placement that then leaves a side without a triangle or a convex
+            /// is given up (NotFound, <see cref="relocationFailed"/>).
+            /// </summary>
+            public bool relocate;
+            /// <summary>The mesh component of each triangle the rows were made for (numbered in the order of the first triangle), checked against the engine's.</summary>
+            public int* triComponent;
+            public bool protect;
+
+            // ---- out (kinds: 0 convex-convex, 1 convex-mesh, 2 mesh-mesh)
+            public bool ran, searched;
+            public int seamSlots;
+            public long[] pairsByKind = new long[3], boneApart = new long[3], boxApart = new long[3], candidates = new long[3];
+            public long[] gjkTried = new long[3], gjkRefuted = new long[3], gjkUnsettled = new long[3], left = new long[3];
+            /// <summary>The protected pairs; those among the candidates; those kept though their boxes are apart (protect); those the boxes left out (no protect); those the hulls took off (no protect); those that ended on two sides.</summary>
+            public long protectedPairs, protectedCandidates, protectedKeptThoughApart, protectedApartByBoxes, protectedRefuted, protectedAcross;
+            /// <summary>
+            /// At the end of a search: mesh nodes with no edge left (isolated), mesh nodes with edges whose group holds no convex (held
+            /// by meshes alone). B: isolated nodes moved, left where their main convexes are on both sides, left for having none, and
+            /// whether the placement was given up after the moves.
+            /// </summary>
+            public int isolatedMesh, meshOnlyNodes, relocated, relocateAmbiguous, relocateNoSupport, relocateAlreadyThere;
+            /// <summary>The protected pairs kept though their rows share no cluster (the pair alone is kept: the mesh is not connected to that cluster's other nodes by it).</summary>
+            public long protectedBonesApart;
+            public bool relocationFailed;
+
+            /// <summary>
+            /// A diagnosis (never set in a measured run): keep the candidate pairs, each one's end (0 taken off by the hulls, 1 left a
+            /// candidate, 2 not settled or protected), whether the hulls tried it, and each node's side (1 positive) where a placement
+            /// was made.
+            /// </summary>
+            public bool keepCandidates;
+            public int2[] keptCandidates;
+            public byte[] keptEnds, keptTried, keptNodeSides;
+        }
+
+        private static int KindOf(int2 pair, int convexCount) => pair.y < convexCount ? 0 : pair.x < convexCount ? 1 : 2;
 
         /// <summary>The decision's result: the verdict, the placement (by convex and by triangle), the counters, the stop, the work and the time.</summary>
         internal sealed class GraphOutcome
@@ -738,6 +815,10 @@ namespace Zantetsu.PhysicsCut
             NativeArray<byte> nodeSide = default, workB = default;
             NativeArray<NodeKey> order = default;
             NativeList<KeyGap> keyGaps = default;
+            NativeArray<int> slotKey = default, topologyFirst = default;
+            NativeArray<byte> candInit = default;
+            NativeArray<long> pairStats = default;
+            PairInput pair = settings.pair;
             int nodeCapacity = convexCount + triangleCount;
             int hullCapacity = convexVertexTotal + (3 * triangleCount);
             long maxBytes = settings.maxGraphBytes;
@@ -826,6 +907,38 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 convexStart[convexCount] = fill;
+                if (pair != null)
+                {
+                    // NPC-PAIR-EVAL-1: the topology vertex of each named vertex, as the first slot met of it (the components' key), and
+                    // the rows' shape checked -- on this thread, inside the decision's time.
+                    if (settings.pairsSweep) throw new ArgumentException("the pair attributes go with the all-pairs enumeration");
+                    pairStats = NewArray<long>(PairStatCount, NativeArrayOptions.ClearMemory, ref areas, 8);
+                    if (pair.useTopology)
+                    {
+                        int topologyCount = pair.topology.topologyVertexCount;
+                        if (pair.topology.ranges == null || pair.topology.rangeCount < 1 || topologyCount < 1) throw new ArgumentException("the geometry's topology is not known");
+                        slotKey = NewArray<int>(Math.Max(1, named), NativeArrayOptions.UninitializedMemory, ref areas, 4);
+                        topologyFirst = NewArray<int>(topologyCount, NativeArrayOptions.ClearMemory, ref areas, 4);
+                        int lastRange = -1;
+                        for (int slot = 0; slot < named; slot++)
+                        {
+                            int topologyVertex = RenderCutTopologyMap.TopologyOf(in pair.topology, ids[slot], ref lastRange);
+                            if ((uint)topologyVertex >= (uint)topologyCount) throw new ArgumentException("vertex " + ids[slot] + " has no topology vertex");
+                            int first = topologyFirst[topologyVertex] - 1;
+                            if (first < 0) { topologyFirst[topologyVertex] = slot + 1; slotKey[slot] = slot; }
+                            else { slotKey[slot] = first; pair.seamSlots++; }
+                        }
+
+                        Free(ref topologyFirst);
+                    }
+
+                    if (pair.rows != null && (pair.triComponent == null || pair.clusterWords < 1 || pair.convexWords < ((convexCount + 63) >> 6) || pair.rowWords < pair.clusterWords + pair.convexWords
+                        || (pair.relocate && pair.rowWords < pair.clusterWords + (2 * pair.convexWords)) || pair.nodes < convexCount))
+                    {
+                        throw new ArgumentException("the pair rows are malformed");
+                    }
+                }
+
                 run.secondsConvert = Since(begin);
 
                 // ---- 2. The preparation: owner coordinates, the bounds, the mesh components, the nodes' boxes and hulls, stage A.
@@ -843,6 +956,10 @@ namespace Zantetsu.PhysicsCut
                     candidates = candidates.GetUnsafeList(), gaps = gaps.GetUnsafeList(), measure = settings.measure, sections = (long*)sections.GetUnsafePtr(),
                     pairs = settings.pairsSweep ? 1 : 0, order = (NodeKey*)order.GetUnsafePtr(), keyGaps = keyGaps.GetUnsafeList(),
                     workBudget = settings.workBudget, workBefore = nc.work, maxNodes = settings.maxNodes, candidateCapEnabled = capped ? 1 : 0, candidateCap = capped ? (int)Math.Min(cap, int.MaxValue) : 0,
+                    slotKey = slotKey.IsCreated ? (int*)slotKey.GetUnsafePtr() : null,
+                    pairRows = pair != null ? pair.rows : null, pairNodes = pair != null ? pair.nodes : 0, pairClusterWords = pair != null ? pair.clusterWords : 0,
+                    pairRowWords = pair != null ? pair.rowWords : 0, pairProtect = pair != null && pair.protect ? 1 : 0, pairTriComponent = pair != null ? pair.triComponent : null,
+                    pairStats = pairStats.IsCreated ? (long*)pairStats.GetUnsafePtr() : null,
                 };
                 run.pairsSweep = settings.pairsSweep;
                 // The body never reallocates a list: a full list ends it with StopGrow and the next capacity. The driver -- the one
@@ -901,7 +1018,9 @@ namespace Zantetsu.PhysicsCut
                 r.work = r.workPrepare;
                 if (stats[StatError] != 0)
                 {
-                    throw new ArgumentException(stats[StatError] == 1 ? "an index names a vertex which the sample does not hold" : "the preparation failed (" + stats[StatError] + ")");
+                    throw new ArgumentException(stats[StatError] == 1 ? "an index names a vertex which the sample does not hold"
+                        : stats[StatError] == 3 ? "the nodes (" + stats[StatNodes] + ") are not the ones the bones' rows were made for (" + (pair != null ? pair.nodes : 0) + ")"
+                        : stats[StatError] == 4 ? "a triangle's mesh component is not the one the bones' rows were made for" : "the preparation failed (" + stats[StatError] + ")");
                 }
 
                 r.meshComponents = (int)stats[StatMeshComponents];
@@ -950,6 +1069,43 @@ namespace Zantetsu.PhysicsCut
                 int candidateCount = candidates.Length;
                 r.pairsApartByBoxes = stats[StatApartByBoxes];
                 r.candidatesA = candidateCount;
+                if (pair != null)
+                {
+                    // NPC-PAIR-EVAL-1: the pairs by kind -- all, left out by the bones, by the boxes, the candidates -- and the protected ones.
+                    pair.ran = true;
+                    long cc = convexCount, mm = n - convexCount;
+                    pair.pairsByKind[0] = cc * (cc - 1) / 2; pair.pairsByKind[1] = cc * mm; pair.pairsByKind[2] = mm * (mm - 1) / 2;
+                    int clusterWords = pair.clusterWords, rowWords = pair.rowWords;
+                    if (pair.rows != null)
+                    {
+                        for (int j = convexCount; j < n; j++)
+                        {
+                            for (int w = clusterWords; w < clusterWords + pair.convexWords; w++) pair.protectedPairs += math.countbits(pair.rows[((long)j * rowWords) + w]);
+                        }
+
+                        if (pair.protect) candInit = NewArray<byte>(Math.Max(1, candidateCount), NativeArrayOptions.UninitializedMemory, ref areas, 1);
+                    }
+
+                    for (int k = 0; k < candidateCount; k++)
+                    {
+                        int2 p = candidates[k];
+                        int kind = KindOf(p, convexCount);
+                        pair.candidates[kind]++;
+                        bool guarded = pair.rows != null && kind == 1 && (pair.rows[((long)p.y * rowWords) + clusterWords + (p.x >> 6)] & (1UL << (p.x & 63))) != 0;
+                        if (guarded) pair.protectedCandidates++;
+                        if (candInit.IsCreated) candInit[k] = guarded ? (byte)2 : (byte)1;
+                    }
+
+                    for (int k = 0; k < 3; k++)
+                    {
+                        pair.boneApart[k] = pairStats[PairStatBoneApart + k];
+                        pair.boxApart[k] = pair.rows != null ? pairStats[PairStatBoxApart + k] : pair.pairsByKind[k] - pair.candidates[k];
+                    }
+
+                    pair.protectedKeptThoughApart = pairStats[PairStatProtectedKept];
+                    pair.protectedBonesApart = pairStats[PairStatProtectedBonesApart];
+                    pair.protectedApartByBoxes = pair.protectedPairs - pair.protectedCandidates;
+                }
 
                 // ---- 3. The work areas of the search, sized by what the preparation found (the byte cap checked over their sum first), then the search.
                 long t2 = Stopwatch.GetTimestamp();
@@ -982,6 +1138,9 @@ namespace Zantetsu.PhysicsCut
                     work = (int*)work.GetUnsafePtr(), work3 = (double3*)work3.GetUnsafePtr(), workD = (double*)workD.GetUnsafePtr(), workB = (byte*)workB.GetUnsafePtr(),
                     measure = settings.measure, sections = (long*)sections.GetUnsafePtr(), nearest = settings.nearestSelection ? 1 : 0, flow = settings.flowDinic ? 1 : 0,
                     workBudget = settings.workBudget, workBefore = stats[StatWorkPrepare],
+                    candInit = candInit.IsCreated ? (byte*)candInit.GetUnsafePtr() : null,
+                    deal = pair != null && pair.rows != null ? 1 : 0,   // with the bones: the bone-aware split's placement among the full groups
+                    pairRows = pair != null ? pair.rows : null, pairRowWords = pair != null ? pair.rowWords : 0, pairClusterWords = pair != null ? pair.clusterWords : 0,
                 };
                 run.nearestSelection = settings.nearestSelection;
                 run.flowDinic = settings.flowDinic;
@@ -1023,6 +1182,117 @@ namespace Zantetsu.PhysicsCut
                 if (settings.measure == 2) for (int i = 0; i < SectionCount - PcNamed; i++) run.prepareCounters[i] = sections[PcNamed + i];
 
                 // ---- 4. The result read back.
+                if (pair != null && stats[StatUnfinished] == 0)
+                {
+                    // NPC-PAIR-EVAL-1: what the hulls did by kind (a candidate's state: 0 taken off; its tried mark), and the protected pairs' ends.
+                    pair.searched = true;
+                    int triedAt = Math.Max(1, candidateCount);
+                    bool separable = (int)stats[StatVerdict] == VerdictSeparable;
+                    if (pair.keepCandidates)
+                    {
+                        pair.keptCandidates = new int2[candidateCount];
+                        pair.keptEnds = new byte[candidateCount];
+                        pair.keptTried = new byte[candidateCount];
+                        for (int k = 0; k < candidateCount; k++) { pair.keptCandidates[k] = candidates[k]; pair.keptEnds[k] = workB[k]; pair.keptTried[k] = workB[triedAt + k]; }
+                        pair.keptNodeSides = new byte[n];
+                        for (int k = 0; k < n; k++) pair.keptNodeSides[k] = separable ? nodeSide[k] : (byte)255;
+                    }
+                    for (int k = 0; k < candidateCount; k++)
+                    {
+                        int2 p = candidates[k];
+                        int kind = KindOf(p, convexCount);
+                        byte state = workB[k];
+                        if (workB[triedAt + k] != 0)
+                        {
+                            pair.gjkTried[kind]++;
+                            if (state == 0) pair.gjkRefuted[kind]++; else pair.gjkUnsettled[kind]++;
+                        }
+
+                        if (state != 0) pair.left[kind]++;
+                        if (pair.rows != null && kind == 1 && state == 0 && (pair.rows[((long)p.y * pair.rowWords) + pair.clusterWords + (p.x >> 6)] & (1UL << (p.x & 63))) != 0) pair.protectedRefuted++;
+                    }
+
+                    // NPC-PAIR-EVAL-3: the edges left (a candidate not taken off), each node's count of them, the groups they make.
+                    {
+                        var degree = new int[n];
+                        var group = new int[n];
+                        for (int k = 0; k < n; k++) group[k] = k;
+                        for (int k = 0; k < candidateCount; k++)
+                        {
+                            if (workB[k] == 0) continue;
+                            int2 p = candidates[k];
+                            degree[p.x]++; degree[p.y]++;
+                            int ra = p.x, rb = p.y;
+                            while (group[ra] != ra) ra = group[ra];
+                            while (group[rb] != rb) rb = group[rb];
+                            if (ra != rb) group[Math.Max(ra, rb)] = Math.Min(ra, rb);
+                        }
+
+                        var hasConvex = new bool[n];
+                        for (int k = 0; k < convexCount; k++) { int root = k; while (group[root] != root) root = group[root]; hasConvex[root] = true; }
+                        for (int j = convexCount; j < n; j++)
+                        {
+                            int root = j;
+                            while (group[root] != root) root = group[root];
+                            if (degree[j] == 0) pair.isolatedMesh++;
+                            else if (!hasConvex[root]) pair.meshOnlyNodes++;
+                        }
+
+                        if (separable && pair.relocate && pair.rows != null)
+                        {
+                            // B: an isolated mesh node to the side of its own main convexes (the second set of convex bits), where one side has them all
+                            int own = pair.clusterWords + pair.convexWords;
+                            for (int j = convexCount; j < n; j++)
+                            {
+                                if (degree[j] != 0) continue;
+                                bool onPositive = false, onNegative = false;
+                                for (int c = 0; c < convexCount; c++)
+                                {
+                                    if ((pair.rows[((long)j * pair.rowWords) + own + (c >> 6)] & (1UL << (c & 63))) == 0) continue;
+                                    if (nodeSide[c] != 0) onPositive = true; else onNegative = true;
+                                }
+
+                                if (!onPositive && !onNegative) { pair.relocateNoSupport++; continue; }
+                                if (onPositive && onNegative) { pair.relocateAmbiguous++; continue; }
+                                byte to = onPositive ? (byte)1 : (byte)0;
+                                if (nodeSide[j] == to) { pair.relocateAlreadyThere++; continue; }
+                                nodeSide[j] = to;
+                                pair.relocated++;
+                            }
+
+                            // the placement must still give each side a convex and triangles
+                            int positiveConvexes = 0, negativeConvexes = 0;
+                            long positiveTriangles = 0, negativeTriangles = 0;
+                            for (int k = 0; k < n; k++)
+                            {
+                                if (k < convexCount) { if (nodeSide[k] != 0) positiveConvexes++; else negativeConvexes++; }
+                                else if (nodeSide[k] != 0) positiveTriangles += nodeTriangleCount[k]; else negativeTriangles += nodeTriangleCount[k];
+                            }
+
+                            if (positiveConvexes == 0 || negativeConvexes == 0 || positiveTriangles == 0 || negativeTriangles == 0)
+                            {
+                                pair.relocationFailed = true;
+                                separable = false;
+                                stats[StatVerdict] = VerdictNotFound;
+                                stats[StatStop] = StopExhausted;
+                            }
+
+                            if (pair.keepCandidates) for (int k = 0; k < n; k++) pair.keptNodeSides[k] = separable ? nodeSide[k] : (byte)255;
+                        }
+                    }
+
+                    if (separable && pair.rows != null)
+                    {
+                        for (int j = convexCount; j < n; j++)
+                        {
+                            for (int c = 0; c < convexCount; c++)
+                            {
+                                if ((pair.rows[((long)j * pair.rowWords) + pair.clusterWords + (c >> 6)] & (1UL << (c & 63))) != 0 && nodeSide[c] != nodeSide[j]) pair.protectedAcross++;
+                            }
+                        }
+                    }
+                }
+
                 long t4 = Stopwatch.GetTimestamp();
                 r.definiteComponents = (int)stats[StatDefiniteComponents];
                 r.triedB = stats[StatTriedB];
@@ -1108,6 +1378,7 @@ namespace Zantetsu.PhysicsCut
                 Free(ref hull); Free(ref scratchInt); Free(ref bounds); Free(ref stats); Free(ref sections); Free(ref candidates); Free(ref gaps);
                 Free(ref nodeSide); Free(ref work); Free(ref work3); Free(ref workD); Free(ref workB);
                 Free(ref order); Free(ref keyGaps);
+                Free(ref slotKey); Free(ref topologyFirst); Free(ref candInit); Free(ref pairStats);
             }
         }
 

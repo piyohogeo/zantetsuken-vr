@@ -42,6 +42,9 @@ namespace Zantetsu.PhysicsCut
 
         internal const int VerdictUndecided = 0, VerdictSeparable = 1, VerdictNotSeparable = 2, VerdictNotFound = 3;
 
+        // NPC-PAIR-EVAL-1: the pair stats of the preparation with the bones' rows (three kinds each: convex-convex, convex-mesh, mesh-mesh).
+        internal const int PairStatBoneApart = 0, PairStatBoxApart = 3, PairStatProtectedKept = 6, PairStatProtectedBonesApart = 7, PairStatCount = 8;
+
         // The measurement: exclusive sections of the search (ticks of ProfilerUnsafeUtility.Timestamp read only at the section
         // boundaries, measure 1) and diagnostic counts (measure 2); nothing is read with measure 0.
         internal const int SecRegroup = 0, SecSeeds = 1, SecSortNearest = 2, SecCutBuild = 3, SecCutFlow = 4, SecCutExtract = 5, SecCollect = 6, SecSortToRefute = 7,
@@ -196,6 +199,64 @@ namespace Zantetsu.PhysicsCut
                         {
                             if (count) c.excluded++;
                             continue;
+                        }
+
+                        Append(candidates, gaps, new int2(i, j), gap, count, ref c, ref meter, candidateCap);
+                    }
+                }
+            }
+
+            /// <summary>
+            /// NPC-PAIR-EVAL-1: AllPairs with the bones first. A pair whose rows share no cluster is not connected by the bones and is
+            /// left out before its boxes are read (stats[kind]) -- unless it is protected, which is kept as a pair whatever the rows'
+            /// clusters (stats[PairStatProtectedBonesApart]); of the rest, a pair whose boxes are apart by more than far is left out
+            /// (stats[3 + kind]) -- unless it is protected (protect, a convex i and a mesh j whose row names i), which stays a candidate
+            /// whatever its boxes say (stats[PairStatProtectedKept]). Kind: 0 convex-convex, 1 convex-mesh, 2 mesh-mesh. The order and
+            /// the gaps of the pairs kept are AllPairs'. One unit a pair, as there.
+            /// </summary>
+            public static void AllPairsWithBones(double3* lo, double3* hi, int n, int convexCount, double far, ulong* rows, int clusterWords, int rowWords, int protect, long* pairStats,
+                UnsafeList<int2>* candidates, UnsafeList<double>* gaps, bool count, ref EnumerateCounts c, ref WorkMeter meter, int candidateCap)
+            {
+                for (int i = 0; i < n && !meter.Stopped; i++)
+                {
+                    ulong* a = rows + ((long)i * rowWords);
+                    for (int j = i + 1; j < n && !meter.Stopped; j++)
+                    {
+                        meter.Spend(1);
+                        int kind = j < convexCount ? 0 : i < convexCount ? 1 : 2;
+                        ulong* b = rows + ((long)j * rowWords);
+                        bool shared = false;
+                        for (int w = 0; w < clusterWords; w++)
+                        {
+                            if ((a[w] & b[w]) != 0) { shared = true; break; }
+                        }
+
+                        // a protected pair (a convex i and a mesh j whose row names i) is kept as that pair, whatever the rows' clusters
+                        // and whatever its boxes say (NPC-PAIR-EVAL-3 review 1: the protection is of the pair, not of the cluster)
+                        bool kept = protect != 0 && kind == 1 && (b[clusterWords + (i >> 6)] & (1UL << (i & 63))) != 0;
+                        if (!shared)
+                        {
+                            if (!kept)
+                            {
+                                pairStats[PairStatBoneApart + kind]++;
+                                continue;
+                            }
+
+                            pairStats[PairStatProtectedBonesApart]++;
+                        }
+
+                        double gap = BoxGap(lo[i], hi[i], lo[j], hi[j]);
+                        if (count) c.gapEvals++;
+                        if (gap > far)
+                        {
+                            if (!kept)
+                            {
+                                pairStats[PairStatBoxApart + kind]++;
+                                if (count) c.excluded++;
+                                continue;
+                            }
+
+                            pairStats[PairStatProtectedKept]++;
                         }
 
                         Append(candidates, gaps, new int2(i, j), gap, count, ref c, ref meter, candidateCap);
@@ -642,6 +703,17 @@ namespace Zantetsu.PhysicsCut
             public int maxNodes;                 // 0: none
             public int candidateCapEnabled;      // 0: no cap on the candidate lists; 1: candidateCap applies (a cap of 0 then means no room at all)
             public int candidateCap;
+
+            // ---- NPC-PAIR-EVAL-1 (the evaluation's; all null / 0 in the product: nothing below is read then) ----
+            /// <summary>A key a named vertex (named; values in [0, named)): triangles are one component where they share a key (the topology vertex's first slot), not only a slot. Null: by slot, as before.</summary>
+            public int* slotKey;
+            /// <summary>The nodes' attribute rows (pairNodes rows of pairRowWords words): the first pairClusterWords words the bone clusters a node is connected to, the rest -- a mesh node's -- the convexes its connection to is protected. Null: no bones.</summary>
+            public ulong* pairRows;
+            public int pairNodes, pairClusterWords, pairRowWords, pairProtect;
+            /// <summary>The component each triangle must come to (the bones' numbering, in the order of the first triangle), checked before a row is read. Null with pairRows null.</summary>
+            public int* pairTriComponent;
+            /// <summary>PairStatCount longs: the pairs the bones left out by kind, the pairs the boxes left out by kind, the protected pairs kept though their boxes are apart.</summary>
+            public long* pairStats;
             private long last;
             private WorkMeter meter;
 
@@ -746,6 +818,7 @@ namespace Zantetsu.PhysicsCut
                     for (int c = 0; c < 3 && !meter.Stopped; c++)
                     {
                         int slot = cornerSlot[(3 * k) + c];
+                        if (slotKey != null) slot = slotKey[slot];   // NPC-PAIR-EVAL-1: the topology vertex's first slot
                         int other = scratch[firstOf + slot];
                         if (other >= 0) UnionCounted(parents, k, other);
                         else scratch[firstOf + slot] = k;
@@ -778,6 +851,20 @@ namespace Zantetsu.PhysicsCut
                     meter.StopForCapacity();
                     Stop();
                     return;
+                }
+
+                // NPC-PAIR-EVAL-1: the bones' rows are read by node, so the nodes must be the ones the rows were made for -- the same
+                // components in the same order -- before any row is read (an input that does not agree is refused: error 3 / 4).
+                if (pairRows != null)
+                {
+                    if (n != pairNodes) { stats[StatError] = 3; return; }
+                    for (int k = 0; k < triangleCount && !meter.Stopped; k++)
+                    {
+                        meter.Spend(1);
+                        if (triComponent[k] != pairTriComponent[k]) { stats[StatError] = 4; return; }
+                    }
+
+                    if (meter.Stopped) { Stop(); return; }
                 }
 
                 // The nodes: convexes (their vertices the hull), then the components (their distinct corners, in the order of
@@ -874,7 +961,9 @@ namespace Zantetsu.PhysicsCut
                 Count(PcPairsTotal, total);
                 var ec = new EnumerateCounts();
                 int cap = candidateCapEnabled != 0 ? math.max(0, candidateCap) : -1;
-                if (pairs == 0) PairKernel.AllPairs(nodeLo, nodeHi, n, far, candidates, gaps, measure == 2, ref ec, ref meter, cap);
+                if (pairStats != null) for (int i = 0; i < PairStatCount; i++) pairStats[i] = 0;
+                if (pairRows != null) PairKernel.AllPairsWithBones(nodeLo, nodeHi, n, convexCount, far, pairRows, pairClusterWords, pairRowWords, pairProtect, pairStats, candidates, gaps, measure == 2, ref ec, ref meter, cap);
+                else if (pairs == 0) PairKernel.AllPairs(nodeLo, nodeHi, n, far, candidates, gaps, measure == 2, ref ec, ref meter, cap);
                 else PairKernel.Sweep(nodeLo, nodeHi, n, far, order, keyGaps, candidates, gaps, measure == 2, ref ec, ref meter, cap);
                 stats[StatCandidatesA] = candidates->Length;
                 stats[StatApartByBoxes] = total - candidates->Length;   // the pairs skipped by the sweep and those excluded by BoxGap, together (as before: every non-candidate)
@@ -937,6 +1026,18 @@ namespace Zantetsu.PhysicsCut
             public long* sections;               // SectionCount: ticks by section (measure 1), counts (measure 2); projection calls in both
             public long workBudget;              // 0: none; the whole decision's budget (the preparation's units are counted in)
             public long workBefore;              // the preparation's units: the meter continues from them (one count over both bodies)
+            /// <summary>NPC-PAIR-EVAL-1: a candidate's first state (1 a candidate; 2 never tried and never taken off: a protected connection). Null: every candidate 1, as before.</summary>
+            public byte* candInit;
+            /// <summary>
+            /// NPC-PAIR-EVAL-1: how two or more full components (a convex and triangles each) are dealt. 0: the engine's (the first
+            /// full component alone). 1: the bone-aware split's -- with three or more, the one of fewest triangles alone (of equal
+            /// triangles the one of fewer convexes, then the one met first); with two, the one of more triangles. Fewer than two
+            /// full components: the engine's rule either way.
+            /// </summary>
+            public int deal;
+            /// <summary>NPC-PAIR-EVAL-1: the nodes' rows the preparation read (the deal's tie between equal groups reads the clusters); null without the bones.</summary>
+            public ulong* pairRows;
+            public int pairRowWords, pairClusterWords;
             private long last;
             private WorkMeter meter;
 
@@ -1013,7 +1114,7 @@ namespace Zantetsu.PhysicsCut
                 meter = WorkMeter.Continue(workBudget, workBefore);
                 Mark();
                 for (int i = 0; i < n && !meter.Stopped; i++) { work[Definite + i] = i; meter.Spend(1); }
-                for (int i = 0; i < candidateCount && !meter.Stopped; i++) { workB[CandState + i] = 1; workB[Tried + i] = 0; meter.Spend(1); }
+                for (int i = 0; i < candidateCount && !meter.Stopped; i++) { workB[CandState + i] = candInit != null ? candInit[i] : (byte)1; workB[Tried + i] = 0; meter.Spend(1); }
                 if (meter.Stopped) { Unfinished(); return; }
                 stats[StatStage] = 0;
                 bool concluded = Conclude();
@@ -1128,7 +1229,49 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 int chosenA, chosenB = -1;
-                if (fulls >= 2 || (fulls == 1 && cs >= 1 && ts >= 1)) chosenA = firstFull;
+                if (deal != 0 && fulls >= 2)
+                {
+                    // The bone-aware split's placement among the full components (Cs: triangles by component, Nearest: convexes by
+                    // component -- both free here, as in Conclude's own temporary use). SoftRep: the lowest bone cluster a component's
+                    // rows name. The clusters are numbered in the order of their lowest bone, and the bones alone meet their groups in
+                    // the order of each group's lowest bone: of groups equal in triangles (and convexes) the one of the lowest cluster
+                    // is the one the bones alone choose, whatever the order the convexes come in.
+                    for (int i = 0; i < n && !meter.Stopped; i++) { work[Cs + i] = 0; work[Nearest + i] = 0; work[SoftRep + i] = int.MaxValue; meter.Spend(1); }
+                    for (int i = 0; i < n && !meter.Stopped; i++)
+                    {
+                        int k = Find(Graph, i);
+                        if (i < convexCount) work[Nearest + k]++; else work[Cs + k] += nodeTriangleCount[i];
+                        if (pairRows != null)
+                        {
+                            ulong* row = pairRows + ((long)i * pairRowWords);
+                            for (int w = 0; w < pairClusterWords; w++)
+                            {
+                                if (row[w] == 0) continue;
+                                int lowest = (64 * w) + math.tzcnt(row[w]);
+                                if (lowest < work[SoftRep + k]) work[SoftRep + k] = lowest;
+                                break;
+                            }
+                        }
+
+                        meter.Spend(1);
+                    }
+
+                    int largest = -1, smallest = -1;
+                    for (int o = 0; o < order && !meter.Stopped; o++)
+                    {
+                        int k = work[Ts + o];
+                        meter.Spend(1);
+                        if (workB[HasC + k] == 0 || workB[HasT + k] == 0) continue;
+                        int tk = work[Cs + k], ck = work[Nearest + k], key = work[SoftRep + k];
+                        if (largest < 0 || tk > work[Cs + largest] || (tk == work[Cs + largest] && key < work[SoftRep + largest])) largest = k;
+                        if (smallest < 0 || tk < work[Cs + smallest]
+                            || (tk == work[Cs + smallest] && (ck < work[Nearest + smallest] || (ck == work[Nearest + smallest] && key < work[SoftRep + smallest])))) smallest = k;
+                    }
+
+                    if (meter.Stopped) return false;
+                    chosenA = fulls >= 3 ? smallest : largest;
+                }
+                else if (fulls >= 2 || (fulls == 1 && cs >= 1 && ts >= 1)) chosenA = firstFull;
                 else if (fulls == 0 && cs >= 2 && ts >= 2) { chosenA = firstC; chosenB = firstT; }
                 else return false;
                 for (int i = 0; i < n && !meter.Stopped; i++)

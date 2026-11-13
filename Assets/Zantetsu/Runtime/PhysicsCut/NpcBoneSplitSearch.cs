@@ -75,6 +75,16 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public int connectionsProtected;
 
+        /// <summary>
+        /// NPC-PAIR-EVAL-1: the decision ended as not known because its input is malformed -- an array missing or short, the geometry's
+        /// topology missing or without a vertex the triangles name, a convex's bone number or a weight's bone number outside the rig's
+        /// range, a vertex the triangles name or an origin that is no vertex of the lineage -- and not because something is merely not
+        /// known of a well-formed input (the rig or the pose not known, a convex of a bone the rig does not have, a weight on such a
+        /// bone, triangles weighted to no bone, two convexes of one bone). A combination with the geometry refuses a malformed input
+        /// and goes on by the geometry alone where the bones are only not known.
+        /// </summary>
+        public bool malformed;
+
         /// <summary>The decision's own time on the worker (development builds; 0 otherwise).</summary>
         public double seconds;
 
@@ -202,6 +212,12 @@ namespace Zantetsu.PhysicsCut
             /// the surface, and ends as not known rather than divide a surface at its seams.
             /// </summary>
             internal RenderCutTopologyMap topology;
+
+            /// <summary>
+            /// NPC-PAIR-EVAL-1 (the evaluation's; null in the product): where the decision also writes what it found as attributes of the
+            /// convexes and the mesh components, for a pairwise combination with the geometry.
+            /// </summary>
+            internal NpcBonePairAttributes pairs;
         }
 
         /// <summary>The walk from a cut vertex back to the base: most steps a decision may take before it ends over the limits.</summary>
@@ -246,7 +262,7 @@ namespace Zantetsu.PhysicsCut
                 || input.segmentHi == null || input.segmentHi.Length < n || (input.boneSides != null && input.boneSides.Length < 2 * n) || sides == null || sidesLength < c + t
                 || input.lineage.baseBones == null)
             {
-                End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonInput);
+                record.malformed = true; End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonInput);
                 return;
             }
 
@@ -260,7 +276,7 @@ namespace Zantetsu.PhysicsCut
             int topologyCount = input.topology.topologyVertexCount;
             if (input.topology.ranges == null || input.topology.rangeCount < 1 || topologyCount < 1)
             {
-                End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonTopology);
+                record.malformed = true; End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonTopology);
                 return;
             }
 
@@ -328,7 +344,7 @@ namespace Zantetsu.PhysicsCut
                     int bone = input.convexBones[i];
                     if ((uint)bone >= (uint)n || !input.lineage.present[bone])
                     {
-                        End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonConvex);
+                        record.malformed = (uint)bone >= (uint)n; End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonConvex);
                         return;
                     }
 
@@ -376,7 +392,7 @@ namespace Zantetsu.PhysicsCut
                     int d = Local(in input.lineage, input.indices[(3 * k) + 2]);
                     if (a < 0 || b < 0 || d < 0)
                     {
-                        End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonVertex);
+                        record.malformed = true; End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonVertex);
                         return;
                     }
 
@@ -389,7 +405,7 @@ namespace Zantetsu.PhysicsCut
                         int topologyVertex = RenderCutTopologyMap.TopologyOf(in input.topology, input.indices[(3 * k) + corner], ref lastRange);
                         if ((uint)topologyVertex >= (uint)topologyCount)
                         {
-                            End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonTopologyVertex);
+                            record.malformed = true; End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonTopologyVertex);
                             return;
                         }
 
@@ -432,6 +448,36 @@ namespace Zantetsu.PhysicsCut
                     }
                 }
 
+                NpcBonePairAttributes pairs = input.pairs;
+                if (pairs != null)
+                {
+                    // NPC-PAIR-EVAL-1: the rows begun -- the clusters numbered, each convex's cluster, each triangle's component (numbered in
+                    // the order of the first triangle, as the graph engine numbers its mesh nodes).
+                    pairs.Begin(n, c, t, m);
+                    for (int k = 0; k < n; k++)
+                    {
+                        if (held[k] != 0 && clusterOf[k] == k) pairs.ClusterId[k] = pairs.clusters++;
+                    }
+
+                    pairs.Shape();
+                    for (int i = 0; i < c; i++)
+                    {
+                        pairs.ConvexOfBone[input.convexBones[i]] = i;
+                        pairs.SetCluster(i, pairs.ClusterId[clusterOf[input.convexBones[i]]]);
+                        pairs.convexCluster[i] = pairs.ClusterId[clusterOf[input.convexBones[i]]];
+                    }
+
+                    int pairNext = 0;
+                    for (int k = 0; k < t; k++)
+                    {
+                        int component = componentOf[triangleFirst[k] - vertexBase];
+                        if (pairs.Remap[component] < 0) pairs.Remap[component] = pairNext++;
+                        pairs.TriComponent[k] = pairs.Remap[component];
+                    }
+
+                    for (int k = 0; k < n; k++) pairs.clusterOfBone[k] = clusterOf[k] < 0 ? -1 : pairs.ClusterId[clusterOf[k]];
+                }
+
                 // 4. Every vertex the triangles name, walked back to the base, supports the clusters of the held bones it is weighted to (once
                 //    a cluster a vertex) and, of those bones, the ones with a convex in the piece (once a bone a vertex); then, component by
                 //    component, its connections by the support ratio, and after the last component those the protection keeps (NPC-BONE-RATIO-1).
@@ -466,7 +512,7 @@ namespace Zantetsu.PhysicsCut
                                     if (bone == NpcVertexBones.None) continue;
                                     if (bone >= n || !input.lineage.present[bone])
                                     {
-                                        End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonWeight);
+                                        record.malformed = bone >= n; End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonWeight);
                                         return;
                                     }
 
@@ -500,7 +546,7 @@ namespace Zantetsu.PhysicsCut
 
                             if (!TryOrigin(in input.lineage, x, out uint2 origin))
                             {
-                                End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonVertex);
+                                record.malformed = true; End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonVertex);
                                 return;
                             }
 
@@ -513,7 +559,7 @@ namespace Zantetsu.PhysicsCut
                             int second = origin.y == origin.x ? first : Local(in input.lineage, origin.y);
                             if (first < 0 || second < 0)
                             {
-                                End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonVertex);
+                                record.malformed = true; End(ref record, NpcBoneSplitVerdict.Insufficient, ReasonVertex);
                                 return;
                             }
 
@@ -538,6 +584,7 @@ namespace Zantetsu.PhysicsCut
                     {
                         int bone = touchedBones[i];
                         if (boneCount[bone] > bestOfBone[bone]) bestOfBone[bone] = boneCount[bone];
+                        if (pairs != null) pairs.AddSupport(pairs.Remap[component], bone, boneCount[bone]);
                     }
 
                     int anchor = vertexBase + order[start];
@@ -548,6 +595,7 @@ namespace Zantetsu.PhysicsCut
                         {
                             Union(parent, anchor, cluster);
                             record.connectionsKept++;
+                            if (pairs != null) pairs.SetCluster(c + pairs.Remap[component], pairs.ClusterId[cluster]);
                         }
                         else
                         {
@@ -594,6 +642,7 @@ namespace Zantetsu.PhysicsCut
                         if (anchor == lastAnchor && cluster == lastCluster) continue;
                         Union(parent, anchor, cluster);
                         record.connectionsProtected++;
+                        if (pairs != null) pairs.SetCluster(c + pairs.Remap[componentOf[anchor - vertexBase]], pairs.ClusterId[cluster]);
                         lastAnchor = anchor;
                         lastCluster = cluster;
                     }
@@ -603,6 +652,7 @@ namespace Zantetsu.PhysicsCut
 
                 record.connectionsKept += record.connectionsProtected;
                 record.connectionsDropped = underTheRatio - record.connectionsProtected;
+                if (pairs != null) pairs.End(c, bestOfBone);
                 record.originSteps = steps;
 
                 // 5. The groups: what each root holds.
@@ -776,6 +826,161 @@ namespace Zantetsu.PhysicsCut
             int ra = Find(parent, a), rb = Find(parent, b);
             if (ra == rb) return;
             if (ra < rb) parent[rb] = ra; else parent[ra] = rb;   // the lower root stays: deterministic
+        }
+    }
+
+    /// <summary>
+    /// NPC-PAIR-EVAL-1 (the evaluation's): what one bone-aware decision found, as attributes of the nodes a pairwise combination with the
+    /// geometry reads -- one row a node, the convexes first (in their order), then the mesh components (numbered in the order of their
+    /// first triangle, <see cref="TriComponent"/>). A row's first <see cref="clusterWords"/> words: the bone clusters the node is
+    /// connected to (a convex: its bone's cluster; a mesh component: the clusters the connection rule adopted for it -- by the support
+    /// ratio, or under it by the protection). Then, for a mesh component, a bit a convex: the component is the most supporting mesh
+    /// (the largest count, ties all) of that convex's bone -- the pairs the protection names, whether the ratio kept them or not.
+    /// Two nodes are connected by the bones where their rows share a cluster: two convexes of one cluster, a convex and a mesh whose
+    /// adopted clusters hold the convex's, two meshes with an adopted cluster in common. <see cref="filled"/>: the decision reached the
+    /// end of its connections (else nothing here is to be read). Native areas of its own; the caller gives them back (Dispose).
+    /// </summary>
+    internal sealed unsafe class NpcBonePairAttributes : IDisposable
+    {
+        internal bool filled;
+        internal int bones, convexes, triangles, components, clusters, clusterWords, rowWords, protectedPairs;
+
+        /// <summary>
+        /// NPC-PAIR-EVAL-3: a row's words after the clusters are two sets of a bit a convex (<see cref="convexWords"/> words each).
+        /// The first, the protected convexes (the component is the most supporting mesh of that convex's bone -- seen from the bone;
+        /// with <see cref="ApplyOwnMain"/> also the second set's). The second, the component's own main convexes: of the bones that
+        /// have a convex in the piece and that the component supports by at least one vertex, the one it supports by the most
+        /// vertices, ties all -- seen from the component (<see cref="ownMainPairs"/> of them in all). The counts are the same as
+        /// the first set's: a referenced render vertex once a bone, a cut's vertex by its origins.
+        /// </summary>
+        internal int convexWords, ownMainPairs;
+        /// <summary>Each convex's cluster in the rows' numbering.</summary>
+        internal int[] convexCluster;
+        /// <summary>Each bone's cluster in the rows' numbering; -1 a bone the piece does not hold.</summary>
+        internal int[] clusterOfBone;
+        private NativeArray<ulong> _rows;
+        private NativeArray<int> _triComponent, _scratch, _supports;
+        private int _supportCount;
+
+        internal ulong* Rows => (ulong*)_rows.GetUnsafePtr();
+        internal int* TriComponent => (int*)_triComponent.GetUnsafePtr();
+        internal int* Remap => (int*)_scratch.GetUnsafePtr();
+        internal int* ClusterId => Remap + components;
+        internal int* ConvexOfBone => ClusterId + bones;
+        internal int Nodes => convexes + components;
+        internal long NativeBytes => ((long)(_rows.IsCreated ? _rows.Length : 0) * 8) + ((long)((_triComponent.IsCreated ? _triComponent.Length : 0) + (_scratch.IsCreated ? _scratch.Length : 0) + (_supports.IsCreated ? _supports.Length : 0)) * 4);
+
+        internal void Begin(int boneCount, int convexCount, int triangleCount, int componentCount)
+        {
+            bones = boneCount; convexes = convexCount; triangles = triangleCount; components = componentCount;
+            clusterOfBone = new int[boneCount];
+            convexCluster = new int[convexCount];
+            _triComponent = new NativeArray<int>(Math.Max(1, triangleCount), Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            _scratch = new NativeArray<int>(Math.Max(1, componentCount + (2 * boneCount)), Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            int* at = Remap;
+            for (int i = 0; i < componentCount + (2 * boneCount); i++) at[i] = -1;
+        }
+
+        internal void Shape()
+        {
+            clusterWords = Math.Max(1, (clusters + 63) >> 6);
+            convexWords = Math.Max(1, (convexes + 63) >> 6);
+            rowWords = clusterWords + (2 * convexWords);
+            _rows = new NativeArray<ulong>(checked(Math.Max(1, Nodes) * rowWords), Allocator.Persistent, NativeArrayOptions.ClearMemory);
+        }
+
+        internal void SetCluster(int node, int cluster) => Rows[((long)node * rowWords) + (cluster >> 6)] |= 1UL << (cluster & 63);
+
+        internal bool HasCluster(int node, int cluster) => (Rows[((long)node * rowWords) + (cluster >> 6)] & (1UL << (cluster & 63))) != 0;
+
+        internal bool IsProtected(int component, int convex) => (Rows[((long)(convexes + component) * rowWords) + clusterWords + (convex >> 6)] & (1UL << (convex & 63))) != 0;
+
+        internal bool IsOwnMain(int component, int convex) => (Rows[((long)(convexes + component) * rowWords) + clusterWords + convexWords + (convex >> 6)] & (1UL << (convex & 63))) != 0;
+
+        /// <summary>
+        /// A (NPC-PAIR-EVAL-3): each component's own main convexes are protected too -- added to the protected set, and nothing else.
+        /// The component's clusters are left as the connection rule made them (review 1, 2026-11-13: adding the convex's cluster
+        /// would connect the component, by the bones, to every other convex and mesh of that cluster -- more than the one pair); a
+        /// protected pair is kept by the engine as a pair, whether the rows share a cluster or not. <paramref name="added"/>: the
+        /// pairs not protected before; <paramref name="underRatio"/>: of the component's own main pairs, those whose convex's
+        /// cluster is not among the component's clusters (the support ratio had left it out). Once, before the rows are read.
+        /// </summary>
+        internal void ApplyOwnMain(out int added, out int underRatio)
+        {
+            added = 0;
+            underRatio = 0;
+            for (int component = 0; component < components; component++)
+            {
+                ulong* row = Rows + ((long)(convexes + component) * rowWords);
+                for (int convex = 0; convex < convexes; convex++)
+                {
+                    ulong bit = 1UL << (convex & 63);
+                    if ((row[clusterWords + convexWords + (convex >> 6)] & bit) == 0) continue;
+                    if ((row[clusterWords + (convex >> 6)] & bit) == 0) { row[clusterWords + (convex >> 6)] |= bit; added++; }
+                    int cluster = convexCluster[convex];
+                    if ((row[cluster >> 6] & (1UL << (cluster & 63))) == 0) underRatio++;   // counted; the cluster is NOT added
+                }
+            }
+        }
+
+        /// <summary>A component's count of the vertices that support a bone with a convex (one entry a component and bone).</summary>
+        internal void AddSupport(int component, int bone, int count)
+        {
+            if (3 * (_supportCount + 1) > (_supports.IsCreated ? _supports.Length : 0))
+            {
+                var grown = new NativeArray<int>(Math.Max(48, 6 * _supportCount), Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                if (_supportCount > 0) UnsafeUtility.MemCpy(grown.GetUnsafePtr(), _supports.GetUnsafePtr(), (long)_supportCount * 3 * sizeof(int));
+                if (_supports.IsCreated) _supports.Dispose();
+                _supports = grown;
+            }
+
+            _supports[3 * _supportCount] = component;
+            _supports[(3 * _supportCount) + 1] = bone;
+            _supports[(3 * _supportCount) + 2] = count;
+            _supportCount++;
+        }
+
+        /// <summary>The protected pairs, now that every bone's largest count is known: the component (or components, tied) with that count, and the bone's convex.</summary>
+        internal void End(int convexCount, int* bestOfBone)
+        {
+            for (int i = 0; i < _supportCount; i++)
+            {
+                int component = _supports[3 * i], bone = _supports[(3 * i) + 1], count = _supports[(3 * i) + 2];
+                int convex = ConvexOfBone[bone];
+                if (count <= 0 || count != bestOfBone[bone] || convex < 0) continue;
+                Rows[((long)(convexCount + component) * rowWords) + clusterWords + (convex >> 6)] |= 1UL << (convex & 63);
+                protectedPairs++;
+            }
+
+            // Each component's own main bones: its largest count among the bones with a convex (the entries are one a component and
+            // bone it supports; Remap, done with, holds the largest count by component), ties all.
+            int* best = Remap;
+            for (int k = 0; k < components; k++) best[k] = 0;
+            for (int i = 0; i < _supportCount; i++)
+            {
+                int component = _supports[3 * i], count = _supports[(3 * i) + 2];
+                if (ConvexOfBone[_supports[(3 * i) + 1]] >= 0 && count > best[component]) best[component] = count;
+            }
+
+            for (int i = 0; i < _supportCount; i++)
+            {
+                int component = _supports[3 * i], bone = _supports[(3 * i) + 1], count = _supports[(3 * i) + 2];
+                int convex = ConvexOfBone[bone];
+                if (count <= 0 || count != best[component] || convex < 0) continue;
+                Rows[((long)(convexCount + component) * rowWords) + clusterWords + convexWords + (convex >> 6)] |= 1UL << (convex & 63);
+                ownMainPairs++;
+            }
+
+            filled = true;
+        }
+
+        public void Dispose()
+        {
+            filled = false;
+            if (_rows.IsCreated) _rows.Dispose();
+            if (_triComponent.IsCreated) _triComponent.Dispose();
+            if (_scratch.IsCreated) _scratch.Dispose();
+            if (_supports.IsCreated) _supports.Dispose();
         }
     }
 
