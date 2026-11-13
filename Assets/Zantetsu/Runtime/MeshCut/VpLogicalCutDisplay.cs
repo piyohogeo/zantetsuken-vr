@@ -4225,6 +4225,75 @@ namespace Zantetsu.MeshCut
         /// not from a fragment above it. What <see cref="TryPrepareSplit"/> needs of its source, for a caller that
         /// chooses before it prepares. Reads only.
         /// </summary>
+        /// <summary>
+        /// SPLIT-CANDIDATES-2 (2026-11-13): what the additional split asks of the display about each fragment it looks at --
+        /// whether the fragment has a registration of its own, whether it is drawn inside an aggregate, and the room a split
+        /// would need (the slots waiting, the draw command and instance tails against their limits, the reference table) -- taken
+        /// in one pass over the registrations and one over the adopted branches, for a reader that looks at many fragments in one
+        /// go. The same answers as <see cref="IsDrawnInsideAggregate"/>, <see cref="HasOwnRegistration"/> and
+        /// <see cref="HasRoomForSplit"/> give one fragment at a time, as long as the view is current.
+        /// <para>
+        /// **How long it holds.** A view is of the frame it was filled in and of the display as it stood then: it is current
+        /// while the frame is the same and none of what it was read from has moved (the registrations' count, the adopted
+        /// collections, the split commits, the command and instance tails, the stop). A publication, an adoption or a
+        /// compaction makes it stale; a stale view answers nothing (<see cref="SplitViewIsCurrent"/>) and is filled again. What
+        /// is issued or published is asked of the display itself at that moment, never of a view.
+        /// </para>
+        /// </summary>
+        public sealed class SplitView
+        {
+            internal readonly HashSet<LogicalFragmentId> own = new HashSet<LogicalFragmentId>();
+            internal readonly HashSet<LogicalFragmentId> aggregated = new HashSet<LogicalFragmentId>();
+            internal long waiting, commandTail, instanceTail, commandLimit, instanceLimit, adopted, commits;
+            internal int shownCount, frame = -1;
+            internal bool stopped, tableRoom;
+
+            public bool HasOwnRegistration(LogicalFragmentId fragment) => own.Contains(fragment);
+            public bool IsDrawnInsideAggregate(LogicalFragmentId fragment) => aggregated.Contains(fragment);
+
+            /// <summary>As <see cref="VpLogicalCutDisplay.HasRoomForSplit"/> with no index end to check (the look before the index ranges exist).</summary>
+            public bool HasRoomForSplit(LogicalFragmentId source, int commands) =>
+                !stopped && own.Contains(source) && commandTail + waiting + commands <= commandLimit && instanceTail + waiting + commands <= instanceLimit && tableRoom;
+
+            public int Registrations => own.Count;
+        }
+
+        /// <summary>Fills <paramref name="view"/> (its sets reused) from the display as it stands in <paramref name="frame"/>.</summary>
+        public void FillSplitView(SplitView view, int frame)
+        {
+            ThrowIfDisposed();
+            view.own.Clear();
+            view.aggregated.Clear();
+            for (int i = 0; i < _shown.Count; i++) view.own.Add(_shown[i].fragment);
+            if (_hasSnapshot)
+            {
+                for (int b = 0; b < _snapshot.BranchCount; b++)
+                {
+                    _snapshot.TryGetBranch(b, out VpMultiCutBranch branch);
+                    if (_snapshot.TryGetRenderFragment(branch.renderFragment, out VpMultiCutRenderFragment rf) && rf.aggregated) view.aggregated.Add(branch.fragment);
+                }
+            }
+
+            view.stopped = _broken || _halted;
+            view.waiting = WaitingForSlots();
+            view.commandTail = _commandTail;
+            view.instanceTail = _instanceTail;
+            view.commandLimit = _limits.commands;
+            view.instanceLimit = _limits.instances;
+            view.tableRoom = _table.HasRoomForGeometriesWithDisplayInstances(2);
+            view.adopted = _adoptedPasses;
+            view.commits = SplitCommits;
+            view.shownCount = _shown.Count;
+            view.frame = frame;
+        }
+
+        /// <summary>Whether <paramref name="view"/> still tells this display in <paramref name="frame"/> (see <see cref="SplitView"/>).</summary>
+        public bool SplitViewIsCurrent(SplitView view, int frame)
+        {
+            return view != null && view.frame == frame && view.shownCount == _shown.Count && view.adopted == _adoptedPasses && view.commits == SplitCommits
+                && view.commandTail == _commandTail && view.instanceTail == _instanceTail && view.stopped == (_broken || _halted);
+        }
+
         public bool HasOwnRegistration(LogicalFragmentId fragment)
         {
             for (int i = 0; i < _shown.Count; i++)

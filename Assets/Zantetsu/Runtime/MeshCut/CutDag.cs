@@ -310,6 +310,7 @@ namespace Zantetsu.MeshCut
 
             _geometryOf[fragment] = geometry;
             _frameOf[fragment] = lineageToGeometryLocal;
+            GeometryChanged?.Invoke(fragment);
             _withoutGeometry.Remove(fragment);
 
             // The lineage this base geometry roots: its vertex room is kept until no fragment of it is live
@@ -418,6 +419,7 @@ namespace Zantetsu.MeshCut
             _frameOf.Remove(fragment);
             _withoutGeometry.Remove(fragment);
             _pendingBasisOf.Remove(fragment);
+            GeometryChanged?.Invoke(fragment);
             SideData?.Forgotten(fragment);
         }
 
@@ -452,6 +454,13 @@ namespace Zantetsu.MeshCut
             _frameOf[positive] = frame;
             _geometryOf[negative] = negativeGeometry;
             _frameOf[negative] = frame;
+            if (GeometryChanged != null)
+            {
+                GeometryChanged(source);
+                GeometryChanged(positive);
+                GeometryChanged(negative);
+            }
+
             GeometrySplits++;
             SideData?.Split(source, positive, negative);
             return true;
@@ -462,6 +471,13 @@ namespace Zantetsu.MeshCut
 
         /// <summary>How many fragments this DAG keeps a geometry, a frame or an empty side for. For tests and records.</summary>
         public int TrackedFragmentCount => Math.Max(_frameOf.Count, _geometryOf.Count + _withoutGeometry.Count);
+
+        /// <summary>
+        /// A fragment's geometry here was set, replaced or taken away (registered, committed, handed on by a split, forgotten):
+        /// for a reader that keeps something about a fragment for as long as what it is cut from stands (the additional
+        /// split's light marks, SPLIT-CANDIDATES-2). Raised on the main thread, after the change.
+        /// </summary>
+        public event Action<LogicalFragmentId> GeometryChanged;
 
         /// <summary>The geometry a fragment is cut from now, if it has one.</summary>
         public bool TryGetGeometry(LogicalFragmentId fragment, out VpStoredGeometry geometry)
@@ -901,6 +917,7 @@ namespace Zantetsu.MeshCut
             _geometryOf.Remove(node.source);
             _frameOf.Remove(node.source);
             _withoutGeometry.Remove(node.source);
+            GeometryChanged?.Invoke(node.source);
             TellSideData(node, in commit);
             Settle(record.positive, node.cut.positive, committed.positive, node.basisFrame);
             Settle(record.negative, node.cut.negative, committed.negative, node.basisFrame);
@@ -972,11 +989,13 @@ namespace Zantetsu.MeshCut
             {
                 _geometryOf.Remove(fragment);
                 _withoutGeometry.Add(fragment);
+                GeometryChanged?.Invoke(fragment);
                 return;
             }
 
             _geometryOf[fragment] = committed;
             _withoutGeometry.Remove(fragment);
+            GeometryChanged?.Invoke(fragment);
         }
 
         /// <summary>

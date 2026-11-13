@@ -275,6 +275,9 @@ namespace Zantetsu.PhysicsCut
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 // The timeline (GRAPH-CONNECT-14): a 5th line in development builds, and the attempts' rows where a file was named.
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeTimeline(), this);
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeSeveral(), this);
+                try { SpatialSplit.WriteCandidateProbe(); }
+                catch (System.Exception e) { UnityEngine.Debug.LogError("SPLIT CANDIDATE PROBE: the samples were not written: " + e.Message); }
                 try { SpatialSplit.WriteTimelineCsv(); }
                 catch (Exception e) { UnityEngine.Debug.LogError("CUT WORLD " + name + ": the timeline's rows could not be written: " + e.GetType().Name + ": " + e.Message, this); }
 #endif
@@ -697,8 +700,11 @@ namespace Zantetsu.PhysicsCut
                         ?? new UnityJobWorkExecutor(profile.UnityJobCapacity);
             _geometryPool = destinations?.Invoke(WorkDestination.GeometryPool)
                             ?? WorkerPoolExecutor.GeometryPool(profile.GeometryWorkerCount);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            CutSpatialSplit.ReadSeveralArgument();   // SPLIT-CANDIDATES-2: the evaluation's switch, before the Background pool is made
+#endif
             _backgroundPool = destinations?.Invoke(WorkDestination.BackgroundPool)
-                              ?? WorkerPoolExecutor.BackgroundPool(profile.BackgroundWorkerCount);
+                              ?? WorkerPoolExecutor.BackgroundPool(CutSpatialSplit.BackgroundPoolCapacity(profile.BackgroundWorkerCount));
             _planningPool = destinations?.Invoke(WorkDestination.PlanningPool) ?? WorkerPoolExecutor.PlanningPool();
             // GRAPH-CONNECT-17 §3-E4: the dispatch record of an evaluation run (development builds; nothing in a Release Player), on
             // before the dispatcher takes its first work. A reading only.

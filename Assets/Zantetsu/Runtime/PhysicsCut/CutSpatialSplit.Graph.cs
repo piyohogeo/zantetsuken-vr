@@ -213,7 +213,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private void ReevaluateGraph()
         {
-            if (_attempt != null)
+            if (_attempt != null || _attempts.Count != 0)
             {
                 _graphReevaluatePending = true;
                 return;
@@ -256,6 +256,8 @@ namespace Zantetsu.PhysicsCut
                 _markEpoch++;
                 ForgetDeferrals();
                 _limitReached.Clear();
+                AllMarksChanged();
+                ForgetFound();
                 _idle = false;
             }
 
@@ -361,6 +363,7 @@ namespace Zantetsu.PhysicsCut
         private void NoteLimitReached(Attempt attempt)
         {
             _limitReached[attempt.fragment] = attempt.input;
+            MarkChanged(attempt.fragment);
             LimitsReached++;
         }
 
@@ -374,7 +377,11 @@ namespace Zantetsu.PhysicsCut
                 if (ledger == null || !ledger.IsCurrentTarget(pair.Key)) _limitScratch.Add(pair.Key);
             }
 
-            for (int i = 0; i < _limitScratch.Count; i++) _limitReached.Remove(_limitScratch[i]);
+            for (int i = 0; i < _limitScratch.Count; i++)
+            {
+                _limitReached.Remove(_limitScratch[i]);
+                MarkChanged(_limitScratch[i]);
+            }
         }
 
         /// <summary>Tests: the frame the given fragment's wait ends at (long.MinValue when it is not waiting).</summary>
@@ -387,6 +394,7 @@ namespace Zantetsu.PhysicsCut
         {
             if (_deferred.Count == 0) return;
             _deferred.Clear();
+            AllMarksChanged();
             RebuildDeferredWake();
         }
 
@@ -420,6 +428,7 @@ namespace Zantetsu.PhysicsCut
             if (!d.input.Equals(input))
             {
                 _deferred.Remove(fragment);
+                MarkChanged(fragment);
                 RebuildDeferredWake();
                 return;
             }
@@ -443,6 +452,7 @@ namespace Zantetsu.PhysicsCut
             if (!_deferred.TryGetValue(fragment, out Deferral d)) return;
             attempt.deferralCount = d.input.Equals(attempt.input) ? d.count : 0;
             _deferred.Remove(fragment);
+            MarkChanged(fragment);
             RebuildDeferredWake();
         }
 
@@ -454,6 +464,7 @@ namespace Zantetsu.PhysicsCut
             long frame = Time.frameCount;
             long until = frame > long.MaxValue - wait ? long.MaxValue : frame + wait;
             _deferred[attempt.fragment] = new Deferral { input = attempt.input, until = until, count = count, dueSeen = false };
+            MarkChanged(attempt.fragment);
             DeferralsMade++;
             RebuildDeferredWake();
         }
@@ -469,7 +480,12 @@ namespace Zantetsu.PhysicsCut
                 if (ledger == null || !ledger.IsCurrentTarget(pair.Key)) _deferredScratch.Add(pair.Key);
             }
 
-            for (int i = 0; i < _deferredScratch.Count; i++) _deferred.Remove(_deferredScratch[i]);
+            for (int i = 0; i < _deferredScratch.Count; i++)
+            {
+                _deferred.Remove(_deferredScratch[i]);
+                MarkChanged(_deferredScratch[i]);
+            }
+
             RebuildDeferredWake();
         }
 

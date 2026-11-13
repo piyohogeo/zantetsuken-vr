@@ -17,6 +17,44 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     // no plane between the groups (the teeth alternate). The planes find nothing; the graph places the two combs apart.
     public unsafe partial class CutWorldRootPlayModeTests
     {
+        /// <summary>
+        /// The saved sample of this fragment's own last attempt (the file is named by the world and the attempt's number): with
+        /// several attempts out at once the last file written is not the fragment's -- the children of its publication are issued
+        /// after it.
+        /// </summary>
+        private static string SampleFileOf(string session, CutSpatialSplit split, LogicalFragmentId fragment)
+        {
+            Assert.That(split.TryGetLastEndOf(fragment, out CutSpatialSplit.AttemptEndRecord record), Is.True, "an attempt of the fragment ended");
+            string file = Path.Combine(session, "w" + split.CaptureWorld.ToString("D3", System.Globalization.CultureInfo.InvariantCulture)
+                + "-a" + record.serial.ToString("D7", System.Globalization.CultureInfo.InvariantCulture) + ".zss.gz");
+            Assert.That(File.Exists(file), Is.True, "its sample was saved: " + file);
+            return file;
+        }
+
+        /// <summary>
+        /// What a session's summary is to count, from each of its samples replayed alone under the same options: samples with the
+        /// bent stage effective, entered and found, samples the graph-first order applied to, and of those the ones whose bent
+        /// partition ran (it runs there only after an unfinished graph) and found. With several attempts out at once the session
+        /// also holds the children issued in the turn of their parent's publication, so the counts are not fixed numbers.
+        /// </summary>
+        private static (int effective, int ran, int found, int graphFirst, int fallbackRan, int fallbackFound) SessionStageCounts(string session, SpatialSplitReplayOptions options)
+        {
+            int effective = 0, ran = 0, found = 0, graphFirst = 0, fallbackRan = 0, fallbackFound = 0;
+            foreach (string path in Directory.GetFiles(session, "*.zss.gz"))
+            {
+                SpatialSplitReplayResult r = SpatialSplitReplay.Run(SpatialSplitSample.Read(path), options);
+                Assert.That(r.error, Is.Null, r.error);
+                if (r.bentEffective) effective++;
+                if (r.bentRan) ran++;
+                if (r.bent) found++;
+                if (r.graphFirstEffective) graphFirst++;
+                if (r.graphFirstEffective && r.bentRan) fallbackRan++;
+                if (r.graphFirstEffective && r.bentRan && r.bent) fallbackFound++;
+            }
+
+            return (effective, ran, found, graphFirst, fallbackRan, fallbackFound);
+        }
+
         private static CutSpatialSplitSettings SplitOnWithGraph(bool cutConvexes = false, int minCutSideTriangles = CutSpatialSplitSettings.DefaultMinCutSideTriangles,
             int deferFirstFrames = 8, int deferMaxFrames = 32, long workBudget = SpatialSplitGraphLimits.DefaultWorkBudget)
         {
@@ -397,6 +435,26 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 yield return Until(() => split.HasAttempt && split.AttemptFragment == a, "A is retried at its deadline");
                 yield return Until(() => background.HoldingCount > 0, "A's work finished and is held back");
                 while (Time.frameCount <= untilB + 1) yield return null;
+                if (split.MaxAttempts > 1)
+                {
+                    // Several attempts out at once: nothing of A's stands before B. B is retried at its own deadline while A's
+                    // retry is still out; with the failure gone both are decided.
+                    yield return Until(() => split.HasAttemptFor(b), "B is retried at its own deadline");
+                    Assert.That(split.HasAttemptFor(a), Is.True, "while A's retry is still out");
+                    Assert.That(split.DeferredNow, Is.Zero, "each wait went with its issue");
+                    CutSpatialSplit.TestGraphFailAllocation = -1;
+                    background.HoldEverything = false;
+                    background.ReleaseEverything();
+                    yield return Until(() => split.LastEndOfIs(a, SpatialSplitEnd.Published) && split.LastEndOfIs(b, SpatialSplitEnd.Published), "both published once the failure is gone");
+                    remaining[0] = 0.0;
+                    TestContext.Out.WriteLine(split.Describe());
+                    Assert.That(split.EndsOf(a, SpatialSplitEnd.Unfinished), Is.GreaterThanOrEqualTo(2), "A ended unfinished at first and at its retry");
+                    Assert.That(split.EndsOf(b, SpatialSplitEnd.Unfinished), Is.GreaterThanOrEqualTo(1));
+                    split.Settings = default;
+                    yield return EndWorld(root);
+                    yield break;
+                }
+
                 Assert.That(split.DeferredNow, Is.EqualTo(1), "B still waits (A's wait went with its issue)");
                 Assert.That(split.Examine(b), Is.EqualTo(SpatialSplitPass.Candidate), "B's deadline passed: a candidate to the look");
                 Assert.That(split.DeferredNow, Is.EqualTo(1), "the look changed nothing");
@@ -1022,13 +1080,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             // through the mesh-led plane -- so the wait is for the lower side: published, or marked after a NotFound of its own
             yield return Until(() => split.Published == 1 || split.Examine(lower) == SpatialSplitPass.Suppressed, "the bent partition ran live on the lower side");
             remaining[0] = 0.0;
-            Assert.That(split.Published, Is.EqualTo(1), "the live attempt published by the bent partition: " + split.LastEnd);
-            SpatialSplitSearchResult lastLive = split.LastSearch;
+            // The lower side's own attempt (with several out at once the last end, search and file may be a child's).
+            Assert.That(split.LastEndOfIs(lower, SpatialSplitEnd.Published), Is.True, "the live attempt published by the bent partition: " + split.LastEnd);
+            Assert.That(split.TryGetLastEndOf(lower, out CutSpatialSplit.AttemptEndRecord lowerEnd), Is.True);
+            SpatialSplitSearchResult lastLive = lowerEnd.search;
             Assert.That(CutSpatialSplit.IsBentResult(in lastLive), Is.True);
             split.Capture = null;
             Assert.That(sink.Close(20.0), Is.True, "the session wrote everything");
             Assert.That(sink.ResultsWritten, Is.GreaterThan(0));
-            string file = Directory.GetFiles(session, "*.zss.gz").OrderBy(f => f).Last();
+            string file = SampleFileOf(session, split, lower);
             SpatialSplitSample sample = SpatialSplitSample.Read(file);
             Assert.That(sample.bentSearch, Is.True, "the saved setting");
             Assert.That(sample.anchors == null || sample.anchors.Length == 0, Is.True, "anchor-less: the graph stage applies");
@@ -1060,7 +1120,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 StringAssert.Contains(", bent off, order current, list", summaryOff);
                 StringAssert.Contains("bent stage (off, asked for: the saved setting not followed): effective in 0 samples, ran 0, found 0", summaryOff);
                 int samplesInSession = Directory.GetFiles(session, "*.zss.gz").Length;
-                StringAssert.Contains("bent stage (the saved setting): effective in " + samplesInSession + " samples, ran 1, found 1", summarySaved, "the bent stage effective on every sample of the session, entered and found on the lower side");
+                // (The lower side's own sample is checked above; the session's counts are those of its samples replayed one by one.
+                // Under the control as before the session is the two sides': entered and found once, on the lower side.)
+                var savedCounts = SessionStageCounts(session, saved);
+                Assert.That(savedCounts.effective == samplesInSession && savedCounts.ran >= 1 && savedCounts.found >= 1, Is.True, "effective on every sample; entered and found on the lower side at least");
+                if (split.MaxAttempts == 1) Assert.That(savedCounts.ran == 1 && savedCounts.found == 1, Is.True, "entered and found once");
+                StringAssert.Contains("bent stage (the saved setting): effective in " + samplesInSession + " samples, ran " + savedCounts.ran + ", found " + savedCounts.found, summarySaved, "the bent stage effective on every sample of the session, entered and found on the lower side");
                 string linesSaved = File.ReadAllText(Path.Combine(folder, "span-graph-saved", "replay.jsonl"));
                 string linesOff = File.ReadAllText(Path.Combine(folder, "span-graph-bent-off", "replay.jsonl"));
                 StringAssert.Contains("\"bentRequested\":\"saved\",\"bentSaved\":true,\"bentEffective\":true", linesSaved);
@@ -1109,11 +1174,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             var lowers = new LogicalFragmentId[1];
             yield return CombsBelowTheWaist(root, new Vector3(0f, 0f, 0f), lowers, anchors: new[] { new float3(3f, -1.5f, 0f) });
             remaining[0] = 1.0;
-            yield return Until(() => split.EndedAs(SpatialSplitEnd.NotFound) + split.Published > 0 && !split.HasAttempt, "the live attempt ended");
+            yield return Until(() => split.TryGetLastEndOf(lowers[0], out _) && !split.HasAttemptFor(lowers[0]) && !split.HasAttempt, "the live attempt ended");
             remaining[0] = 0.0;
             split.Capture = null;
             Assert.That(sink.Close(20.0), Is.True, "the session wrote everything");
-            string file = Directory.GetFiles(session, "*.zss.gz").OrderBy(f => f).Last();
+            string file = SampleFileOf(session, split, lowers[0]);
             SpatialSplitSample sample = SpatialSplitSample.Read(file);
             Assert.That(sample.anchors != null && sample.anchors.Length > 0, Is.True, "an anchored sample");
             var off = new SpatialSplitReplayOptions { spanInput = true, graph = true, bentOff = true };
@@ -1163,10 +1228,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             remaining[0] = 1.0;
             yield return Until(() => split.Published == 1 || split.Examine(lower) == SpatialSplitPass.Suppressed, "the bent partition ran live on the lower side");
             remaining[0] = 0.0;
-            Assert.That(split.Published, Is.EqualTo(1), "the live attempt published by the bent partition: " + split.LastEnd);
+            Assert.That(split.LastEndOfIs(lower, SpatialSplitEnd.Published), Is.True, "the live attempt published by the bent partition: " + split.LastEnd);
             split.Capture = null;
             Assert.That(sink.Close(20.0), Is.True, "the session wrote everything");
-            string file = Directory.GetFiles(session, "*.zss.gz").OrderBy(f => f).Last();
+            string file = SampleFileOf(session, split, lower);
             SpatialSplitSample sample = SpatialSplitSample.Read(file);
             Assert.That(sample.bentSearch, Is.True, "the saved setting: on");
             try
@@ -1209,14 +1274,22 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 TestContext.Out.WriteLine(summaryC);
                 Assert.That(allC, Is.True, summaryC);
                 StringAssert.Contains(", bent saved, order graph-first, list", summaryC);
-                StringAssert.Contains("order: graph-first applied to 1 samples; bent fallback after an unfinished graph: ran 0, found 0", summaryC);
+                // (The lower side's own sample is checked above; the session's counts are those of its samples replayed one by one.
+                // Under the control as before the order applies to the lower side alone, and no fallback runs.)
+                var countsC = SessionStageCounts(session, c);
+                Assert.That(countsC.graphFirst, Is.GreaterThanOrEqualTo(1), "the order applied to the lower side at least");
+                if (split.MaxAttempts == 1) Assert.That(countsC.graphFirst == 1 && countsC.fallbackRan == 0 && countsC.fallbackFound == 0, Is.True, "to the lower side alone, with no fallback");
+                StringAssert.Contains("order: graph-first applied to " + countsC.graphFirst + " samples; bent fallback after an unfinished graph: ran " + countsC.fallbackRan + ", found " + countsC.fallbackFound, summaryC);
                 string lines = File.ReadAllText(Path.Combine(folder, "span-graph-first", "replay.jsonl"));
                 StringAssert.Contains("\"bentRequested\":\"saved\",\"bentSaved\":true,\"bentEffective\":true,\"orderRequested\":\"graph-first\",\"graphFirstEffective\":true", lines);
                 StringAssert.Contains("\"stagesRan\":{\"plane\":true,\"bent\":false,\"graph\":true,\"meshLed\":false}", lines);
                 string summaryT = SpatialSplitReplay.RunSession(session, Path.Combine(folder, "span-graph-first-tight"), tight, out bool allT, out _);
                 TestContext.Out.WriteLine(summaryT);
                 Assert.That(allT, Is.True, summaryT);
-                StringAssert.Contains("bent fallback after an unfinished graph: ran 1, found 1", summaryT);
+                var countsT = SessionStageCounts(session, tight);
+                Assert.That(countsT.fallbackRan >= 1 && countsT.fallbackFound >= 1, Is.True, "the fallback ran and found on the lower side at least");
+                if (split.MaxAttempts == 1) Assert.That(countsT.fallbackRan == 1 && countsT.fallbackFound == 1, Is.True, "on the lower side alone");
+                StringAssert.Contains("bent fallback after an unfinished graph: ran " + countsT.fallbackRan + ", found " + countsT.fallbackFound, summaryT);
                 string linesT = File.ReadAllText(Path.Combine(folder, "span-graph-first-tight", "replay.jsonl"));
                 StringAssert.Contains("\"stagesRan\":{\"plane\":true,\"bent\":true,\"graph\":true,\"meshLed\":false}", linesT);
                 // the order as before on the same sample: the bent partition first, the graph not entered (A unchanged)

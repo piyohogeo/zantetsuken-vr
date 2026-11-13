@@ -264,7 +264,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 "the source's actor, shape and index range went back");
             Assert.That(lowerMeshes.All(m => m != null), Is.True, "the inherited collider meshes are alive");
             Assert.That(PhysicsCutClassification.Live, Is.EqualTo(classifications), "the attempt's own classification went back");
-            Assert.That(split.SuppressedNow, Is.Zero, "the published source's mark went with it");
+            // (With several attempts out at once the children of the publication are tried in the same turn and may be marked.)
+            Assert.That(split.IsMarked(lower), Is.False, "the published source's mark went with it");
+            if (split.MaxAttempts == 1) Assert.That(split.SuppressedNow, Is.Zero, "and no other stands");
             Assert.That(root.GeometryFaults, Is.Zero);
             Assert.That(root.Display.IsHalted, Is.False);
             Assert.That(root.TerminationRequested, Is.False);
@@ -518,51 +520,71 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             int afterCut = root.Owners.Count;
             background.HoldEverything = false;
             background.ReleaseEverything();
-            yield return Until(() => !split.HasAttempt, "the result arrived and was given back");
-            Assert.That(split.EndedAs(SpatialSplitEnd.Stale), Is.EqualTo(1), "stale: what it was computed from is no longer the fragment's");
-            Assert.That(split.BentFound, Is.EqualTo(1), "the bent partition had been found");
+            // Each case asks about its own fragment's attempt: with several out at once the other lower sides' attempts were issued
+            // in the same turn, and their results (found, not overtaken yet) wait for the closed budget.
+            bool several = split.MaxAttempts > 1;
+            yield return Until(() => !split.HasAttemptFor(cutUnder), "the result arrived and was given back");
+            Assert.That(split.LastEndOfIs(cutUnder, SpatialSplitEnd.Stale), Is.True, "stale: what it was computed from is no longer the fragment's");
+            Assert.That(split.TryGetLastEndOf(cutUnder, out CutSpatialSplit.AttemptEndRecord cutEnd) && CutSpatialSplit.IsBentResult(in cutEnd.search), Is.True, "the bent partition had been found");
+            Assert.That(split.EndedAs(SpatialSplitEnd.Stale), Is.EqualTo(1), "and no other attempt ended so");
+            if (!several) Assert.That(split.BentFound, Is.EqualTo(1));
             Assert.That(split.Published + split.PublishedBent, Is.Zero);
             Assert.That(split.SuppressedNow, Is.Zero, "and nothing is recorded as failed");
             Assert.That(root.Owners.Count, Is.EqualTo(afterCut), "no owner was made");
             Assert.That(root.Ledger.IsCurrentTarget(pieces[0]) && root.Ledger.IsCurrentTarget(pieces[1]), Is.True, "the cut's own pieces stand");
-            Assert.That(PhysicsCutClassification.Live, Is.EqualTo(classifications), "the result's classification went back");
+            if (!several) Assert.That(PhysicsCutClassification.Live, Is.EqualTo(classifications), "the result's classification went back");
 
-            // 2. Retired while the result is held.
+            // 2. Retired while the result is held. (With several out at once another lower side's attempt is out already, its
+            //    result waiting for the closed budget: that one is the attempt overtaken.)
             background.HoldEverything = true;
-            remaining[0] = 1.0;
-            yield return Until(() => split.HasAttempt, "another attempt was issued");
-            remaining[0] = 0.0;
+            if (!split.HasAttempt)
+            {
+                remaining[0] = 1.0;
+                yield return Until(() => split.HasAttempt, "another attempt was issued");
+                remaining[0] = 0.0;
+                yield return Until(() => background.HoldingCount > 0, "its work finished and is held back");
+            }
+
             LogicalFragmentId retiredUnder = split.AttemptFragment;
-            yield return Until(() => background.HoldingCount > 0, "its work finished and is held back");
+            Assert.That(lowers, Does.Contain(retiredUnder), "for another of the lower sides");
             Assert.That(root.Lifetime.TryRetire(retiredUnder, out string why), Is.True, "retired by the piece lifetime's own retirement: " + why);
             int afterRetirement = root.Owners.Count;
             background.HoldEverything = false;
             background.ReleaseEverything();
-            yield return Until(() => !split.HasAttempt, "the result arrived and was given back");
+            yield return Until(() => !split.HasAttemptFor(retiredUnder), "the result arrived and was given back");
+            Assert.That(split.LastEndOfIs(retiredUnder, SpatialSplitEnd.Stale), Is.True);
+            Assert.That(split.TryGetLastEndOf(retiredUnder, out CutSpatialSplit.AttemptEndRecord retiredEnd) && CutSpatialSplit.IsBentResult(in retiredEnd.search), Is.True, "found, and overtaken");
             Assert.That(split.EndedAs(SpatialSplitEnd.Stale), Is.EqualTo(2));
-            Assert.That(split.BentFound, Is.EqualTo(2));
+            if (!several) Assert.That(split.BentFound, Is.EqualTo(2));
             Assert.That(split.Published, Is.Zero);
             Assert.That(split.SuppressedNow, Is.Zero);
             Assert.That(IsRetired(root, retiredUnder), Is.True, "retired, and nothing of it came back");
             Assert.That(root.Owners.Count, Is.EqualTo(afterRetirement));
-            Assert.That(PhysicsCutClassification.Live, Is.EqualTo(classifications));
+            if (!several) Assert.That(PhysicsCutClassification.Live, Is.EqualTo(classifications));
 
             // 3. The settings changed while the result is held: another search, whose result this is not.
             background.HoldEverything = true;
-            remaining[0] = 1.0;
-            yield return Until(() => split.HasAttempt, "a third attempt was issued");
-            remaining[0] = 0.0;
+            if (!split.HasAttempt)
+            {
+                remaining[0] = 1.0;
+                yield return Until(() => split.HasAttempt, "a third attempt was issued");
+                remaining[0] = 0.0;
+                yield return Until(() => background.HoldingCount > 0, "its work finished and is held back");
+            }
+
             LogicalFragmentId changedUnder = split.AttemptFragment;
+            Assert.That(lowers, Does.Contain(changedUnder), "for the third lower side");
             Assert.That(root.Owners.TryGet(changedUnder, out PhysicsFragmentOwner standing), Is.True);
-            yield return Until(() => background.HoldingCount > 0, "its work finished and is held back");
             CutSpatialSplitSettings narrower = SplitOnWithBent();
             narrower.bentLimits.maxPieces = SpatialSplitBentLimits.DefaultPieces - 1;
             split.Settings = narrower;
             background.HoldEverything = false;
             background.ReleaseEverything();
-            yield return Until(() => !split.HasAttempt, "the result arrived and was given back");
-            Assert.That(split.EndedAs(SpatialSplitEnd.Stale), Is.EqualTo(3), "stale: of a search with other settings");
-            Assert.That(split.BentFound, Is.EqualTo(3));
+            yield return Until(() => !split.HasAttemptFor(changedUnder), "the result arrived and was given back");
+            Assert.That(split.LastEndOfIs(changedUnder, SpatialSplitEnd.Stale), Is.True, "stale: of a search with other settings");
+            Assert.That(split.TryGetLastEndOf(changedUnder, out CutSpatialSplit.AttemptEndRecord changedEnd) && CutSpatialSplit.IsBentResult(in changedEnd.search), Is.True);
+            Assert.That(split.EndedAs(SpatialSplitEnd.Stale), Is.EqualTo(3));
+            if (!several) Assert.That(split.BentFound, Is.EqualTo(3));
             Assert.That(split.Published, Is.Zero);
             Assert.That(split.SuppressedNow, Is.Zero, "nothing marked: a stale result says nothing of the input");
             Assert.That(root.Ledger.IsCurrentTarget(changedUnder), Is.True, "the fragment stands");
@@ -634,13 +656,19 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
 
             Assert.That(hogs.Count, Is.GreaterThan(0), "the layout: the room was there before");
+            // The lower side's own attempt, ended for the room (with several out at once it is tried again in the very turn its
+            // attempt ended, so "no attempt out" is not what to wait for; the retries end the same way while the room is short).
+            bool several = split.MaxAttempts > 1;
             remaining[0] = 1.0;
-            yield return Until(() => split.EndedAs(SpatialSplitEnd.RoomShort) == 1 && !split.HasAttempt, "the attempt was given back for the room");
+            yield return Until(() => split.EndsOf(lower, SpatialSplitEnd.RoomShort) >= 1 && (several || !split.HasAttempt), "the attempt was given back for the room");
             remaining[0] = 0.0;
-            TestContext.Out.WriteLine(DescribeBentSearch(split.LastSearch) + "; last refusal: " + split.LastRefusal);
-            Assert.That(split.BentFound, Is.EqualTo(1), "the bent partition had been found");
+            Assert.That(split.TryGetLastEndOf(lower, out CutSpatialSplit.AttemptEndRecord roomEnd), Is.True);
+            TestContext.Out.WriteLine(DescribeBentSearch(roomEnd.search) + "; last refusal: " + split.LastRefusal);
+            Assert.That(roomEnd.end == SpatialSplitEnd.RoomShort && CutSpatialSplit.IsBentResult(in roomEnd.search), Is.True, "the bent partition had been found");
+            if (!several) Assert.That(split.EndedAs(SpatialSplitEnd.RoomShort) == 1 && split.BentFound == 1, Is.True, "once");
+            Assert.That(split.EndedAs(SpatialSplitEnd.RoomShort), Is.EqualTo(split.EndsOf(lower, SpatialSplitEnd.RoomShort)), "every end for the room is this fragment's");
             Assert.That(split.SuppressedNow, Is.Zero, "a shortage of room is not a failed search");
-            Assert.That(PhysicsCutClassification.Live, Is.EqualTo(classifications), "the result's classification went back");
+            if (!several) Assert.That(PhysicsCutClassification.Live, Is.EqualTo(classifications), "the result's classification went back");
             Unchanged("no index room");
 
             // The room back, the budget open: tried again, and published.
@@ -650,9 +678,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
 
             remaining[0] = 1.0;
-            yield return Until(() => split.Published == 1, "published once the room was back");
+            yield return Until(() => split.LastEndOfIs(lower, SpatialSplitEnd.Published), "published once the room was back");
             remaining[0] = 0.0;
-            Assert.That(split.Issued, Is.EqualTo(2), "by a second attempt");
+            if (!several) Assert.That(split.Issued, Is.EqualTo(2), "by a second attempt");
+            Assert.That(split.EndsOf(lower, SpatialSplitEnd.RoomShort) + 1, Is.GreaterThanOrEqualTo(2), "by a later attempt of the same fragment");
             Assert.That(split.PublishedBent, Is.EqualTo(1));
             Assert.That(split.LastSource, Is.EqualTo(lower));
             Assert.That(root.Owners.Count, Is.EqualTo(owners + 1));

@@ -730,12 +730,16 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             LogicalFragmentId lower = sides[1];
             Assert.That(root.NpcBones.TryGet(lower, out NpcBoneFragment sourceRecord), Is.True);
             NpcBonePiece sourcePiece = sourceRecord.Piece;
+            // The lower side's own end: replaced by its publication (with several out at once the side above is decided beside it,
+            // so "no attempt out and one search" is not this piece's end).
             remaining[0] = 1.0;
-            yield return Until(() => !split.HasAttempt && split.BoneSearches >= 1, "the lower side was decided");
+            yield return Until(() => !split.HasAttemptFor(lower) && !root.Ledger.IsCurrentTarget(lower), "the lower side was decided and replaced");
             remaining[0] = 0.0;
             TestContext.Out.WriteLine(split.Describe());
             TestContext.Out.WriteLine(split.DescribeBone());
-            Assert.That(split.BoneNotSeparable == 1 && split.BoneFellBack == 1, Is.True, "connected by the bones, then the method as before");
+            Assert.That(split.LastSource, Is.EqualTo(lower), "the publication is the lower side's");
+            if (split.MaxAttempts == 1) Assert.That(split.BoneNotSeparable == 1 && split.BoneFellBack == 1, Is.True, "connected by the bones, then the method as before");
+            Assert.That(split.BoneNotSeparable >= 1 && split.BoneFellBack >= 1, Is.True, "connected by the bones, then the method as before");
             Assert.That(split.PublishedFallbackGraph == 1 && split.PublishedBone == 0, Is.True, "published by the graph");
             Assert.That(root.NpcBones.SplitsByConvexes == 1 && root.NpcBones.SplitsByPlane == 0 && root.NpcBones.SplitsWithoutSides == 0, Is.True, "followed by the convexes' bones");
 

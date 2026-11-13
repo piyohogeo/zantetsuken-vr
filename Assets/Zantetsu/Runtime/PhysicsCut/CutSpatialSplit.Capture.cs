@@ -23,7 +23,7 @@ namespace Zantetsu.PhysicsCut
             get => _capture;
             set
             {
-                if (_attempt != null)
+                if (_attempt != null || _attempts.Count != 0)
                 {
                     // An attempt is out whose input went to the sink of its issue: its result goes to the same sink. The switch
                     // waits for that attempt's collection and is applied at its end (GRAPH-CONNECT-5 review 1).
@@ -232,7 +232,12 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         internal void EndCaptureForQuit()
         {
-            Attempt attempt = _attempt;
+            if (_attempt != null) EndCaptureForQuit(_attempt);
+            for (int i = 0; i < _attempts.Count; i++) EndCaptureForQuit(_attempts[i]);   // SPLIT-CANDIDATES-2: every attempt out
+        }
+
+        private void EndCaptureForQuit(Attempt attempt)
+        {
             if (attempt == null || !attempt.captured)
             {
                 return;

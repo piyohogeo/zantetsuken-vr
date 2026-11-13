@@ -32,6 +32,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             var remaining = new double[1];
             CutSpatialSplit split = SplitCutClosed(root, remaining, 12);
             split.RetryAfterHolds = int.MaxValue;   // the mechanism without the retry of 2026-10-18 (its own cases are SplitCutRetry)
+            // This case is about the control as before: one attempt at a time, so that a publication held every frame holds every
+            // other piece behind it. With several attempts out the other piece is not held (SplitSeveral_... show that).
+            split.MaxAttempts = 1;
             LogicalFragmentId wrapped = AddWrappedBody(root, new Vector3(0f, 0f, 0f));
             LogicalFragmentId other = AddBodyWithAHand(root, new Vector3(8f, 0f, 0f));
             yield return null;

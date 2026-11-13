@@ -186,7 +186,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(split.CutMeshesMade, Is.EqualTo(2), "a mesh a part");
             Assert.That(split.HullsChecked, Is.EqualTo(2), "each read after its bake");
             Assert.That(split.HullsRefused, Is.Zero);
-            Assert.That(split.LastSearch.meshLed && split.LastSearch.crossingConvexes == 1, Is.True);
+            // The lower side's own attempt (with several out at once the last search may be another piece's).
+            Assert.That(split.TryGetLastEndOf(lower, out CutSpatialSplit.AttemptEndRecord lowerEnd) && lowerEnd.end == SpatialSplitEnd.Published, Is.True);
+            Assert.That(lowerEnd.search.meshLed && lowerEnd.search.crossingConvexes == 1, Is.True);
 
             LogicalFragmentId a = split.LastPositive, b = split.LastNegative;
             Assert.That(root.Ledger.IsCurrentTarget(lower), Is.False, "the piece was replaced");
@@ -318,15 +320,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
             // The numbers: issued with the budget open, collected with it closed.
             remaining[0] = 1.0;
-            yield return Until(() => split.AttemptFragment == lower, "an attempt was issued for the lower side");
+            yield return Until(() => split.HasAttemptFor(lower), "an attempt was issued for the lower side");
             remaining[0] = 0.0;
-            yield return Until(() => split.AttemptCutsConvexes, "its numbers came back with a convex to cut");
+            yield return Until(() => split.AttemptOf(lower).cuts, "its numbers came back with a convex to cut");
             Assert.That(split.CutAttempts, Is.Zero, "not looked at yet: the budget is closed");
             Assert.That(split.CutMeshesMade, Is.Zero, "the layout: nothing was made while the budget was closed");
 
             yield return HeldThenLetThrough(() => split.CutMeshesMade, 2, "the meshes");
             Assert.That(split.HullsChecked, Is.Zero, "the layout: the hulls are another stage");
-            yield return Until(() => split.AttemptIsCollected, "the bake came back");
+            yield return Until(() => split.AttemptOf(lower).collected, "the bake came back");
             yield return HeldThenLetThrough(() => split.HullsChecked, 2, "the cooked hulls");
             Assert.That(split.Published, Is.Zero, "the layout: the publication is another stage");
             yield return HeldThenLetThrough(() => split.Published, 1, "the publication");
@@ -360,7 +362,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             LogicalFragmentId lower = sides[1];
 
             remaining[0] = 1.0;
-            yield return Until(() => split.AttemptFragment == lower && split.CutMeshesMade == 2, "the lower side's meshes were made");
+            yield return Until(() => split.AttemptOf(lower).applied && split.CutMeshesMade == 2, "the lower side's meshes were made");
             remaining[0] = 0.0;
             Assert.That(SplitMeshesAlive(), Is.EqualTo(meshesBefore + 2), "the layout: two meshes of the attempt's");
 
@@ -369,8 +371,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             yield return CutInTwo(root, lower, new float4(0f, 0f, 1f, 0f), pieces);
             yield return Until(() => root.Driver.Transactions.Count == 0, "the cut of the piece is over");
             remaining[0] = 1.0;
-            yield return Until(() => split.EndedAs(SpatialSplitEnd.Stale) == 1, "the attempt ended as stale");
+            yield return Until(() => split.LastEndOfIs(lower, SpatialSplitEnd.Stale), "the attempt ended as stale");
             remaining[0] = 0.0;
+            Assert.That(split.EndedAs(SpatialSplitEnd.Stale), Is.EqualTo(1));
             Assert.That(split.Published, Is.Zero, "nothing of it was published");
             Assert.That(root.Owners.TryGet(pieces[0], out _) && root.Owners.TryGet(pieces[1], out _), Is.True, "the cut's two pieces stand");
             yield return null;
@@ -384,8 +387,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             yield return CutAtTheWaist(root, second, secondSides, 1);
             int made = split.CutMeshesMade;
             remaining[0] = 1.0;
-            yield return Until(() => split.CutMeshesMade == made + 2, "the second body's meshes were made");
-            Assert.That(split.HasAttempt, Is.True, "the layout: the attempt is out");
+            // The second body's own attempt (the count of meshes over the whole world is not waited for as an exact value: another
+            // piece's attempt can make its meshes in the same turn).
+            yield return Until(() => split.AttemptOf(secondSides[1]).applied, "the second body's meshes were made");
+            Assert.That(split.CutMeshesMade, Is.GreaterThanOrEqualTo(made + 2), "its two meshes");
+            Assert.That(split.HasAttemptFor(secondSides[1]), Is.True, "the layout: the attempt is out");
             Assert.That(root.GeometryFaults, Is.Zero);
             Assert.That(root.TerminationRequested, Is.False);
             yield return EndWorld(root);
@@ -415,9 +421,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             LogicalFragmentId lower = sides[1];
 
             remaining[0] = 1.0;
-            yield return Until(() => split.AttemptFragment == lower && split.CutMeshesMade == 2, "the lower side's meshes were made");
+            yield return Until(() => split.AttemptOf(lower).applied && split.CutMeshesMade == 2, "the lower side's meshes were made");
             remaining[0] = 0.0;
-            yield return Until(() => split.AttemptIsCollected, "their bake came back");
+            yield return Until(() => split.AttemptOf(lower).collected, "their bake came back");
 
             // The piece is cut: the attempt is stale from here, and nothing has looked at it since.
             var pieces = new LogicalFragmentId[2];
@@ -427,7 +433,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
             void StillUntouched(string when)
             {
-                Assert.That(split.HasAttempt && split.AttemptFragment == lower, Is.True, when + ": the attempt is still held");
+                Assert.That(split.HasAttemptFor(lower), Is.True, when + ": the attempt is still held");
                 Assert.That(split.EndedAs(SpatialSplitEnd.Stale), Is.Zero, when + ": not ended");
                 Assert.That(SplitMeshesAlive(), Is.EqualTo(meshesBefore + 2), when + ": its meshes stand");
             }

@@ -122,7 +122,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             split.Settings = SplitOnWithBent(cutConvexes: true, minCutSideTriangles: 12);
             string folder = NewCaptureFolder();
             string session = Path.Combine(folder, "session");
-            var sink = new SpatialSplitCaptureSink(session, SpatialSplitCaptureLimits.Default, "PlayMode case", null);
+            // Every input is to be saved: the queue has room for all of them at once (the default, 16 items, refuses what comes
+            // past it -- with several attempts out, a sample, its result and the next turn's can be queued together).
+            var limits = new SpatialSplitCaptureLimits(256, SpatialSplitCaptureLimits.DefaultQueuedBytes, SpatialSplitCaptureLimits.DefaultSampleBytes, SpatialSplitCaptureLimits.DefaultSessionBytes);
+            var sink = new SpatialSplitCaptureSink(session, limits, "PlayMode case", null);
             split.Capture = sink;
             try
             {

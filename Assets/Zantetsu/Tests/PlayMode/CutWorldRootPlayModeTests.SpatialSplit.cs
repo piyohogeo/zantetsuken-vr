@@ -777,7 +777,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
             background.HoldEverything = false;
             background.ReleaseEverything();
-            yield return Until(() => !split.HasAttempt, "the result arrived and was given back");
+            // Its own fragment's attempt: with several out at once, another piece's may still wait for the (closed) budget.
+            yield return Until(() => !split.HasAttemptFor(cutUnder), "the result arrived and was given back");
             Assert.That(split.EndedAs(SpatialSplitEnd.Stale), Is.EqualTo(1), "stale: what it was computed from is no longer the fragment's");
             Assert.That(split.Published, Is.Zero);
             Assert.That(split.SuppressedNow, Is.Zero, "and nothing is recorded as failed");
@@ -787,18 +788,24 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             yield return null;
             Assert.That(IsDrawn(root, pieces[0]) && IsDrawn(root, pieces[1]), Is.True);
 
-            // Another attempt, and its fragment is retired while it is out.
+            // Another attempt, and its fragment is retired while it is out. (With several out at once the other piece's attempt is
+            // out already, its result waiting for the closed budget: that one is the attempt overtaken.)
             background.HoldEverything = true;
-            remaining[0] = 1.0;
-            yield return Until(() => split.HasAttempt, "another attempt was issued");
-            remaining[0] = 0.0;
+            if (!split.HasAttempt)
+            {
+                remaining[0] = 1.0;
+                yield return Until(() => split.HasAttempt, "another attempt was issued");
+                remaining[0] = 0.0;
+                yield return Until(() => background.HoldingCount > 0, "its work finished and is held back");
+            }
+
             LogicalFragmentId retiredUnder = split.AttemptFragment;
-            yield return Until(() => background.HoldingCount > 0, "its work finished and is held back");
+            Assert.That(split.HasAttemptFor(retiredUnder), Is.True, "the layout: its attempt is out");
             Assert.That(root.Lifetime.TryRetire(retiredUnder, out string why), Is.True, "retired by the piece lifetime's own retirement: " + why);
             int afterRetirement = root.Owners.Count;
             background.HoldEverything = false;
             background.ReleaseEverything();
-            yield return Until(() => !split.HasAttempt, "the result arrived and was given back");
+            yield return Until(() => !split.HasAttemptFor(retiredUnder), "the result arrived and was given back");
             Assert.That(split.EndedAs(SpatialSplitEnd.Stale), Is.EqualTo(2));
             Assert.That(split.Published, Is.Zero);
             Assert.That(split.SuppressedNow, Is.Zero);
@@ -1124,6 +1131,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining);
+            // This case is about the walk of the control as before (its cursor, its rounds, its measured round start); the scan of
+            // the several-attempts control has its own (SplitScan_CutShortForTheBudget_...).
+            split.MaxAttempts = 1;
             AddBody(root, new Vector3(0f, 0f, 0f));
             AddBody(root, new Vector3(8f, 0f, 0f));
             AddBody(root, new Vector3(16f, 0f, 0f));
@@ -1418,10 +1428,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
 
             Assert.That(hogs.Count, Is.GreaterThan(0), "the layout: the room was there before");
+            // The attempt of this input ended for the room (with several out at once the fragment is tried again in the very turn
+            // its attempt ended, so "no attempt out" is not what to wait for).
+            long heldSerial = split.AttemptSerial;
             remaining[0] = 1.0;
-            yield return Until(() => !split.HasAttempt, "the attempt was given back");
+            yield return Until(() => split.EndedAs(SpatialSplitEnd.RoomShort) >= 1 && split.AttemptSerial != heldSerial, "the attempt was given back");
             remaining[0] = 0.0;
-            Assert.That(split.EndedAs(SpatialSplitEnd.RoomShort), Is.EqualTo(1), "no room for the two index ranges");
+            if (split.MaxAttempts == 1) Assert.That(split.EndedAs(SpatialSplitEnd.RoomShort), Is.EqualTo(1), "no room for the two index ranges");
+            Assert.That(split.EndedAs(SpatialSplitEnd.RoomShort), Is.GreaterThanOrEqualTo(1), "no room for the two index ranges");
+            Assert.That(split.Published, Is.Zero, "and nothing was published without it");
             Assert.That(split.SuppressedNow, Is.Zero, "a shortage of room is not a failed search");
             Unchanged("no index room");
 
@@ -1434,7 +1449,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             remaining[0] = 1.0;
             yield return Until(() => split.Published == 1, "published once the room was back");
             remaining[0] = 0.0;
-            Assert.That(split.Issued, Is.EqualTo(2), "by a second attempt");
+            if (split.MaxAttempts == 1) Assert.That(split.Issued, Is.EqualTo(2), "by a second attempt");
+            Assert.That(split.Issued, Is.GreaterThanOrEqualTo(2), "by a later attempt");
+            Assert.That(split.EndedAs(SpatialSplitEnd.RoomShort), Is.EqualTo(split.Issued - 1), "every attempt before it ended for the room");
             Assert.That(split.LastSource, Is.EqualTo(lower));
             Assert.That(root.Owners.Count, Is.EqualTo(owners + 1));
             Assert.That(split.ExpectedIssueSeconds, Is.GreaterThan(0.0));
