@@ -1939,6 +1939,13 @@ namespace Zantetsu.PhysicsCut
             CaptureNpcOnly = false;
         }
 
+        /// <summary>Tests only: the bones' capture and the NPC-only filter as a launch would set them.</summary>
+        internal static void SetBonesForTests(bool bones, bool npcOnly)
+        {
+            CaptureBones = bones || npcOnly;
+            CaptureNpcOnly = npcOnly;
+        }
+
         /// <summary>The launch's capture, or null.</summary>
         public static SpatialSplitCaptureSink Sink
         {

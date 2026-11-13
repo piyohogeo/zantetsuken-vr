@@ -64,6 +64,78 @@ namespace Zantetsu.PhysicsCut
             return _world.Lifetime != null && _world.Ledger.TryGetRoot(fragment, out LogicalFragmentId root) && _world.Lifetime.IsMarkedLineage(root);
         }
 
+        /// <summary>
+        /// NPC-ATTEMPT-CAPTURE-1: the topology tables handed to the capture's writer, and the sidecars that were not (the bones', the
+        /// topology's, a result line), with the last reason. A failure is also a line of capture-failures.jsonl where the queue has room.
+        /// </summary>
+        public long CaptureTopologies { get; private set; }
+        public long CaptureBoneFailures { get; private set; }
+        public long CaptureTopologyFailures { get; private set; }
+        public string LastCaptureFailure { get; private set; } = "";
+
+        /// <summary>Tests only: the topology table's copy is refused.</summary>
+        internal static bool TestFailCaptureTopology;
+
+        // At the issue, after the bones' sidecar: the geometry's own render vertex to topology vertex table for every vertex the
+        // attempt's indices name (every vertex block: the base's, each cut's, a cap's auxiliary vertices), through the map the decision
+        // reads, while the attempt holds the geometry's index lease -- the collection of picked pieces' copy (NpcPieceTopologySample),
+        // named by the attempt's serial as its sample and its bones are.
+        private unsafe void CaptureTopology(Attempt attempt)
+        {
+            long begin = Stopwatch.GetTimestamp();
+            string why = null;
+            try
+            {
+                NpcPieceTopologySample table = TestFailCaptureTopology ? null : NpcPieceTopologySample.Take(_world.Storage, attempt.input.geometry, attempt.indices, attempt.indexCount, out why);
+                if (TestFailCaptureTopology) why = "refused for a test";
+                if (table != null)
+                {
+                    table.sessionId = Capture.sessionId;
+                    table.world = CaptureWorld;
+                    table.pick = checked((int)attempt.serial);
+                    table.fragment = attempt.fragment.value;
+                    table.epoch = attempt.input.epoch;
+                    SpatialSplitBoneItem item = NpcPiecePickCopy.MakeTopologyItem(table, null, out string _);
+                    if (Capture.TryReserve(item.bytes, false))
+                    {
+                        Capture.HandBone(item);
+                        CaptureTopologies++;
+                        attempt.topologyCaptured = true;
+                    }
+                    else
+                    {
+                        why = "no room in the queue (" + Capture.LastRefusal + ")";
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                why = e.GetType().Name + ": " + e.Message;
+            }
+
+            if (!attempt.topologyCaptured) NoteCaptureFailure(attempt, "topology", why ?? "not known");
+            double spent = Since(begin);
+            attempt.captureCopySeconds += spent;
+            CaptureCopySeconds += spent;
+        }
+
+        private void NoteCaptureFailure(Attempt attempt, string what, string why)
+        {
+            if (what == "bones") CaptureBoneFailures++; else CaptureTopologyFailures++;
+            LastCaptureFailure = what + " of attempt " + attempt.serial + ": " + why;
+            UnityEngine.Debug.LogError("SPLIT CAPTURE NPC: " + LastCaptureFailure);
+            SpatialSplitCaptureSink sink = Capture;
+            if (sink == null) return;
+            var item = new SpatialSplitBoneItem
+            {
+                index = "capture-failures.jsonl",
+                line = "{\"world\":" + CaptureWorld + ",\"attempt\":" + attempt.serial + ",\"fragment\":" + attempt.fragment.value + ",\"epoch\":" + attempt.input.epoch
+                    + ",\"what\":\"" + what + "\",\"why\":" + SpatialSplitCaptureSink.Json(why ?? "") + "}",
+                bytes = SpatialSplitCaptureResult.Overhead,
+            };
+            if (sink.TryReserve(item.bytes, true)) sink.HandBone(item);
+        }
+
         // At the issue, with the input complete and leased and the work not yet offered: the copy, or none.
         private SpatialSplitCaptureSample CaptureInput(Attempt attempt)
         {

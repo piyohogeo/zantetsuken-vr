@@ -247,7 +247,13 @@ namespace Zantetsu.PhysicsCut
         /// The live decision of a captured bone-aware attempt (the main thread, where it is counted): its line in bone-results.jsonl,
         /// handed to the capture's writer as the sidecar is.
         /// </summary>
-        internal static void WriteResult(SpatialSplitCaptureSink sink, long world, long attempt, in NpcBoneSplitRecord record, string sidesHash, string end)
+        /// <remarks>
+        /// NPC-ATTEMPT-CAPTURE-1: the line also names the fragment and its input's epoch, whether the attempt fell back, what placed it
+        /// where it was published (bone, plane, graph, bent, mesh-led, mesh-led-cut), the connection counts and the topology's, and
+        /// whether its topology table was handed to the writer.
+        /// </remarks>
+        internal static void WriteResult(SpatialSplitCaptureSink sink, long world, long attempt, in NpcBoneSplitRecord record, string sidesHash, string end,
+            int fragment = 0, int epoch = 0, bool fellBack = false, string path = "", bool topologyCaptured = false)
         {
             CultureInfo inv = CultureInfo.InvariantCulture;
             var item = new SpatialSplitBoneItem
@@ -258,7 +264,11 @@ namespace Zantetsu.PhysicsCut
                     + ",\"fullGroups\":" + record.fullGroups + ",\"referencedVertices\":" + record.referencedVertices + ",\"originSteps\":" + record.originSteps
                     + ",\"positiveConvexes\":" + record.positiveConvexes + ",\"negativeConvexes\":" + record.negativeConvexes
                     + ",\"positiveTriangles\":" + record.positiveTriangles + ",\"negativeTriangles\":" + record.negativeTriangles
-                    + ",\"sidesHash\":\"" + (sidesHash ?? "") + "\",\"end\":\"" + (end ?? "") + "\",\"seconds\":" + record.seconds.ToString("R", inv) + "}",
+                    + ",\"sidesHash\":\"" + (sidesHash ?? "") + "\",\"end\":\"" + (end ?? "") + "\",\"seconds\":" + record.seconds.ToString("R", inv)
+                    + ",\"fragment\":" + fragment + ",\"epoch\":" + epoch + ",\"fellBack\":" + (fellBack ? "true" : "false") + ",\"path\":\"" + (path ?? "") + "\""
+                    + ",\"connectionsKept\":" + record.connectionsKept + ",\"connectionsDropped\":" + record.connectionsDropped + ",\"connectionsProtected\":" + record.connectionsProtected
+                    + ",\"topologyVertices\":" + record.topologyVertices + ",\"seamVertices\":" + record.seamVertices + ",\"pieceBones\":" + record.pieceBones
+                    + ",\"unboundGroups\":" + record.unboundGroups + ",\"topologyCaptured\":" + (topologyCaptured ? "true" : "false") + "}",
                 bytes = SpatialSplitCaptureResult.Overhead,
             };
             if (!sink.TryReserve(item.bytes, true))

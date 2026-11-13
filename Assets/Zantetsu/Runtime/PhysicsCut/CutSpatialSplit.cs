@@ -1627,6 +1627,8 @@ namespace Zantetsu.PhysicsCut
                     if (boneLed && capture != null)
                     {
                         attempt.boneCaptured = SpatialSplitBoneSample.Write(Capture, CaptureWorld, attempt, attempt.bonePiece, in settings, SpatialSplitGraph.IsPrepared);
+                        if (!attempt.boneCaptured) NoteCaptureFailure(attempt, "bones", "the bones' sidecar was not made or found no room in the queue");
+                        CaptureTopology(attempt);   // NPC-ATTEMPT-CAPTURE-1: the geometry's own topology table, under the same lease
                     }
                     copySeconds = attempt.captureCopySeconds;
 #endif

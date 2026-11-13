@@ -26,8 +26,11 @@ namespace Zantetsu.PhysicsCut
     internal sealed class SpatialSplitBoneResultLine
     {
         public long world, attempt;
-        public string verdict, sidesHash, end;
+        public string verdict, sidesHash, end, reason, path;
         public int clusters, groups, fullGroups, meshComponents, positiveConvexes, negativeConvexes, positiveTriangles, negativeTriangles;
+        // NPC-ATTEMPT-CAPTURE-1
+        public int fragment, epoch, connectionsKept, connectionsDropped, connectionsProtected, topologyVertices, seamVertices, pieceBones, unboundGroups;
+        public bool fellBack, topologyCaptured;
     }
 
     /// <summary>

@@ -205,7 +205,12 @@ namespace Zantetsu.PhysicsCut
                     }
                 }
 
-                SpatialSplitBoneSample.WriteResult(Capture, CaptureWorld, attempt.serial, in attempt.bone, sidesHash, LastEnd.ToString());
+                // NPC-ATTEMPT-CAPTURE-1: and what placed it where it was published -- the bones, or the fallback's stage.
+                string path = LastEnd != SpatialSplitEnd.Published ? ""
+                    : attempt.BoneRoute ? "bone" : attempt.graphLed ? "graph" : IsBentResult(in attempt.search) ? "bent"
+                    : attempt.search.meshLed ? (attempt.cut ? "mesh-led-cut" : "mesh-led") : "plane";
+                SpatialSplitBoneSample.WriteResult(Capture, CaptureWorld, attempt.serial, in attempt.bone, sidesHash, LastEnd.ToString(),
+                    attempt.fragment.value, attempt.input.epoch, attempt.boneFellBack, path, attempt.topologyCaptured);
             }
 #endif
         }
@@ -244,6 +249,14 @@ namespace Zantetsu.PhysicsCut
             }
 
             if (_world.NpcBones != null) text.Append("; ").Append(_world.NpcBones.Describe());
+#if ZANTETSU_OBSERVE
+            // NPC-ATTEMPT-CAPTURE-1
+            if (Capture != null)
+            {
+                text.Append("; NPC attempt capture: topology tables handed ").Append(CaptureTopologies).Append(", not handed ").Append(CaptureTopologyFailures)
+                    .Append(", bones not handed ").Append(CaptureBoneFailures).Append(LastCaptureFailure.Length > 0 ? " (the last: " + LastCaptureFailure + ")" : "");
+            }
+#endif
             return text.ToString();
         }
 
@@ -261,6 +274,8 @@ namespace Zantetsu.PhysicsCut
             internal NpcBonePiece bonePiece;
             // NPC-BONE-EVAL-1: the input went to the capture with its bones (the live decision is written beside it where it is counted).
             internal bool boneCaptured;
+            // NPC-ATTEMPT-CAPTURE-1: its geometry's topology table went to the capture too.
+            internal bool topologyCaptured;
             // NPC-BONE-FALLBACK-1: the fallback asked for at the issue (its stages prepared), and -- the worker's -- that it ran.
             internal bool boneFallback, boneFellBack;
 

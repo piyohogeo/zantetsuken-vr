@@ -974,6 +974,12 @@ namespace Zantetsu.PhysicsCut
             return hashes;
         }
 
+        /// <summary>NPC-ATTEMPT-CAPTURE-1: the capture's hash of the sides at <paramref name="offset"/> (the triangles', after the convexes'), for a caller without pointers.</summary>
+        internal static string SidesHash(byte[] sides, int offset, int count)
+        {
+            fixed (byte* p = sides) return SpatialSplitReplay.SidesHash(p + offset, count);
+        }
+
         /// <summary>A storage vertex id in the saved lineage's own numbering (the base first, then each cut's new vertices); -1 for none.</summary>
         internal static int LocalOf(SpatialSplitBoneSample bones, uint id)
         {
