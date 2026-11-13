@@ -84,6 +84,53 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        /// <summary>
+        /// Decisions on several threads at once (as the split's attempts run on the Background workers, SPLIT-CANDIDATES-2): the
+        /// count of live native areas comes back to what it was. With a plain increment and decrement the threads lose counts
+        /// and the number drifts.
+        /// </summary>
+        [Test]
+        public void DecisionsOnSeveralThreads_LeaveTheLiveCountAsItWas()
+        {
+            const int threads = 8, rounds = 300;
+            var samples = new SpatialSplitSample[threads];
+            for (int k = 0; k < threads; k++)
+            {
+                (float3[] p, int[] i) = Mesh(Tri(-1f, -1f, -1f, 5f, -1f, 5f, 5f, 5f, 5f), Tri(2.2f, 0.2f, 0.5f, 2.8f, 0.2f, 0.5f, 2.5f, 0.8f, 0.5f));
+                samples[k] = Fixture(new[] { Unit, Box(2f, 0f, 0f, 3f, 1f, 1f) }, p, i, name: "slanted, thread " + k);
+            }
+
+            long before = SpatialSplitGraph.LiveNativeAllocations;
+            int separable = 0;
+            var work = new System.Threading.Thread[threads];
+            System.Exception failure = null;
+            for (int k = 0; k < threads; k++)
+            {
+                int own = k;
+                work[k] = new System.Threading.Thread(() =>
+                {
+                    try
+                    {
+                        for (int r = 0; r < rounds; r++)
+                        {
+                            CandidateResult result = SpatialSplitGraphCandidateNative.Decide(samples[own], new CandidateSettings { stages = CandidateStages.AB }, false, out _);
+                            if (result.verdict == CandidateVerdict.Separable) System.Threading.Interlocked.Increment(ref separable);
+                        }
+                    }
+                    catch (System.Exception e)
+                    {
+                        System.Threading.Interlocked.CompareExchange(ref failure, e, null);
+                    }
+                });
+            }
+
+            foreach (System.Threading.Thread t in work) t.Start();
+            foreach (System.Threading.Thread t in work) t.Join();
+            Assert.That(failure, Is.Null, failure?.ToString());
+            Assert.That(separable, Is.EqualTo(threads * rounds), "every decision ran whole");
+            Assert.That(SpatialSplitGraph.LiveNativeAllocations, Is.EqualTo(before), "every area counted in was counted out");
+        }
+
         [Test]
         public void AnAllocationFailure_AtAnyPoint_LeavesNoNativeAreaBehind()
         {

@@ -450,7 +450,11 @@ namespace Zantetsu.PhysicsCut
 
         // ---- the areas: allocation, tracking, release ----------------------------------------------------------------------------
 
-        /// <summary>The native areas created by this class and not yet released (tests: it returns to its value after any decision).</summary>
+        /// <summary>
+        /// The native areas created by this class and not yet released (tests: it returns to its value after any decision).
+        /// Counted with interlocked operations: decisions run on several workers at once (SPLIT-CANDIDATES-2), and a plain
+        /// increment and decrement racing there lose counts.
+        /// </summary>
         internal static long LiveNativeAllocations;
 
         private struct Areas
@@ -482,7 +486,7 @@ namespace Zantetsu.PhysicsCut
                 throw new GraphAllocationException("the allocation " + a.allocations + " of " + length + " elements failed: " + e.GetType().Name + ": " + e.Message, e);
             }
 
-            LiveNativeAllocations++;
+            System.Threading.Interlocked.Increment(ref LiveNativeAllocations);
             a.bytes += (long)made.Length * bytesOfOne;
             return made;
         }
@@ -506,7 +510,7 @@ namespace Zantetsu.PhysicsCut
                 throw new GraphAllocationException("the allocation " + a.allocations + " of a list of " + capacity + " (a candidate list, first or grown) failed: " + e.GetType().Name + ": " + e.Message, e);
             }
 
-            LiveNativeAllocations++;
+            System.Threading.Interlocked.Increment(ref LiveNativeAllocations);
             // the bytes of a list are counted by the caller from its actual capacity
             return made;
         }
@@ -516,7 +520,7 @@ namespace Zantetsu.PhysicsCut
             if (!a.IsCreated) return;
             a.Dispose();
             a = default;
-            LiveNativeAllocations--;
+            System.Threading.Interlocked.Decrement(ref LiveNativeAllocations);
         }
 
         private static void Free<T>(ref NativeList<T> a) where T : unmanaged
@@ -524,7 +528,7 @@ namespace Zantetsu.PhysicsCut
             if (!a.IsCreated) return;
             a.Dispose();
             a = default;
-            LiveNativeAllocations--;
+            System.Threading.Interlocked.Decrement(ref LiveNativeAllocations);
         }
 
         /// <summary>The capacity NativeList gives a list asked for <paramref name="wanted"/> elements of <paramref name="bytesOfOne"/> bytes: at least a cache line, rounded up to a power of two.</summary>
