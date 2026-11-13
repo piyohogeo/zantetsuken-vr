@@ -283,7 +283,9 @@ namespace Zantetsu.MeshCut
                         result.kernel = kernel;
                         if (kernel.status == MeshCutStatus.Ok)
                         {
-                            return TryFinish(storage, parent, reservation, in kernel, outputRanges, rangeBounds, submeshes, submeshBounds, parentSubmeshes, rangeCount, ref result);
+                            CountSideComponents(in kernelInput, in output, in kernel, out int positiveComponents, out int negativeComponents);
+                            return TryFinish(storage, parent, reservation, in kernel, outputRanges, rangeBounds, submeshes, submeshBounds, parentSubmeshes, rangeCount, ref result,
+                                positiveComponents, negativeComponents);
                         }
 
                         // A run that did not succeed is judged by the one shared rule, so this route and the
@@ -444,6 +446,47 @@ namespace Zantetsu.MeshCut
         /// Turns a successful kernel run into stored geometries: the reuse case gives the input back borrowed and keeps
         /// the reservation unused, and the ordinary case publishes the used part of the reservation as the two sides.
         /// </summary>
+        /// <summary>
+        /// The topology connected components of each side a successful kernel run wrote (<see cref="VpTopologyComponents"/>): on
+        /// the side's final indices, its cap among them, through the storage's topology map -- the ids of the input's vertices of
+        /// every block, and the ids the kernel just wrote for the cut vertices and the cap auxiliary vertices. Reads only what the
+        /// kernel read and wrote, so it runs where the kernel ran (a worker). Unknown for both when the counts are switched off,
+        /// a side reuses the input (no index was written: the input's own count stands for it), or the views are not the
+        /// storage's own contiguous map.
+        /// </summary>
+        internal static void CountSideComponents(in MeshCutInput input, in MeshCutOutput output, in MeshCutResult kernel, out int positive, out int negative)
+        {
+            positive = VpTopologyComponents.Unknown;
+            negative = VpTopologyComponents.Unknown;
+            if (!VpTopologyComponents.Enabled || kernel.status != MeshCutStatus.Ok || kernel.positive.reusesInput != 0 || kernel.negative.reusesInput != 0
+                || input.topology.ranges == null || input.topology.rangeCount < 1 || output.newIndices == null)
+            {
+                return;
+            }
+
+            // One map addressed by the global vertex number: every block's ids lie in the storage's one array, at the block's
+            // own place, and the new vertices' ids were written into the same array at the reservation's place.
+            int* topologyBase = input.topology.ranges[0].topologyVertex - input.topology.ranges[0].vertexBase;
+            uint limit = 0;
+            for (int r = 0; r < input.topology.rangeCount; r++)
+            {
+                ref RenderTopologyRange range = ref input.topology.ranges[r];
+                if (range.topologyVertex - range.vertexBase != topologyBase) return;
+                limit = math.max(limit, range.vertexBase + (uint)range.count);
+            }
+
+            if (kernel.newVertexCount > 0)
+            {
+                if (output.newVertexTopology != topologyBase + output.newVertexBase) return;
+                limit = math.max(limit, output.newVertexBase + (uint)kernel.newVertexCount);
+            }
+
+            VpTopologyComponents.CountWithOwnScratch(
+                output.newIndices + (kernel.positive.indexStart - output.newIndexBase), kernel.positive.indexCount,
+                output.newIndices + (kernel.negative.indexStart - output.newIndexBase), kernel.negative.indexCount,
+                topologyBase, limit, kernel.newTopologyVertexCount, out positive, out negative);
+        }
+
         internal static bool TryFinish(
             VpCpuGeometryStorage storage,
             VpStoredGeometry parent,
@@ -455,7 +498,9 @@ namespace Zantetsu.MeshCut
             VpGeometryBounds[] submeshBounds,
             NativeArray<VpGeometrySubmesh>.ReadOnly parentSubmeshes,
             int rangeCount,
-            ref VpStorageCutResult result)
+            ref VpStorageCutResult result,
+            int positiveComponents = VpTopologyComponents.Unknown,
+            int negativeComponents = VpTopologyComponents.Unknown)
         {
             bool positiveReuses = kernel.positive.reusesInput != 0;
             bool negativeReuses = kernel.negative.reusesInput != 0;
@@ -507,7 +552,9 @@ namespace Zantetsu.MeshCut
                     kernel.negative.referencedLo,
                     kernel.negative.referencedHi,
                     out VpStoredGeometry positive,
-                    out VpStoredGeometry negative))
+                    out VpStoredGeometry negative,
+                    positiveComponents,
+                    negativeComponents))
             {
                 result.status = VpStorageCutStatus.StorageCapacity;
                 return false;

@@ -65,6 +65,12 @@ namespace Zantetsu.MeshCut
         internal MeshCutOutput output;
         internal MeshCutResult kernelResult;
 
+        // The topology connected components of the two sides, counted on the worker right after the kernel (unknown: not taken).
+        internal int positiveComponents = VpTopologyComponents.Unknown, negativeComponents = VpTopologyComponents.Unknown;
+
+        /// <summary>The worker seconds the count of the two sides' components took (0 when it was not taken), for the benches.</summary>
+        public double ComponentSeconds { get; internal set; }
+
         internal int newVertexCapacity, newIndexCapacity, scratchBytes;
         internal VpCutOutputReservation reservation;
         internal WorkTicket ticket;
@@ -653,7 +659,9 @@ namespace Zantetsu.MeshCut
                     request.submeshBounds,
                     parentSubmeshes,
                     request.rangeCount,
-                    ref result);
+                    ref result,
+                    request.positiveComponents,
+                    request.negativeComponents);
                 request.Result = result;
                 Finish(request, result.status);
                 return;
@@ -802,7 +810,14 @@ namespace Zantetsu.MeshCut
                 MeshCutResult kernel = default;
                 MeshCutKernel.Execute(in _request.kernelInput, in _request.output, ref kernel);
                 _request.kernelResult = kernel;
-                _request.KernelSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+                long counted = System.Diagnostics.Stopwatch.GetTimestamp();
+                _request.KernelSeconds = (counted - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+                if (VpTopologyComponents.Enabled && kernel.status == MeshCutStatus.Ok)
+                {
+                    // Each side's components, on what the kernel just wrote: the same views, nothing of the storage asked.
+                    VpStorageCut.CountSideComponents(in _request.kernelInput, in _request.output, in kernel, out _request.positiveComponents, out _request.negativeComponents);
+                    _request.ComponentSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - counted) / (double)System.Diagnostics.Stopwatch.Frequency;
+                }
             }
 
             public bool IsComplete => true;

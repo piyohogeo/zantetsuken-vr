@@ -96,6 +96,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitCutClosed(root, remaining, 1);
+            SearchAOnePieceGeometryToo();   // this case is about the searches on a one-piece side: not passed over here
             LogicalFragmentId body = AddBodyWithAHand(root, new Vector3(0f, 0f, 0f));
             yield return null;
             var sides = new LogicalFragmentId[2];
@@ -152,6 +153,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitCutClosed(root, remaining, CutSpatialSplitSettings.DefaultMinCutSideTriangles);
+            SearchAOnePieceGeometryToo();   // this case is about the searches on a one-piece side: not passed over here
             LogicalFragmentId body = AddWrappedBody(root, new Vector3(0f, 0f, 0f));
             yield return null;
             var sides = new LogicalFragmentId[2];

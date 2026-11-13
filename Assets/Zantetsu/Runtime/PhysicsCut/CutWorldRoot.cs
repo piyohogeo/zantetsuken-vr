@@ -272,10 +272,11 @@ namespace Zantetsu.PhysicsCut
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeConvexCut(), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeGraph(), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeBone(), this);
+                // The several-attempts control, the scan and the one-component pass (the defaults since 2026-11-13): in every build.
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeSeveral(), this);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 // The timeline (GRAPH-CONNECT-14): a 5th line in development builds, and the attempts' rows where a file was named.
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeTimeline(), this);
-                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeSeveral(), this);
                 try { SpatialSplit.WriteCandidateProbe(); }
                 catch (System.Exception e) { UnityEngine.Debug.LogError("SPLIT CANDIDATE PROBE: the samples were not written: " + e.Message); }
                 try { SpatialSplit.WriteTimelineCsv(); }
@@ -700,9 +701,7 @@ namespace Zantetsu.PhysicsCut
                         ?? new UnityJobWorkExecutor(profile.UnityJobCapacity);
             _geometryPool = destinations?.Invoke(WorkDestination.GeometryPool)
                             ?? WorkerPoolExecutor.GeometryPool(profile.GeometryWorkerCount);
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            CutSpatialSplit.ReadSeveralArgument();   // SPLIT-CANDIDATES-2: the evaluation's switch, before the Background pool is made
-#endif
+            CutSpatialSplitLaunch.EnsureRead();   // the split's launch settings (attempts out at once), before the Background pool is made
             _backgroundPool = destinations?.Invoke(WorkDestination.BackgroundPool)
                               ?? WorkerPoolExecutor.BackgroundPool(CutSpatialSplit.BackgroundPoolCapacity(profile.BackgroundWorkerCount));
             _planningPool = destinations?.Invoke(WorkDestination.PlanningPool) ?? WorkerPoolExecutor.PlanningPool();

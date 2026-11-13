@@ -79,6 +79,7 @@ namespace Zantetsu.Rendering
         public int VertexCount => model.VertexCount;
         public int IndexCount => model.IndexCount;
         public int TopologyCount => model.TopologyCount;
+        public int TopologyComponents => model.TopologyComponents;
         internal bool IsAlive => !disposed && !model.IsDisposed;
 
         /// <summary>The shared input this producer skins (the model it was made with, or made from the renderer).</summary>

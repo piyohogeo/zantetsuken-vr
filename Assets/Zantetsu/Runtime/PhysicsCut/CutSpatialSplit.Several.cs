@@ -6,8 +6,8 @@ using Zantetsu.MeshCut;
 
 namespace Zantetsu.PhysicsCut
 {
-    // SPLIT-CANDIDATES-2 (2026-11-13): several attempts out at once -- an evaluation's control beside the control as before
-    // (one attempt), chosen by MaxAttempts (1: as before, and the default).
+    // SPLIT-CANDIDATES-2 (2026-11-13): several attempts out at once -- the default control since that day (MaxAttempts 8),
+    // beside the control as before (one attempt at a time), which MaxAttempts 1 still is.
     //
     // The attempts are independent: each has its own input, block, lease, shape hold, ticket, result and stage, as the one
     // attempt always had. What is new is the list that holds them and the turn that gives each of them its chance:
@@ -35,9 +35,10 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// The most attempts out at once in a world made from here on -- waiting for a place, on a worker, done and not collected,
-        /// collected and waiting for Main, all counted. 1: the control as before. The evaluation's launch argument sets it.
+        /// collected and waiting for Main, all counted. 8 by default since 2026-11-13 (the PC and the Quest alike); 1 is the
+        /// control as before. Set by the launch (<see cref="CutSpatialSplitLaunch"/>) before any world's pools are made.
         /// </summary>
-        public static int DefaultMaxAttempts = 1;
+        public static int DefaultMaxAttempts = CutSpatialSplitLaunch.DefaultAttempts;
 
         /// <summary>
         /// The first values of the several-attempts control (SPLIT-CANDIDATES-1.md, the addition of 2026-11-13, says where they are from):

@@ -7,6 +7,7 @@ using System.IO;
 using System.Text;
 using UnityEngine;
 using Zantetsu.MeshCut;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut
 {
@@ -24,32 +25,6 @@ namespace Zantetsu.PhysicsCut
     public sealed partial class CutSpatialSplit
     {
         public const string CandidateProbeArgument = "-zantetsuSplitCandidateProbe";
-
-        /// <summary>
-        /// SPLIT-CANDIDATES-2 (the evaluation's switch, development builds): <c>-zantetsuSplitAttempts n</c> makes the worlds made
-        /// after it keep up to n attempts out at once (<see cref="DefaultMaxAttempts"/>; 1 or absent: the control as before).
-        /// Read where the launch is first asked about (<see cref="ReadSeveralArgument"/>, before the first world's pools are made).
-        /// </summary>
-        public const string AttemptsArgument = "-zantetsuSplitAttempts";
-        private static bool s_attemptsRead;
-
-        public static void ReadSeveralArgument()
-        {
-            if (s_attemptsRead) return;
-            s_attemptsRead = true;
-            string[] arguments = Environment.GetCommandLineArgs();
-            int at = Array.FindIndex(arguments, a => string.Equals(a, AttemptsArgument, StringComparison.OrdinalIgnoreCase));
-            if (at < 0) return;
-            if (at + 1 < arguments.Length && int.TryParse(arguments[at + 1], NumberStyles.None, CultureInfo.InvariantCulture, out int n) && n >= 1 && n <= 64)
-            {
-                DefaultMaxAttempts = n;
-                UnityEngine.Debug.Log("SPLIT ATTEMPTS: up to " + n + " attempts out at once (" + AttemptsArgument + "); 1 is the control as before");
-            }
-            else
-            {
-                UnityEngine.Debug.LogError("SPLIT ATTEMPTS: " + AttemptsArgument + " takes 1..64; the control as before is kept");
-            }
-        }
 
         /// <summary>The CSV the samples go to at the world's end (a second world's gets its number before the extension); null: no probe.</summary>
         public static string CandidateProbePath
@@ -117,6 +92,9 @@ namespace Zantetsu.PhysicsCut
             /// was made (with the fragments it found the detailed look to call candidates: never).
             /// </summary>
             public int lightExcluded, detailed, tooLarge;
+            /// <summary>SPLIT-CANDIDATES-3: fragments passed over in this scan for a geometry known to be one topology component (light and detailed looks), and the inputs so resolved without an attempt so far.</summary>
+            public int oneComponent;
+            public long oneComponentInputs;
             public bool viewFilled;
             public double lightMs, detailMs, viewMs, recordMs, checkMs;
             public int checkDisagreed;
@@ -336,6 +314,8 @@ namespace Zantetsu.PhysicsCut
             s.limitReached = scan.limitReached + scan.lightLimitReached;
             s.displayState = scan.displayState;
             s.tooLarge = scan.tooLarge;
+            s.oneComponent = scan.oneComponent + scan.lightOneComponent;
+            s.oneComponentInputs = OneComponentInputs;
             s.lightExcluded = scan.LightExcluded;
             s.detailed = scan.detailed;
             s.viewFilled = scan.viewFilled;
@@ -415,7 +395,7 @@ namespace Zantetsu.PhysicsCut
             string path = world == 1 ? CandidateProbePath
                 : Path.Combine(Path.GetDirectoryName(CandidateProbePath) ?? "", Path.GetFileNameWithoutExtension(CandidateProbePath) + "-" + world.ToString(inv) + Path.GetExtension(CandidateProbePath));
             var text = new StringBuilder(_probeSamples.Count * 160);
-            text.Append("frame,seconds,owners,candidates,attemptFragmentSeen,suppressed,deferred,limitReached,displayState,attempt,attemptSerial,frameHold,structureChanged,displayRoomChanged,idle,remainingBeforeMs,hold,budget,budgetStage,budgetRemainingMs,poolWaiting,poolSubmitted,poolHeld,poolCapacity,poolCanAccept,scanMs,attemptsOut,attemptsOnWorker,attemptsDone,attemptsCollected,heldBytes,issuedTotal,endedTotal,publishedTotal,usedView,lightExcluded,detailed,tooLarge,viewFilled,lightMs,detailMs,viewMs,recordMs,checkMs,checkDisagreed,turnScans,turnScanMs,issuedInTurn,noIssue,foundLeft,freePlaces\n");
+            text.Append("frame,seconds,owners,candidates,attemptFragmentSeen,suppressed,deferred,limitReached,displayState,attempt,attemptSerial,frameHold,structureChanged,displayRoomChanged,idle,remainingBeforeMs,hold,budget,budgetStage,budgetRemainingMs,poolWaiting,poolSubmitted,poolHeld,poolCapacity,poolCanAccept,scanMs,attemptsOut,attemptsOnWorker,attemptsDone,attemptsCollected,heldBytes,issuedTotal,endedTotal,publishedTotal,usedView,lightExcluded,detailed,tooLarge,viewFilled,lightMs,detailMs,viewMs,recordMs,checkMs,checkDisagreed,turnScans,turnScanMs,issuedInTurn,noIssue,foundLeft,freePlaces,oneComponent,oneComponentInputs\n");
             foreach (CandidateSample s in _probeSamples)
             {
                 text.Append(s.frame).Append(',').Append(s.seconds.ToString("F4", inv)).Append(',').Append(s.owners).Append(',').Append(s.candidates).Append(',').Append(s.attemptFragmentSeen ? 1 : 0).Append(',')
@@ -429,7 +409,7 @@ namespace Zantetsu.PhysicsCut
                     .Append(s.lightMs.ToString("F4", inv)).Append(',').Append(s.detailMs.ToString("F4", inv)).Append(',').Append(s.viewMs.ToString("F4", inv)).Append(',')
                     .Append(s.recordMs.ToString("F4", inv)).Append(',').Append(s.checkMs.ToString("F4", inv)).Append(',').Append(s.checkDisagreed).Append(',')
                     .Append(s.turnScans).Append(',').Append(s.turnScanMs.ToString("F4", inv)).Append(',').Append(s.issuedInTurn).Append(',').Append(s.noIssue).Append(',')
-                    .Append(s.foundLeft).Append(',').Append(s.freePlaces).Append('\n');
+                    .Append(s.foundLeft).Append(',').Append(s.freePlaces).Append(',').Append(s.oneComponent).Append(',').Append(s.oneComponentInputs).Append('\n');
             }
 
             string directory = Path.GetDirectoryName(path);

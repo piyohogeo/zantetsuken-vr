@@ -120,6 +120,13 @@ namespace Zantetsu.Rendering
         public int IndexCount { get; }
         public int TopologyCount { get; }
 
+        /// <summary>
+        /// The topology connected components of the model's triangles, as the cut input gate counted them at the model's making
+        /// (<see cref="VpTopologyComponents"/>); unknown where they were not taken. A geometry made of the model's own indices
+        /// and ids has the same ones.
+        /// </summary>
+        public int TopologyComponents { get; private set; } = VpTopologyComponents.Unknown;
+
         /// <summary>The palette's size: every bone the mesh lists a bind pose for.</summary>
         public int BoneCount { get; }
 
@@ -306,6 +313,7 @@ namespace Zantetsu.Rendering
             Array.Copy(topology, copied, topology.Length);
             model = new VpSkinModel(mesh, vertices, indices, copied, topologyCount, boxes, (Matrix4x4[])binds.Clone(), usedBones,
                 new Bounds((bindMin + bindMax) * 0.5f, bindMax - bindMin));
+            model.TopologyComponents = verdict.TopologyComponents;
             return true;
         }
 

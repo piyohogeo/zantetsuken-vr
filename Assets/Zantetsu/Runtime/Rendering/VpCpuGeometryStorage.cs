@@ -60,6 +60,9 @@ namespace Zantetsu.Rendering
         private struct AppendRecord
         {
             public uint generation;
+
+            // The topology connected components of the geometry's triangles plus one (VpTopologyComponents); 0: not taken.
+            public int componentsPlusOne;
             public int vertexStart;
             public int vertexCount;
             public bool hasTopology;
@@ -501,9 +504,56 @@ namespace Zantetsu.Rendering
 
             using (s_appendMarker.Auto())
             {
-                return AppendPrepared(vertices, localIndices, topologyOfVertex, topologyVertexCount, submeshes, true, out geometry);
+                if (!AppendPrepared(vertices, localIndices, topologyOfVertex, topologyVertexCount, submeshes, true, out geometry))
+                {
+                    return false;
+                }
+
+                // What the gate's walk counted, kept with the geometry (unknown when it was not taken).
+                RecordTopologyComponents(geometry.indexRange, verdict.TopologyComponents);
+                return true;
             }
         }
+
+        /// <summary>
+        /// The topology connected components of the geometry's triangles as they were counted where the geometry was made
+        /// (<see cref="VpTopologyComponents"/>): 0, 1 or more, or <see cref="VpTopologyComponents.Unknown"/> when they were not
+        /// taken -- and for a geometry this storage has no record of, or whose record is of another generation of its index
+        /// range (a handle used again names another geometry: that one's count is never given for this). Kept in the record
+        /// the storage keeps by the index range's descriptor and generation; a read of one entry.
+        /// </summary>
+        public int TopologyComponentsOf(VpStoredGeometry geometry)
+        {
+            // The storage's own check of a geometry against its record: this table's handle, the record's generation and
+            // description (a default, a foreign or a superseded handle is refused there).
+            return IsGeometryConsistent(geometry)
+                ? _appendOfDescriptor[geometry.indexRange.descriptor].componentsPlusOne - 1
+                : VpTopologyComponents.Unknown;
+        }
+
+        /// <summary>
+        /// Keeps a count taken for a geometry of this storage after it was made (a deferred geometry's, a test's). False, with
+        /// nothing kept, when the storage's record is not this geometry's.
+        /// </summary>
+        public bool TrySetTopologyComponents(VpStoredGeometry geometry, int components)
+        {
+            if (!IsGeometryConsistent(geometry))
+            {
+                return false;
+            }
+
+            RecordTopologyComponents(geometry.indexRange, components);
+            return true;
+        }
+
+        // After RecordAppend, which writes the whole record (and so leaves the count unknown).
+        private void RecordTopologyComponents(VpIndexRangeHandle indexRange, int components)
+        {
+            _appendOfDescriptor[indexRange.descriptor].componentsPlusOne = components >= 0 ? components + 1 : 0;
+        }
+
+        /// <summary>The bytes the counts take in this storage's records: one int a descriptor.</summary>
+        public long TopologyComponentsBytes => _appendOfDescriptor != null ? (long)_appendOfDescriptor.Length * sizeof(int) : 0;
 
         private bool AppendPrepared(
             VpRenderVertex[] vertices,
@@ -944,7 +994,9 @@ namespace Zantetsu.Rendering
             uint negativeReferencedLo,
             uint negativeReferencedHi,
             out VpStoredGeometry positive,
-            out VpStoredGeometry negative)
+            out VpStoredGeometry negative,
+            int positiveTopologyComponents = VpTopologyComponents.Unknown,
+            int negativeTopologyComponents = VpTopologyComponents.Unknown)
         {
             ThrowIfDisposed();
             positive = default;
@@ -1039,6 +1091,7 @@ namespace Zantetsu.Rendering
                     reservation.vertexStart, newVertexCount, positiveRange, true, topologyVertexCount,
                     submeshStart, positiveSubmeshCount, blockStart, blockCount, inheritedAcceptance);
                 RecordAppend(positiveRange, positive);
+                RecordTopologyComponents(positiveRange, positiveTopologyComponents);   // each side has its own, counted on its final indices
                 RecordExtent(positiveRange, submeshStart, positiveSubmeshCount, (int)positiveReferencedLo, (int)(positiveReferencedHi - positiveReferencedLo + 1));
             }
 
@@ -1048,6 +1101,7 @@ namespace Zantetsu.Rendering
                     reservation.vertexStart, newVertexCount, negativeRange, true, topologyVertexCount,
                     submeshStart + positiveSubmeshCount, negativeSubmeshCount, blockStart, blockCount, inheritedAcceptance);
                 RecordAppend(negativeRange, negative);
+                RecordTopologyComponents(negativeRange, negativeTopologyComponents);
                 RecordExtent(negativeRange, submeshStart + positiveSubmeshCount, negativeSubmeshCount, (int)negativeReferencedLo, (int)(negativeReferencedHi - negativeReferencedLo + 1));
             }
 

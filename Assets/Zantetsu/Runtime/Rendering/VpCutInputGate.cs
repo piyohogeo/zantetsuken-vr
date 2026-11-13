@@ -44,13 +44,30 @@ namespace Zantetsu.Rendering
         /// <summary>The first element the rejection was found on, -1 when it names no single element.</summary>
         public readonly int element;
 
+        // The components plus one, so that a verdict made without them (and a default one) says unknown.
+        private readonly int _componentsPlusOne;
+
         public VpCutInputVerdict(VpCutInputRejection rejection, int element)
         {
             this.rejection = rejection;
             this.element = element;
+            _componentsPlusOne = 0;
+        }
+
+        internal VpCutInputVerdict(VpCutInputRejection rejection, int element, int topologyComponents)
+        {
+            this.rejection = rejection;
+            this.element = element;
+            _componentsPlusOne = topologyComponents >= 0 ? topologyComponents + 1 : 0;
         }
 
         public bool Accepted => rejection == VpCutInputRejection.None;
+
+        /// <summary>
+        /// The topology connected components of an accepted input's triangles (<see cref="VpTopologyComponents"/>), taken in the
+        /// gate's own walk over the edges; <see cref="VpTopologyComponents.Unknown"/> when they were not taken.
+        /// </summary>
+        public int TopologyComponents => _componentsPlusOne - 1;
 
         public override string ToString()
         {
@@ -178,15 +195,16 @@ namespace Zantetsu.Rendering
                 }
             }
 
-            if (verified != null && verified.Holds(localIndices, topologyOfVertex, topologyVertexCount))
+            if (verified != null && verified.Holds(localIndices, topologyOfVertex, topologyVertexCount, out int kept))
             {
-                return new VpCutInputVerdict(VpCutInputRejection.None, -1);
+                // The components are the connectivity's own: the same indices and ids have the same ones.
+                return new VpCutInputVerdict(VpCutInputRejection.None, -1, kept);
             }
 
             VpCutInputVerdict connected = CheckConnectivity(localIndices, topologyOfVertex, topologyVertexCount, triangleCount, indexCount);
             if (connected.Accepted)
             {
-                verified?.Remember(localIndices, topologyOfVertex, topologyVertexCount);
+                verified?.Remember(localIndices, topologyOfVertex, topologyVertexCount, connected.TopologyComponents);
             }
 
             return connected;
@@ -196,7 +214,18 @@ namespace Zantetsu.Rendering
         private static VpCutInputVerdict CheckConnectivity(uint[] localIndices, int[] topologyOfVertex, int topologyVertexCount,
             int triangleCount, int indexCount)
         {
-            // Every topology edge: exactly two faces, traversing it in opposite directions.
+            // Every topology edge: exactly two faces, traversing it in opposite directions. The same walk joins the two ends
+            // of every edge, which is all the topology connected components of the triangles need (VpTopologyComponents):
+            // a triangle's three vertices are joined by its edges, and two triangles sharing a vertex meet in it.
+            bool countComponents = VpTopologyComponents.Enabled;
+            int[] parent = null;
+            int distinct = 0, unions = 0;
+            if (countComponents)
+            {
+                parent = new int[topologyVertexCount];
+                for (int v = 0; v < topologyVertexCount; v++) parent[v] = -1;
+            }
+
             var edges = new Dictionary<long, EdgeUse>(indexCount, TopologyPairComparer.Instance);
             for (int t = 0; t < triangleCount; t++)
             {
@@ -204,6 +233,16 @@ namespace Zantetsu.Rendering
                 {
                     int from = topologyOfVertex[localIndices[3 * t + k]];
                     int to = topologyOfVertex[localIndices[3 * t + (k + 1) % 3]];
+                    if (countComponents)
+                    {
+                        if (parent[from] < 0) { parent[from] = from; distinct++; }
+                        if (parent[to] < 0) { parent[to] = to; distinct++; }
+                        int a = from, b = to;
+                        while (parent[a] != a) { parent[a] = parent[parent[a]]; a = parent[a]; }
+                        while (parent[b] != b) { parent[b] = parent[parent[b]]; b = parent[b]; }
+                        if (a != b) { parent[b] = a; unions++; }
+                    }
+
                     long key = EdgeKey(from, to);
                     int direction = from < to ? 1 : -1;
                     edges.TryGetValue(key, out EdgeUse use);
@@ -297,7 +336,7 @@ namespace Zantetsu.Rendering
                 }
             }
 
-            return new VpCutInputVerdict(VpCutInputRejection.None, -1);
+            return new VpCutInputVerdict(VpCutInputRejection.None, -1, countComponents ? distinct - unions : VpTopologyComponents.Unknown);
         }
 
         /// <summary>
@@ -355,7 +394,7 @@ namespace Zantetsu.Rendering
         // A few shapes per world at most (one per character model); beyond this, inputs are simply checked in full.
         public const int Capacity = 8;
 
-        private readonly List<(uint[] indices, int[] topology, int count)> _verified = new List<(uint[], int[], int)>();
+        private readonly List<(uint[] indices, int[] topology, int count, int components)> _verified = new List<(uint[], int[], int, int)>();
 
         /// <summary>How many connectivities are kept.</summary>
         public int Count => _verified.Count;
@@ -371,28 +410,35 @@ namespace Zantetsu.Rendering
             _verified.Clear();
         }
 
-        internal bool Holds(uint[] indices, int[] topology, int count)
+        internal bool Holds(uint[] indices, int[] topology, int count) => Holds(indices, topology, count, out _);
+
+        /// <summary>The same, with the topology components kept with the connectivity (unknown where they were not taken).</summary>
+        internal bool Holds(uint[] indices, int[] topology, int count, out int components)
         {
-            foreach ((uint[] indices, int[] topology, int count) v in _verified)
+            foreach ((uint[] indices, int[] topology, int count, int components) v in _verified)
             {
                 if (v.count == count && Same(v.indices, indices) && Same(v.topology, topology))
                 {
                     Reused++;
+                    components = v.components;
                     return true;
                 }
             }
 
+            components = VpTopologyComponents.Unknown;
             return false;
         }
 
-        internal void Remember(uint[] indices, int[] topology, int count)
+        internal void Remember(uint[] indices, int[] topology, int count) => Remember(indices, topology, count, VpTopologyComponents.Unknown);
+
+        internal void Remember(uint[] indices, int[] topology, int count, int components)
         {
             if (_verified.Count >= Capacity)
             {
                 return;
             }
 
-            _verified.Add(((uint[])indices.Clone(), (int[])topology.Clone(), count));
+            _verified.Add(((uint[])indices.Clone(), (int[])topology.Clone(), count, components));
             Kept++;
         }
 

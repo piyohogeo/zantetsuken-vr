@@ -506,6 +506,13 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The graph stage reached a fixed search limit on this input under this search (GRAPH-CONNECT-5 review 1): not tried again until either changes.</summary>
         LimitReached,
 
+        /// <summary>
+        /// The geometry's triangles are known to be one topology connected component (SPLIT-CANDIDATES-3): the split cuts no
+        /// triangle and gives each child one, so nothing can be found for it. Ended before any attempt is issued; not a mark
+        /// and not an attempt's end. Only with <see cref="CutSpatialSplit.SkipOneComponent"/>.
+        /// </summary>
+        OneComponent,
+
         Count,
     }
 
@@ -1433,6 +1440,14 @@ namespace Zantetsu.PhysicsCut
                 return SpatialSplitPass.GeometryOpen;
             }
 
+            // One topology connected component, known where the geometry was made (SPLIT-CANDIDATES-3): nothing to share out
+            // between two children, whatever the search. A count that was not taken says nothing, and the look goes on.
+            if (SkipOneComponent && _world.Storage != null && _world.Storage.TopologyComponentsOf(geometry) == 1)
+            {
+                NoteOneComponent(fragment, in geometry);
+                return SpatialSplitPass.OneComponent;
+            }
+
             // The mark, before the display is asked anything: its answers below are scans of its registrations and
             // of its adopted branches, and a fragment already tried for this very input needs none of them.
             ledger.TryGetAnchorCount(fragment, out int anchors);
@@ -1639,6 +1654,13 @@ namespace Zantetsu.PhysicsCut
                     attempt.vertices = (VpRenderVertex*)vertices.GetUnsafeReadOnlyPtr();
                     attempt.vertexViewLength = vertices.Length;
                     attempt.indices = (uint*)indexView.GetUnsafeReadOnlyPtr();
+                    if (VpTopologyComponents.Enabled && input.geometry.hasTopology)
+                    {
+                        // The storage's topology map, read by the worker under the same lease as the vertices: for the count of
+                        // the two shares' components where a split is found (SPLIT-CANDIDATES-3).
+                        attempt.topologyOfVertex = (int*)storage.TopologyOfVertex.GetUnsafeReadOnlyPtr();
+                        attempt.topologyVertexCount = input.geometry.topologyVertexCount;
+                    }
                     attempt.TakeBlock();
                     int s = submeshes.Length;
                     for (int i = 0; i < s; i++)
@@ -1944,7 +1966,8 @@ namespace Zantetsu.PhysicsCut
                             submeshes, s, s, bounds,
                             attempt.distribution.positiveReferencedLo, attempt.distribution.positiveReferencedHi,
                             attempt.distribution.negativeReferencedLo, attempt.distribution.negativeReferencedHi,
-                            out positiveGeometry, out negativeGeometry))
+                            out positiveGeometry, out negativeGeometry,
+                            attempt.positiveComponents, attempt.negativeComponents))
                     {
                         storage.TryCancelCutOutput(reservation);
                         End(SpatialSplitEnd.RoomShort, false);
@@ -2962,6 +2985,12 @@ namespace Zantetsu.PhysicsCut
             internal VpRenderVertex* vertices;
             internal int vertexViewLength;
             internal uint* indices;
+
+            // SPLIT-CANDIDATES-3: the storage's topology id of every vertex (null: the counts are off, or the geometry has no
+            // map), and the topology connected components of the two shares the worker wrote (unknown until then).
+            internal int* topologyOfVertex;
+            internal int topologyVertexCount;
+            internal int positiveComponents = VpTopologyComponents.Unknown, negativeComponents = VpTopologyComponents.Unknown;
             internal int indexCount, submeshCount, convexCount;
             internal int* submeshOffsets, submeshCounts;
             internal int[] materials;
@@ -3261,12 +3290,39 @@ namespace Zantetsu.PhysicsCut
                 }
                 finally
                 {
+                    CountShareComponents();
 #if ZANTETSU_OBSERVE
                     long ended = Stopwatch.GetTimestamp();
                     workerSeconds = (ended - begin) / (double)Stopwatch.Frequency;
                     endedAt = ended;   // t3 (the same reading as the worker's run)
 #endif
                     Volatile.Write(ref _done, 1);
+                }
+            }
+
+            // SPLIT-CANDIDATES-3: where the triangles were shared out -- by whichever search -- the topology connected components
+            // of each share, counted on the indices just written, so that each child has its own count when it is published
+            // (and is passed over without an attempt if it is one component). On the worker, within the attempt's own time;
+            // nothing is counted where nothing was shared out, and a failure here leaves the counts unknown.
+            private void CountShareComponents()
+            {
+                if (failure != null || topologyOfVertex == null || output == null || positiveComponents >= 0
+                    || distribution.positiveIndexCount <= 0 || distribution.negativeIndexCount <= 0
+                    || distribution.positiveIndexCount + distribution.negativeIndexCount != indexCount)
+                {
+                    return;
+                }
+
+                try
+                {
+                    VpTopologyComponents.CountWithOwnScratch(
+                        output, distribution.positiveIndexCount, output + distribution.positiveIndexCount, distribution.negativeIndexCount,
+                        topologyOfVertex, (uint)vertexViewLength, topologyVertexCount, out positiveComponents, out negativeComponents);
+                }
+                catch (Exception)
+                {
+                    positiveComponents = VpTopologyComponents.Unknown;
+                    negativeComponents = VpTopologyComponents.Unknown;
                 }
             }
 

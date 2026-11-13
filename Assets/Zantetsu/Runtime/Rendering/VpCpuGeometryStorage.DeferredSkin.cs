@@ -63,6 +63,7 @@ namespace Zantetsu.Rendering
                 // input's geometry does: the geometry is a cut input once its vertices are written, and not before.
                 geometry = new VpStoredGeometry(vertex, vertexCount, range, true, model.TopologyCount, submesh, 1, block, 1, true);
                 RecordAppend(range, geometry);
+                RecordTopologyComponents(range, model.TopologyComponents);   // the model's own indices and ids: its gate's count
                 RecordExtent(range, submesh, 1, vertex, vertexCount);
                 AppendRecord record = _appendOfDescriptor[range.descriptor];
                 record.boundsMin = cmin;

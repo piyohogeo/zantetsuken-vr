@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using UnityEngine;
 using Zantetsu.MeshCut;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut
 {
@@ -72,11 +73,14 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Fragments left aside for an attempt of theirs being out.</summary>
         public int attemptOut;
 
-        /// <summary>Fragments that ended at the light look: a valid mark of an input tried and not split, of a search limit reached, of a wait still running.</summary>
-        public int lightSuppressed, lightLimitReached, lightDeferred;
+        /// <summary>
+        /// Fragments that ended at the light look: a valid mark of an input tried and not split, of a search limit reached, of a
+        /// wait still running, of a geometry known to be one topology component (SPLIT-CANDIDATES-3).
+        /// </summary>
+        public int lightSuppressed, lightLimitReached, lightDeferred, lightOneComponent;
 
         /// <summary>Fragments looked at in detail (owner, geometry, the marks' tables, the display), and what the look said.</summary>
-        public int detailed, candidates, suppressed, limitReached, deferred, displayState, tooLarge, otherPassed;
+        public int detailed, candidates, suppressed, limitReached, deferred, displayState, tooLarge, otherPassed, oneComponent;
 
         /// <summary>Whether the display's answers were taken in this scan (false: no fragment came as far as the display, or a current view was there already).</summary>
         public bool viewFilled, viewReused;
@@ -90,7 +94,7 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Seconds: the whole scan, of it the detailed looks (the view's preparation apart), of it the view's preparation.</summary>
         public double totalSeconds, detailSeconds, viewSeconds;
 
-        public int LightExcluded => lightSuppressed + lightLimitReached + lightDeferred;
+        public int LightExcluded => lightSuppressed + lightLimitReached + lightDeferred + lightOneComponent;
 
         /// <summary>The light part: the list, the attempts out, the marks.</summary>
         public double LightSeconds => Math.Max(0.0, totalSeconds - detailSeconds - viewSeconds);
@@ -220,6 +224,35 @@ namespace Zantetsu.PhysicsCut
         /// <summary>What the last candidate asked of the bytes (its block, its classification, its sides).</summary>
         public long LastReservationBytes { get; private set; }
 
+        // ---- one topology component: passed over before any attempt (SPLIT-CANDIDATES-3) --------------------------------
+
+        /// <summary>
+        /// Whether a fragment whose geometry is known to be one topology connected component is passed over before an attempt is
+        /// issued for it (<see cref="SpatialSplitPass.OneComponent"/>). Needs the counts (<see cref="VpTopologyComponents.Enabled"/>):
+        /// without them every count is unknown and nothing is passed over. On by default since 2026-11-13; the launch sets it
+        /// (<see cref="CutSpatialSplitLaunch"/>).
+        /// </summary>
+        public static bool SkipOneComponent = true;
+
+        /// <summary>
+        /// Inputs passed over for being one topology component, each geometry of a fragment once -- resolved without an attempt,
+        /// and never among the attempts' ends -- and the looks that said so (every look of the walk as before; under the scan, the
+        /// detailed looks only: the light looks are the scan's own tally).
+        /// </summary>
+        public long OneComponentInputs { get; private set; }
+        public long OneComponentLooks { get; private set; }
+        public long OneComponentLightLooks { get; private set; }
+
+        private readonly Dictionary<LogicalFragmentId, VpIndexRangeHandle> _oneComponentSeen = new Dictionary<LogicalFragmentId, VpIndexRangeHandle>();
+
+        private void NoteOneComponent(LogicalFragmentId fragment, in VpStoredGeometry geometry)
+        {
+            OneComponentLooks++;
+            if (_oneComponentSeen.TryGetValue(fragment, out VpIndexRangeHandle seen) && seen.Equals(geometry.indexRange)) return;
+            _oneComponentSeen[fragment] = geometry.indexRange;   // the handle carries its generation: another geometry is another input
+            OneComponentInputs++;
+        }
+
         // ---- the generations -------------------------------------------------------------------------------------------
 
         // Something Input.Equals tells apart may have moved for this fragment: its light mark is void.
@@ -284,6 +317,13 @@ namespace Zantetsu.PhysicsCut
                 _lightScratch.Clear();
                 foreach (KeyValuePair<LogicalFragmentId, LightMark> pair in _light) if (!ledger.IsCurrentTarget(pair.Key)) _lightScratch.Add(pair.Key);
                 for (int i = 0; i < _lightScratch.Count; i++) _light.Remove(_lightScratch[i]);
+            }
+
+            if (_oneComponentSeen.Count != 0)
+            {
+                _lightScratch.Clear();
+                foreach (KeyValuePair<LogicalFragmentId, VpIndexRangeHandle> pair in _oneComponentSeen) if (!ledger.IsCurrentTarget(pair.Key)) _lightScratch.Add(pair.Key);
+                for (int i = 0; i < _lightScratch.Count; i++) _oneComponentSeen.Remove(_lightScratch[i]);
             }
         }
 
@@ -371,10 +411,12 @@ namespace Zantetsu.PhysicsCut
                         continue;
                     }
 
-                    if (light && _light.TryGetValue(fragment, out LightMark mark) && mark.epoch == _markEpoch && t.frame < mark.until)
+                    if (light && _light.TryGetValue(fragment, out LightMark mark) && mark.epoch == _markEpoch && t.frame < mark.until
+                        && (mark.pass != SpatialSplitPass.OneComponent || SkipOneComponent))
                     {
                         if (mark.pass == SpatialSplitPass.Suppressed) t.lightSuppressed++;
                         else if (mark.pass == SpatialSplitPass.LimitReached) t.lightLimitReached++;
+                        else if (mark.pass == SpatialSplitPass.OneComponent) t.lightOneComponent++;
                         else t.lightDeferred++;
                         continue;
                     }
@@ -414,6 +456,12 @@ namespace Zantetsu.PhysicsCut
                         case SpatialSplitPass.Deferred:
                             t.deferred++;
                             if (light && _deferred.TryGetValue(fragment, out Deferral wait)) SetLight(fragment, pass, wait.until);
+                            break;
+                        case SpatialSplitPass.OneComponent:
+                            // For as long as this geometry is the fragment's (the mark goes with the geometry's change): the
+                            // count is the geometry's own and does not move.
+                            t.oneComponent++;
+                            if (light) SetLight(fragment, pass, long.MaxValue);
                             break;
                         default:
                             if (_passedForDisplayState)
@@ -455,6 +503,7 @@ namespace Zantetsu.PhysicsCut
             if (!t.complete) ScansCutShort++;
             if (!t.viewFilled && !t.viewReused) ScansWithoutView++;
             LightExcluded += t.LightExcluded;
+            OneComponentLightLooks += t.lightOneComponent;
             DetailedLooks += t.detailed;
             if (walk)
             {
@@ -543,7 +592,7 @@ namespace Zantetsu.PhysicsCut
             _lightScratch.Clear();
             foreach (KeyValuePair<LogicalFragmentId, LightMark> pair in _light)
             {
-                if (pair.Value.epoch == _markEpoch && frame < pair.Value.until) _lightScratch.Add(pair.Key);
+                if (pair.Value.epoch == _markEpoch && frame < pair.Value.until && (pair.Value.pass != SpatialSplitPass.OneComponent || SkipOneComponent)) _lightScratch.Add(pair.Key);
             }
 
             _scanning = true;
@@ -769,6 +818,11 @@ namespace Zantetsu.PhysicsCut
                 .Append(LightMarksDropped).Append(", now ").Append(_light.Count).Append("; view taken ").Append(ViewFills).Append(", shared ").Append(ViewShares)
                 .Append("; candidates looked at again ").Append(FoundLookedAtAgain).Append(", stale then ").Append(FoundStaleAtUse).Append("; waiting now ").Append(_found.Count)
                 .Append(", too large alone now ").Append(_tooLarge.Count).Append("; light checks ").Append(LightChecked).Append(", disagreed ").Append(LightDisagreed)
+                .Append("; one topology component (").Append(SkipOneComponent ? "passed over" : "not passed over").Append(", counts ").Append(VpTopologyComponents.Enabled ? "on" : "off")
+                .Append("): inputs passed over without an attempt ").Append(OneComponentInputs).Append(", detailed looks ").Append(OneComponentLooks).Append(", light looks ").Append(OneComponentLightLooks)
+                .Append("; counts taken on workers ").Append(VpTopologyComponents.Counts).Append(", ms ").Append((VpTopologyComponents.Seconds * 1000.0).ToString("F3", inv))
+                .Append(", indices read ").Append(VpTopologyComponents.IndicesRead).Append(", largest scratch B ").Append(VpTopologyComponents.ScratchPeakBytes)
+                .Append(", kept in the storage's records B ").Append(_world.Storage != null ? _world.Storage.TopologyComponentsBytes : 0)
                 .Append("; turns with candidates, a place and no issue ").Append(TurnsWithCandidatesAndNoIssue).Append("; turns by what stopped the issues:");
             for (int i = 0; i < _noIssue.Length; i++)
             {

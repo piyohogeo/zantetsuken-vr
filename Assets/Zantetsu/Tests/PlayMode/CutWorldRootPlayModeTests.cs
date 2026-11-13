@@ -142,9 +142,35 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         /// </summary>
         private bool _laterCasesBlocked;
 
+        // The additional split's static settings (the launch's: attempts out at once, the topology component counts, the pass-over
+        // of a one-component geometry) as each case found them: a case may change them for itself, and they are put back after it.
+        private int _splitAttemptsBefore;
+        private bool _splitCountsBefore, _splitSkipBefore;
+
+        [TearDown]
+        public void PutTheSplitSettingsBack()
+        {
+            CutSpatialSplit.DefaultMaxAttempts = _splitAttemptsBefore;
+            Zantetsu.Rendering.VpTopologyComponents.Enabled = _splitCountsBefore;
+            CutSpatialSplit.SkipOneComponent = _splitSkipBefore;
+        }
+
+        /// <summary>
+        /// For a case about the searches themselves on a piece that is one topology component (a one-convex side above, a mesh
+        /// bridged into one piece): since 2026-11-13 such a piece is passed over before an attempt by default, and the searches
+        /// run for it only where its count is unknown or the pass-over is off. The case switches the pass-over off for itself.
+        /// </summary>
+        private static void SearchAOnePieceGeometryToo()
+        {
+            CutSpatialSplit.SkipOneComponent = false;
+        }
+
         [SetUp]
         public void Fresh()
         {
+            _splitAttemptsBefore = CutSpatialSplit.DefaultMaxAttempts;
+            _splitCountsBefore = Zantetsu.Rendering.VpTopologyComponents.Enabled;
+            _splitSkipBefore = CutSpatialSplit.SkipOneComponent;
             if (_laterCasesBlocked)
             {
                 Assert.Inconclusive(

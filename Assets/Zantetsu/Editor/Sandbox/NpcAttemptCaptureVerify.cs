@@ -188,6 +188,10 @@ namespace Zantetsu.EditorTools.Sandbox
             var json = new StringBuilder();
             var list = new StringBuilder();
             int whole = 0, notWhole = 0, compared = 0, differ = 0, noLive = 0, noBones = 0;
+            // SPLIT-CANDIDATES-3: the topology components of each whole input, counted by VpTopologyComponents on the sample's own
+            // indices and its topology table, beside the count the saved decision made (another code's), and the count's time.
+            int componentsCounted = 0, componentsDiffer = 0, oneComponent = 0;
+            double componentsSeconds = 0.0;
             var firstOfPiece = new Dictionary<string, long>();
             var keys = new List<(long, long)>(samples.Keys);
             keys.Sort();
@@ -235,12 +239,29 @@ namespace Zantetsu.EditorTools.Sandbox
 
                 // the saved decision beside the live line
                 string savedVerdict = "", savedHash = "", agreement = "not decided";
+                int topologyComponents = -1;
+                double componentsMs = 0.0;
                 NpcBoneSplitRecord d = default;
                 if (isWhole)
                 {
                     var pick = new NpcPiecePickSet.Pick { number = (int)key.attempt, sample = s, bones = b, topology = t };
                     d = NpcPiecePickSet.Decide(pick, out byte[] sides, out byte[] _);
                     savedVerdict = d.verdict.ToString();
+                    var localIndices = new uint[s.indices.Length];
+                    for (int i = 0; i < localIndices.Length; i++) localIndices[i] = (uint)Array.BinarySearch(s.vertexIds, s.indices[i]);
+                    var localTopology = new int[s.vertexIds.Length];
+                    for (int i = 0; i < localTopology.Length; i++) localTopology[i] = t.TopologyOf(s.vertexIds[i]);
+                    long countBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+                    topologyComponents = Zantetsu.Rendering.VpTopologyComponents.CountLocal(localIndices, localTopology, t.topologyVertexCount);
+                    componentsMs = (System.Diagnostics.Stopwatch.GetTimestamp() - countBegin) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                    componentsSeconds += componentsMs / 1000.0;
+                    componentsCounted++;
+                    if (topologyComponents == 1) oneComponent++;
+                    if (topologyComponents != d.meshComponents)
+                    {
+                        componentsDiffer++;
+                        general.Add("attempt " + key.world + "/" + key.attempt + ": the topology components counted here (" + topologyComponents + ") are not the saved decision's (" + d.meshComponents + ")");
+                    }
                     int c = b.convexBones.Length, tri = s.indices.Length / 3;
                     if (d.verdict == NpcBoneSplitVerdict.Separable) savedHash = NpcPiecePickSet.SidesHash(sides, c, tri);
 
@@ -272,6 +293,8 @@ namespace Zantetsu.EditorTools.Sandbox
                     .Append(",\"firstOfPiece\":").Append(firstOne ? "true" : "false").Append(",\"firstAttemptOfPiece\":").Append(isWhole ? firstOfPiece[piece] : -1)
                     .Append(",\"model\":\"").Append(model).Append("\",\"convexes\":").Append(s != null ? s.convexes.Length : -1).Append(",\"triangles\":").Append(s != null ? s.indices.Length / 3 : -1)
                     .Append(",\"bones\":").Append(b != null ? b.nodeCount : -1)
+                    .Append(",\"topologyComponents\":").Append(topologyComponents).Append(",\"componentsMs\":").Append(componentsMs.ToString("F6", CultureInfo.InvariantCulture))
+                    .Append(",\"topologyVertexCount\":").Append(t != null ? t.topologyVertexCount : -1)
                     .Append(",\"sha256\":\"").Append(s != null ? s.sha256 : "").Append("\",\"boneSha256\":\"").Append(b != null ? b.sha256 : "").Append("\",\"topologySha256\":\"").Append(t != null ? t.sha256 : "")
                     .Append("\",\"live\":");
                 if (l == null) json.Append("null");
@@ -319,6 +342,8 @@ namespace Zantetsu.EditorTools.Sandbox
             }
 
             foreach (string g in general) text.Append("  PROBLEM ").Append(g).Append('\n');
+            text.Append("topology components (VpTopologyComponents on each whole input's indices and table): counted ").Append(componentsCounted).Append(", one component ").Append(oneComponent)
+                .Append(", differing from the saved decision's count ").Append(componentsDiffer).Append(", ms in all ").Append((componentsSeconds * 1000.0).ToString("F3", CultureInfo.InvariantCulture)).Append('\n');
             text.Append("attempts listed ").Append(samples.Count).Append(": whole ").Append(whole).Append(", not whole ").Append(notWhole).Append(" (of them without a bones' sidecar ").Append(noBones)
                 .Append("); pieces among the whole (world, fragment, epoch, geometry) ").Append(firstOfPiece.Count).Append('\n');
             text.Append("saved decisions against the live lines: compared ").Append(compared).Append(", differ ").Append(differ).Append(", no live line ").Append(noLive).Append('\n');

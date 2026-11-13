@@ -339,6 +339,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining);
+            SearchAOnePieceGeometryToo();   // this case is about the searches on a one-piece side: not passed over here
             split.Settings = SplitOnWithBent(cutConvexes: true);
             LogicalFragmentId body = AddUWithAPartInside(root, new Vector3(0f, 0f, 0f), meshBridge: true);
             yield return null;

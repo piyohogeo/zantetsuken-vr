@@ -38,6 +38,7 @@ namespace Zantetsu.Rendering
                 geometry = new VpStoredGeometry(vertex, input.VertexCount, range, true,
                     input.TopologyCount, submesh, 1, block, 1, true);
                 RecordAppend(range, geometry);
+                RecordTopologyComponents(range, input.TopologyComponents);   // the model's own indices and ids: its gate's count
                 // Cold input proves one submesh references every vertex. No index or bounds rescan.
                 RecordExtent(range, submesh, 1, vertex, input.VertexCount);
                 return true;
