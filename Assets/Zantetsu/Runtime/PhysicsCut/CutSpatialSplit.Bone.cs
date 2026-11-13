@@ -231,7 +231,8 @@ namespace Zantetsu.PhysicsCut
                     .Append(" topology vertices, ").Append(LastBone.seamVertices).Append(" seam vertices joined), groups ").Append(LastBone.groups)
                     .Append(", bones held ").Append(LastBone.pieceBones).Append(", weights on bones no longer held ").Append(LastBone.removedWeights)
                     .Append(" (").Append(LastBone.fullGroups).Append(" with a convex and triangles), connections kept ").Append(LastBone.connectionsKept)
-                    .Append(" (every cluster a component supports; left out ").Append(LastBone.connectionsDropped).Append(')');
+                    .Append(" (").Append(LastBone.connectionsProtected).Append(" of them under the 1/40 support ratio, kept as a convex bone's main supporting mesh), left out under the ratio ")
+                    .Append(LastBone.connectionsDropped);
             }
 
             text.Append("; fallback to the method as before (NPC-BONE-FALLBACK-1) ").Append(BoneFallback ? "on" : "off").Append(": fell back ").Append(BoneFellBack)

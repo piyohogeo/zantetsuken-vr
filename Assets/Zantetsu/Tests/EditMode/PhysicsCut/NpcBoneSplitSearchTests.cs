@@ -522,8 +522,9 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(up.verdict, Is.Not.EqualTo(NpcBoneSplitVerdict.Insufficient));
         }
 
-        // ----- a mesh component's connections: every cluster it supports (NPC-BONE-ANY-SUPPORT-1, 2026-11-12; the 3/10 bound of
-        // ----- NPC-BONE-SUPPORT-1, 2026-11-10, is removed: the cases below were its cases and now expect the connection) -----
+        // ----- a mesh component's connections (NPC-BONE-RATIO-1, 2026-11-13): the clusters it supports with at least 1/40 of its most
+        // ----- supported cluster's vertices, and under that the cluster of a bone with a convex whose main supporting mesh it is.
+        // ----- (3/10 from 2026-11-10, NPC-BONE-SUPPORT-1; any positive support from 2026-11-12, NPC-BONE-ANY-SUPPORT-1.) -----
 
         /// <summary>A ring of <paramref name="count"/> base vertices from <paramref name="first"/> on, joined by triangles that share vertices: one mesh component.</summary>
         private static List<uint> Ring(int first, int count)
@@ -542,8 +543,8 @@ namespace Zantetsu.PhysicsCut.Tests
         /// <summary>
         /// **A bridge of few vertices holds two clusters together.** Below the waist the trunk's skin (12 vertices on the pelvis, two
         /// of them weighted to the hand as well) and the hand's skin (3 on the hand), a convex each: the trunk's component supports the
-        /// pelvis with 12 vertices and the hand with 2, and both connections are used -- the piece is one group. (Under the 3/10 bound
-        /// the hand's was left out, 20 &lt; 36, and the piece came apart.)
+        /// pelvis with 12 vertices and the hand with 2 -- 80 &gt;= 12, within the ratio of 1/40 -- and both connections are used: the
+        /// piece is one group. (Under the 3/10 bound the hand's was left out, 20 &lt; 36, and the piece came apart.)
         /// </summary>
         [Test]
         public void AMeshComponentBridgingAClusterWithFewVertices_IsConnectedToIt()
@@ -571,39 +572,100 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         /// <summary>
-        /// **Any positive support connects: one vertex in ten as all ten; none does not.** The ring of 10 pelvis vertices with k of
-        /// them weighted to the hand as well: k = 10, 3, 2 and 1 each keep the connection and the piece is one group (under the 3/10
-        /// bound 2 and 1 went); k = 0 is no support, and the piece is apart.
+        /// **The support ratio: one supporting vertex of a peak of 40 connects, one of 41 does not; none never does** (NPC-BONE-RATIO-1:
+        /// s &gt; 0 and 40 s &gt;= peak, in long). A ring whose vertices are on the pelvis -- the first of them on the hand as well -- and
+        /// the hand's own skin of three vertices, a convex each. The hand's own skin supports the hand's bone with 3 vertices, the ring
+        /// with 1 or 2: the ring is never that bone's main supporting mesh, so the protection keeps nothing here and the ratio alone
+        /// decides. Peak 40, s = 1: 40 &gt;= 40, connected, one group. Peak 41 (a ring of 42 whose last vertex is on the spine alone, a
+        /// bone not held below the waist: no support), s = 1: 40 &lt; 41, left out, the hand apart. Peak 41, s = 2: 80 &gt;= 41, connected.
+        /// No vertex on the hand: nothing to connect.
         /// </summary>
         [Test]
-        public void AnyPositiveSupport_Connects_OneVertexInTenAsAllTen_AndNoneDoesNot()
+        public void ASupportOfOneInForty_Connects_OneInFortyOne_DoesNot_ByTheRatioAlone()
         {
-            NpcBoneSplitRecord Case(int bridging)
+            NpcBoneSplitRecord Case(int ring, int onThePelvis, int bridging, out byte[] sides)
             {
-                var weights = new ulong[13];
-                for (int v = 0; v < 10; v++) weights[v] = v < bridging ? W(0, 4) : W(0);
-                for (int v = 10; v < 13; v++) weights[v] = W(4);
+                var weights = new ulong[ring + 3];
+                for (int v = 0; v < ring; v++) weights[v] = v >= onThePelvis ? W(1) : v < bridging ? W(0, 4) : W(0);
+                for (int v = ring; v < ring + 3; v++) weights[v] = W(4);
                 NpcBoneLineage lineage = Lineage(Body, weights, BodyJoints);
-                var corners = Ring(0, 10);
-                corners.AddRange(Triangles(10, 11, 12));
-                NpcBoneSplitRecord record = Decide(lineage, CutBy(lineage, Whole(lineage), BodyWaist, false), new[] { 0, 4 }, corners.ToArray(), out byte[] sides);
-                Assert.That(record.clusters == 2 && record.meshComponents == 2, Is.True, "the layout");
-                if (record.verdict == NpcBoneSplitVerdict.Separable) AssertWhole(record, sides, 2, 6);   // a NotSeparable writes no sides
+                var corners = Ring(0, ring);
+                corners.AddRange(Triangles(ring, ring + 1, ring + 2));
+                NpcBoneSplitRecord record = Decide(lineage, CutBy(lineage, Whole(lineage), BodyWaist, false), new[] { 0, 4 }, corners.ToArray(), out sides);
+                Assert.That(record.clusters == 2 && record.meshComponents == 2, Is.True, "the layout: the pelvis | the hand and the finger; the ring and the hand's triangle");
+                Assert.That(record.connectionsProtected, Is.Zero, "the hand's own skin is its bone's main supporting mesh: the ring is protected by nothing");
                 return record;
             }
 
-            foreach (int bridging in new[] { 10, 3, 2, 1 })
+            NpcBoneSplitRecord forty = Case(40, 40, 1, out _);
+            Assert.That(forty.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), "1 of a peak of 40: 40 >= 40, connected");
+            Assert.That(forty.connectionsKept == 3 && forty.connectionsDropped == 0 && forty.groups == 1, Is.True);
+
+            NpcBoneSplitRecord fortyOne = Case(42, 41, 1, out byte[] sides);
+            Assert.That(fortyOne.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), "1 of a peak of 41: 40 < 41, left out");
+            Assert.That(fortyOne.connectionsKept == 2 && fortyOne.connectionsDropped == 1, Is.True, "the ring to the pelvis, the hand's skin to the hand; the ring to the hand left out");
+            Assert.That(fortyOne.removedWeights, Is.EqualTo(1), "the ring's last vertex: on the spine, a bone not held");
+            Assert.That(sides[0], Is.Not.EqualTo(sides[1]), "the pelvis's convex and the hand's on different sides");
+            Assert.That(sides[2] == sides[0] && sides[2 + 21] == sides[1], Is.True, "the ring with the pelvis, the hand's triangle with the hand");
+            AssertWhole(fortyOne, sides, 2, 22);
+
+            NpcBoneSplitRecord two = Case(42, 41, 2, out _);
+            Assert.That(two.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), "2 of a peak of 41: 80 >= 41, connected");
+            Assert.That(two.connectionsKept == 3 && two.connectionsDropped == 0, Is.True);
+
+            NpcBoneSplitRecord none = Case(40, 40, 0, out _);
+            Assert.That(none.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), "no vertex of the ring on the hand: nothing joins them");
+            Assert.That(none.connectionsKept == 2 && none.connectionsDropped == 0 && none.groups == 2 && none.fullGroups == 2, Is.True);
+        }
+
+        /// <summary>
+        /// **The main supporting mesh of a bone with a convex keeps its connection under the ratio; meshes tied for it all keep it; a
+        /// bone without a convex protects nothing** (NPC-BONE-RATIO-1). The ring of the ratio's case -- 41 vertices on the pelvis, one
+        /// of them on another bone as well: 1 of a peak of 41, under the ratio -- without any skin of the hand's own.
+        /// (a) The one vertex on the hand, whose bone has a convex: the ring is the only mesh supporting that bone, so its main one, and
+        /// the connection is kept -- the pelvis and the hand are one group (with the hand's own skin there, the ratio's case, it is left
+        /// out). (b) Two such rings: each supports the hand's bone with one vertex, tied, and both keep the connection. (c) The one vertex
+        /// on the finger instead -- a bone of the hand's cluster with no convex of its own: nothing is protected, the connection is left
+        /// out, and the hand's convex is alone without triangles.
+        /// </summary>
+        [Test]
+        public void TheMainSupportingMeshOfAConvexsBone_IsKeptUnderTheRatio_TiesAllStay_AndABoneWithoutAConvexProtectsNothing()
+        {
+            ulong[] RingWeights(int alsoOn)
             {
-                NpcBoneSplitRecord joined = Case(bridging);
-                Assert.That(joined.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), bridging + " of 10 vertices on the hand as well: connected");
-                Assert.That(joined.connectionsKept == 3 && joined.connectionsDropped == 0, Is.True, bridging + ": the ring to both clusters, the hand's skin to the hand");
-                Assert.That(joined.groups, Is.EqualTo(1));
+                var weights = new ulong[42];
+                for (int v = 0; v < 41; v++) weights[v] = W(0);
+                weights[0] = W(0, alsoOn);
+                weights[41] = W(1);   // the spine: not held below the waist
+                return weights;
             }
 
-            NpcBoneSplitRecord none = Case(0);
-            Assert.That(none.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), "no vertex of the ring on the hand: nothing joins them");
-            Assert.That(none.connectionsKept == 2 && none.connectionsDropped == 0, Is.True);
-            Assert.That(none.groups == 2 && none.fullGroups == 2, Is.True);
+            int[] convexBones = { 0, 4 };
+
+            // (a) the hand's bone, one ring
+            NpcBoneLineage one = Lineage(Body, RingWeights(4), BodyJoints);
+            NpcBoneSplitRecord kept = Decide(one, CutBy(one, Whole(one), BodyWaist, false), convexBones, Ring(0, 42).ToArray(), out _);
+            Assert.That(kept.clusters == 2 && kept.meshComponents == 1, Is.True, "the layout");
+            Assert.That(kept.connectionsProtected == 1 && kept.connectionsKept == 2 && kept.connectionsDropped == 0, Is.True, "the ring to the pelvis by the ratio, to the hand by the protection");
+            Assert.That(kept.verdict == NpcBoneSplitVerdict.NotSeparable && kept.reason == NpcBoneSplitSearch.ReasonOneGroup && kept.groups == 1, Is.True, "one group: " + kept.reason);
+
+            // (b) two rings alike: tied for the hand's bone
+            var both = new List<ulong>(RingWeights(4));
+            both.AddRange(RingWeights(4));
+            NpcBoneLineage two = Lineage(Body, both.ToArray(), BodyJoints);
+            var corners = Ring(0, 42);
+            corners.AddRange(Ring(42, 42));
+            NpcBoneSplitRecord tied = Decide(two, CutBy(two, Whole(two), BodyWaist, false), convexBones, corners.ToArray(), out _);
+            Assert.That(tied.clusters == 2 && tied.meshComponents == 2, Is.True, "the layout: two rings");
+            Assert.That(tied.connectionsProtected == 2 && tied.connectionsKept == 4 && tied.connectionsDropped == 0, Is.True, "both rings keep the hand: " + tied.connectionsProtected + " protected");
+            Assert.That(tied.verdict == NpcBoneSplitVerdict.NotSeparable && tied.groups == 1, Is.True);
+
+            // (c) the finger: of the hand's cluster, without a convex
+            NpcBoneLineage finger = Lineage(Body, RingWeights(5), BodyJoints);
+            NpcBoneSplitRecord left = Decide(finger, CutBy(finger, Whole(finger), BodyWaist, false), convexBones, Ring(0, 42).ToArray(), out _);
+            Assert.That(left.clusters == 2 && left.meshComponents == 1, Is.True, "the layout");
+            Assert.That(left.connectionsProtected == 0 && left.connectionsKept == 1 && left.connectionsDropped == 1, Is.True, "the ring to the pelvis; the ring to the hand's cluster left out");
+            Assert.That(left.verdict == NpcBoneSplitVerdict.NotSeparable && left.reason == NpcBoneSplitSearch.ReasonFewFull, Is.True, "the hand's convex alone, without triangles: " + left.reason);
         }
 
         /// <summary>
@@ -653,37 +715,39 @@ namespace Zantetsu.PhysicsCut.Tests
         private static readonly float4 NeckPlane = new float4(0f, 1f, 0f, -1.5f);
 
         /// <summary>
-        /// **A neck cut does not send the hand's mesh away with the whole arm's convexes** (NPC-BONE-ANY-SUPPORT-1; seen on Link
+        /// **A neck cut does not send the hand's mesh away with the whole arm's convexes** (NPC-BONE-RATIO-1; seen on Link
         /// 2026-11-12, picks 2-5 and 31 of face-pick\link-run-2-topology). Below the neck the trunk's convex, and the upper arm's,
         /// the forearm's and the hand's, all three of one cluster the clavicle no longer joins to the trunk. The jacket is one mesh
-        /// component, trunk and sleeve: 12 vertices on the trunk, two of them on the upper arm as well and one on the clavicle (not
-        /// held: supports nothing). The hand is a mesh island of its own, on the hand. The sleeve's two vertices connect the jacket to
-        /// the arm's cluster and the hand connects to it too: trunk, sleeve, arm and hand are one group and nothing comes off. Under
-        /// the 3/10 bound the sleeve's 2 of 12 were left out, and the arm's three convexes left with the hand's one triangle while
-        /// the sleeve stayed with the trunk.
+        /// component, trunk and sleeve: 82 vertices on the trunk, two of them on the upper arm as well and one on the clavicle (not
+        /// held: supports nothing). The hand is a mesh island of its own, on the hand. The jacket supports the arm's cluster with 2
+        /// vertices of a peak of 82 -- 80 &lt; 82, under the ratio of 1/40 -- but it is the main supporting mesh of the upper arm's
+        /// bone, which has a convex: the connection is kept by the protection, the hand connects to the arm's cluster too, and trunk,
+        /// sleeve, arm and hand are one group -- nothing comes off. Without the sleeve's two vertices nothing of the jacket supports
+        /// the arm, and the arm with its hand is a limb apart.
         /// </summary>
         [Test]
-        public void BelowANeckCut_TheSleeveOfFewVerticesHoldsTheArmToTheTrunk_AndTheHandDoesNotLeaveWithTheArmsConvexes()
+        public void BelowANeckCut_TheSleeveUnderTheRatioIsKeptAsTheUpperArmsMainMesh_AndTheHandDoesNotLeaveWithTheArmsConvexes()
         {
-            // 0-11 the jacket (0 and 6 on the upper arm as well, 3 on the clavicle as well), 12-14 the hand's skin
-            var weights = new ulong[15];
-            for (int v = 0; v < 12; v++) weights[v] = W(0);
+            // 0-81 the jacket (0 and 6 on the upper arm as well, 3 on the clavicle as well), 82-84 the hand's skin
+            var weights = new ulong[85];
+            for (int v = 0; v < 82; v++) weights[v] = W(0);
             weights[0] = W(0, 3);
             weights[6] = W(0, 3);
             weights[3] = W(0, 2);
-            for (int v = 12; v < 15; v++) weights[v] = W(5);
+            for (int v = 82; v < 85; v++) weights[v] = W(5);
             NpcBoneLineage lineage = Lineage(Neck, weights, NeckJoints);
             NpcBonePiece below = CutBy(lineage, Whole(lineage), NeckPlane, false);
             Assert.That(below.IsJointKept(0) && below.IsJointKept(3) && below.IsJointKept(4) && below.IsJointKept(5), Is.True, "the layout: the trunk's and the arm's joints are kept");
             Assert.That(!below.IsJointKept(1) && !below.IsJointKept(2), Is.True, "the layout: the head's and the clavicle's joints are across the plane");
-            var corners = Ring(0, 12);
-            corners.AddRange(Triangles(12, 13, 14));
+            var corners = Ring(0, 82);
+            corners.AddRange(Triangles(82, 83, 84));
             int[] convexBones = { 0, 3, 4, 5 };
             NpcBoneSplitRecord record = Decide(lineage, below, convexBones, corners.ToArray(), out _);
             Assert.That(record.clusters, Is.EqualTo(2), "the trunk | the upper arm, the forearm and the hand: one cluster of the arm, apart from the trunk's");
             Assert.That(record.meshComponents, Is.EqualTo(2), "the jacket with its sleeve; the hand");
             Assert.That(record.removedWeights, Is.EqualTo(1), "the clavicle's weight: on a bone not held");
-            Assert.That(record.connectionsKept == 3 && record.connectionsDropped == 0, Is.True, "the jacket to the trunk and (by two vertices) to the arm, the hand to the arm");
+            Assert.That(record.connectionsProtected, Is.EqualTo(1), "the jacket to the arm: 2 of a peak of 82, under the ratio, kept as the upper arm's main supporting mesh");
+            Assert.That(record.connectionsKept == 3 && record.connectionsDropped == 0, Is.True, "the jacket to the trunk and (protected) to the arm, the hand to the arm");
             Assert.That(record.verdict, Is.EqualTo(NpcBoneSplitVerdict.NotSeparable), "nothing comes off: the hand's mesh does not take the arm's convexes away");
             Assert.That(record.reason, Is.EqualTo(NpcBoneSplitSearch.ReasonOneGroup));
             Assert.That(record.groups == 1 && record.fullGroups == 1 && record.unboundGroups == 0, Is.True, "trunk, sleeve, arm and hand: one group");
@@ -693,9 +757,11 @@ namespace Zantetsu.PhysicsCut.Tests
             weights[6] = W(0);
             NpcBoneLineage bare = Lineage(Neck, weights, NeckJoints);
             NpcBoneSplitRecord apart = Decide(bare, CutBy(bare, Whole(bare), NeckPlane, false), convexBones, corners.ToArray(), out byte[] sides);
-            Assert.That(apart.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), "the layout: only the sleeve's vertices held them together");
+            Assert.That(apart.verdict, Is.EqualTo(NpcBoneSplitVerdict.Separable), "the control: only the sleeve's vertices held them together");
+            Assert.That(apart.connectionsProtected == 0 && apart.connectionsDropped == 0, Is.True);
             Assert.That(sides[1] == sides[2] && sides[2] == sides[3] && sides[3] != sides[0], Is.True, "the arm's three convexes together, apart from the trunk's");
-            AssertWhole(apart, sides, 4, 7);
+            Assert.That(sides[4 + 41] == sides[1] && sides[4] == sides[0], Is.True, "the hand's triangle with the arm, the jacket with the trunk");
+            AssertWhole(apart, sides, 4, 42);
         }
 
         // ----- the smallest independent group first (2026-11-07) ---------------------------------------------------------

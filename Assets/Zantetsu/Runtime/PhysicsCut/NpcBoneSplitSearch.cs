@@ -63,11 +63,17 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// The connections from a mesh component to a bone cluster it supports (a vertex of the component weighted, through its origins,
-        /// to a bone of the cluster): one a component and cluster, every one of them used (<see cref="connectionsKept"/>). Nothing is
-        /// left out for being supported by few vertices (NPC-BONE-ANY-SUPPORT-1, 2026-11-12: the 3/10 bound of NPC-BONE-SUPPORT-1 is
-        /// removed), so <see cref="connectionsDropped"/> is always 0; the field stays for the readers of the record.
+        /// to a bone of the cluster), one a component and cluster, as they end (NPC-BONE-RATIO-1, 2026-11-13): those used
+        /// (<see cref="connectionsKept"/>: by the support ratio, or kept under it by the protection) and those left out
+        /// (<see cref="connectionsDropped"/>: under the ratio and not protected).
         /// </summary>
         public int connectionsKept, connectionsDropped;
+
+        /// <summary>
+        /// Of <see cref="connectionsKept"/>, the connections under the support ratio that were kept because the component is the
+        /// most supporting mesh of a bone of that cluster that has a convex in the piece (NPC-BONE-RATIO-1).
+        /// </summary>
+        public int connectionsProtected;
 
         /// <summary>The decision's own time on the worker (development builds; 0 otherwise).</summary>
         public double seconds;
@@ -105,22 +111,37 @@ namespace Zantetsu.PhysicsCut
     /// vertex a cut made the weights of the vertices it interpolates (both where it lies strictly between them, the one where
     /// it lies on it), walked back to the base, a cap's auxiliary vertex none -- **among the bones the piece holds**: a weight on
     /// a bone not held supports nothing (no other bone is chosen for it); a held bone counts whether it is held by its convex or by
-    /// its joint. **The connection rule (NPC-BONE-ANY-SUPPORT-1, 2026-11-12):** a mesh component M is connected to every cluster c
-    /// one of its vertices supports, s(M, c) &gt; 0 -- a single vertex is enough. (From 2026-11-10 to this change a cluster under
-    /// three tenths of M's most supported cluster's vertices was left out, NPC-BONE-SUPPORT-1: it let a limb's convexes leave with
-    /// the one mesh island of their own -- a hand -- while the sleeve, one component with the trunk, stayed behind without them.)
-    /// The clusters are numbered before any component joins them, and a component and cluster are one connection however many
-    /// vertices, origins, bones of that cluster or triangles reach it. So a convex and a convex of one cluster are connected, a
-    /// convex and a mesh component supporting that cluster, two mesh components supporting the bones of one cluster -- and a mesh
-    /// component supporting several clusters connects them. The connections are counted
-    /// (<see cref="NpcBoneSplitRecord.connectionsKept"/>; <see cref="NpcBoneSplitRecord.connectionsDropped"/> is 0).
+    /// its joint. **The connection rule (NPC-BONE-RATIO-1, 2026-11-13): a support ratio of 1/40, and the protection of a convex
+    /// bone's main supporting mesh.** The clusters are numbered before any component joins them. For a mesh component M, s(M, c)
+    /// is the number of its referenced render vertices that support cluster c (a vertex once a cluster, however many of its
+    /// origins, bones of that cluster or triangles reach it) and peak(M) the largest of them. M is connected to c where
+    /// <list type="bullet">
+    /// <item>**the ratio:** s &gt; 0 and 40 s &gt;= peak (in long; clusters tied at the peak all stay) -- a bridge of very few
+    /// vertices between a limb and a trunk no longer holds the two together; or</item>
+    /// <item>**the protection:** for a bone k that has a convex in the piece, b(M, k) is the number of M's referenced render
+    /// vertices that support bone k (a vertex once a bone). The component whose b(., k) is positive and the largest among all the
+    /// piece's mesh components keeps its connection to k's cluster even under the ratio; components tied at the largest all keep
+    /// it. So the sleeve, the mesh that mainly supports the upper arm's bone, stays with the arm's convexes although it is one
+    /// component with the trunk and its vertices on the arm are few beside the trunk's -- and a hand's island alone does not
+    /// take the arm's convexes away (seen on Link 2026-11-12 under the 3/10 bound of NPC-BONE-SUPPORT-1).</item>
+    /// </list>
+    /// Everything is counted over the piece's own input: its triangles' vertices, its convexes' bones, the bones it holds. A
+    /// component and cluster are one connection, counted as they end (<see cref="NpcBoneSplitRecord.connectionsKept"/>,
+    /// <see cref="NpcBoneSplitRecord.connectionsDropped"/>, <see cref="NpcBoneSplitRecord.connectionsProtected"/>). Nothing of
+    /// the weights is removed. (History: 3/10 from 2026-11-10, NPC-BONE-SUPPORT-1; any positive support from 2026-11-12,
+    /// NPC-BONE-ANY-SUPPORT-1, under which a waist cut's lower side kept its arms.)
     /// </para>
     /// <para>
-    /// **The scratch of the support rule and of the topology**, beside the decision's own: 2 L + 2 (T + 1) + 4 N + K ints (L the
+    /// **The scratch of the support rule and of the topology**, beside the decision's own: 2 L + 2 (T + 1) + 8 N + K ints (L the
     /// lineage's vertices, T the triangles, N the rig's bones, K the geometry's topology vertices) -- each vertex's component, the
     /// referenced vertices grouped by component, the components' ends and the placing cursors, each held bone's cluster, a
-    /// component's counts, stamps and touched clusters, and for each topology vertex the render vertex first met of it -- taken with
-    /// the rest and given back before the decision returns (counted in <see cref="NpcBoneSplitRecord.nativeBytes"/>).
+    /// component's counts, stamps and touched clusters, for each topology vertex the render vertex first met of it, and (4 N,
+    /// NPC-BONE-RATIO-1) a component's counts, stamps and touched bones among the bones with a convex and each such bone's
+    /// largest count so far. The protection adds no walk: the bones are counted in the one walk that counts the clusters. A
+    /// connection under the ratio waits for the last component (a bone's largest count is known only then) as three ints -- the
+    /// component, the bone, its count -- in a list that is made only when there is such a connection and grows by doubling (at
+    /// most one entry a component and bone with a convex). All taken with the rest and given back before the decision returns
+    /// (counted in <see cref="NpcBoneSplitRecord.nativeBytes"/>).
     /// </para>
     /// <para>
     /// **The placement.** Every group (a connected set holding a convex or triangles) must be known: triangles weighted to no
@@ -256,7 +277,7 @@ namespace Zantetsu.PhysicsCut
             int e = (int)elements;
             int convexBase = n;
             int vertexBase = n + c;
-            NativeArray<int> uf = default, tally = default, triangleFirst = default, stack = default, parts = default, support = default;
+            NativeArray<int> uf = default, tally = default, triangleFirst = default, stack = default, parts = default, support = default, pending = default;
             NativeArray<byte> marks = default, piece = default;
             try
             {
@@ -278,7 +299,9 @@ namespace Zantetsu.PhysicsCut
                 // component (L), the components' ends and the placing cursors (T + 1 each), each held bone's cluster (N), and a component's
                 // counts, stamps and touched clusters (3 N); and, for each topology vertex, the render vertex first met of it, plus one (K;
                 // NPC-BONE-TOPOLOGY-1).
-                support = new NativeArray<int>(checked((2 * l) + (2 * (t + 1)) + (4 * n) + topologyCount), Allocator.Persistent, NativeArrayOptions.ClearMemory);
+                // And (NPC-BONE-RATIO-1), among the bones with a convex in the piece: a component's counts, stamps and touched bones, and
+                // each bone's largest count over the components (4 N).
+                support = new NativeArray<int>(checked((2 * l) + (2 * (t + 1)) + (8 * n) + topologyCount), Allocator.Persistent, NativeArrayOptions.ClearMemory);
                 int* componentOf = (int*)support.GetUnsafePtr();
                 int* order = componentOf + l;
                 int* ends = order + l;
@@ -288,6 +311,10 @@ namespace Zantetsu.PhysicsCut
                 int* stamp = supportCount + n;
                 int* touched = stamp + n;
                 int* firstOfTopology = touched + n;
+                int* boneCount = firstOfTopology + topologyCount;
+                int* boneStamp = boneCount + n;
+                int* touchedBones = boneStamp + n;
+                int* bestOfBone = touchedBones + n;
                 record.nativeBytes = ((long)uf.Length * sizeof(int)) + ((long)tally.Length * sizeof(int)) + ((long)triangleFirst.Length * sizeof(int)) + marks.Length + ((long)stack.Length * sizeof(int))
                     + piece.Length + ((long)parts.Length * sizeof(int)) + ((long)support.Length * sizeof(int));
                 int* parent = (int*)uf.GetUnsafePtr();
@@ -406,13 +433,15 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 // 4. Every vertex the triangles name, walked back to the base, supports the clusters of the held bones it is weighted to (once
-                //    a cluster a vertex); then, component by component, its connections: every cluster it supports (NPC-BONE-ANY-SUPPORT-1).
+                //    a cluster a vertex) and, of those bones, the ones with a convex in the piece (once a bone a vertex); then, component by
+                //    component, its connections by the support ratio, and after the last component those the protection keeps (NPC-BONE-RATIO-1).
                 int* walk = (int*)stack.GetUnsafePtr();
                 long steps = 0;
+                int pendingCount = 0, pendingRoom = 0, underTheRatio = 0;
                 for (int component = 0; component < m; component++)
                 {
                     int start = component == 0 ? 0 : ends[component - 1], end = ends[component];
-                    int touchedCount = 0;
+                    int touchedCount = 0, touchedBoneCount = 0;
                     for (int at = start; at < end; at++)
                     {
                         int v = order[at];
@@ -457,6 +486,13 @@ namespace Zantetsu.PhysicsCut
                                         stamp[cluster] = v + 1;
                                         if (supportCount[cluster]++ == 0) touched[touchedCount++] = cluster;
                                     }
+
+                                    // And one support a vertex and a bone, for a bone that has a convex in the piece (the protection's count).
+                                    if (convexesOfBone[bone] > 0 && boneStamp[bone] != v + 1)
+                                    {
+                                        boneStamp[bone] = v + 1;
+                                        if (boneCount[bone]++ == 0) touchedBones[touchedBoneCount++] = bone;
+                                    }
                                 }
 
                                 continue;
@@ -492,18 +528,81 @@ namespace Zantetsu.PhysicsCut
                         }
                     }
 
-                    // The connections of this component: every cluster one of its vertices supports (any positive support; no bound by
-                    // the number of supporting vertices). One connection a component and cluster.
+                    // The connections of this component by the ratio: the clusters it supports with at least 1/40 of its most supported
+                    // cluster's vertices (40 s >= peak, in long; ties at the peak all stay). One under the ratio waits: the protection keeps
+                    // it where this component is the most supporting mesh of a bone of that cluster that has a convex, and a bone's largest
+                    // count is known only after the last component. A count already under the bone's largest so far cannot be it.
+                    int peak = 0;
+                    for (int i = 0; i < touchedCount; i++) peak = Math.Max(peak, supportCount[touched[i]]);
+                    for (int i = 0; i < touchedBoneCount; i++)
+                    {
+                        int bone = touchedBones[i];
+                        if (boneCount[bone] > bestOfBone[bone]) bestOfBone[bone] = boneCount[bone];
+                    }
+
                     int anchor = vertexBase + order[start];
                     for (int i = 0; i < touchedCount; i++)
                     {
                         int cluster = touched[i];
-                        Union(parent, anchor, cluster);
-                        record.connectionsKept++;
+                        if (40L * supportCount[cluster] >= peak)
+                        {
+                            Union(parent, anchor, cluster);
+                            record.connectionsKept++;
+                        }
+                        else
+                        {
+                            underTheRatio++;
+                            for (int j = 0; j < touchedBoneCount; j++)
+                            {
+                                int bone = touchedBones[j];
+                                if (clusterOf[bone] != cluster || boneCount[bone] < bestOfBone[bone]) continue;
+                                if (pendingCount == pendingRoom)
+                                {
+                                    int room = pendingRoom == 0 ? 16 : checked(pendingRoom * 2);
+                                    var grown = new NativeArray<int>(checked(3 * room), Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                                    if (pendingCount > 0) UnsafeUtility.MemCpy(grown.GetUnsafePtr(), pending.GetUnsafePtr(), (long)pendingCount * 3 * sizeof(int));
+                                    if (pending.IsCreated) pending.Dispose();
+                                    pending = grown;
+                                    pendingRoom = room;
+                                }
+
+                                int* entry = (int*)pending.GetUnsafePtr() + (3 * pendingCount++);
+                                entry[0] = anchor;
+                                entry[1] = bone;
+                                entry[2] = boneCount[bone];
+                            }
+                        }
+
                         supportCount[cluster] = 0;
                     }
+
+                    for (int i = 0; i < touchedBoneCount; i++) boneCount[touchedBones[i]] = 0;
                 }
 
+                // The protection: a connection under the ratio is kept where the component's count for a bone with a convex is that bone's
+                // largest over all the piece's components (positive: it was counted; ties all stay). The entries of one component and
+                // cluster follow one another: one connection, counted once.
+                if (pendingCount > 0)
+                {
+                    int* entries = (int*)pending.GetUnsafePtr();
+                    int lastAnchor = -1, lastCluster = -1;
+                    for (int i = 0; i < pendingCount; i++)
+                    {
+                        int anchor = entries[3 * i], bone = entries[(3 * i) + 1];
+                        if (entries[(3 * i) + 2] != bestOfBone[bone]) continue;
+                        int cluster = clusterOf[bone];
+                        if (anchor == lastAnchor && cluster == lastCluster) continue;
+                        Union(parent, anchor, cluster);
+                        record.connectionsProtected++;
+                        lastAnchor = anchor;
+                        lastCluster = cluster;
+                    }
+
+                    record.nativeBytes += (long)pending.Length * sizeof(int);
+                }
+
+                record.connectionsKept += record.connectionsProtected;
+                record.connectionsDropped = underTheRatio - record.connectionsProtected;
                 record.originSteps = steps;
 
                 // 5. The groups: what each root holds.
@@ -608,6 +707,7 @@ namespace Zantetsu.PhysicsCut
                 if (piece.IsCreated) piece.Dispose();
                 if (parts.IsCreated) parts.Dispose();
                 if (support.IsCreated) support.Dispose();
+                if (pending.IsCreated) pending.Dispose();
             }
         }
 

@@ -126,6 +126,7 @@ namespace Zantetsu.EditorTools.Sandbox
                         .Append(",\"fullGroups\":").Append(d.fullGroups).Append(",\"unboundGroups\":").Append(d.unboundGroups).Append(",\"pieceBones\":").Append(d.pieceBones)
                         .Append(",\"referencedVertices\":").Append(d.referencedVertices).Append(",\"originSteps\":").Append(d.originSteps).Append(",\"removedWeights\":").Append(d.removedWeights)
                         .Append(",\"connectionsKept\":").Append(d.connectionsKept).Append(",\"connectionsDropped\":").Append(d.connectionsDropped)
+                        .Append(",\"connectionsProtected\":").Append(d.connectionsProtected)
                         .Append(",\"positiveConvexes\":").Append(d.positiveConvexes).Append(",\"negativeConvexes\":").Append(d.negativeConvexes)
                         .Append(",\"positiveTriangles\":").Append(d.positiveTriangles).Append(",\"negativeTriangles\":").Append(d.negativeTriangles)
                         .Append(",\"positiveConvexIndices\":[").Append(string.Join(",", positiveConvexes)).Append("],\"positiveConvexBones\":[").Append(string.Join(",", positiveBones))
