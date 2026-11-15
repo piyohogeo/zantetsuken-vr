@@ -162,6 +162,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             LogicalFragmentId body = AddNpcBodyWithAHand(root, new Vector3(0f, 0f, 0f), true, handLowX: 0.8f, trunkBottomBone: 1);
             yield return null;
             Assert.That(root.Geometry.TryGetGeometry(body, out VpStoredGeometry whole), Is.True);
@@ -242,6 +243,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             LogicalFragmentId npcBody = AddNpcBodyWithAHand(root, new Vector3(0f, 0f, 0f), true, handLowX: 0.8f);
             LogicalFragmentId plainBody = AddNpcBodyWithAHand(root, new Vector3(0f, 0f, 12f), false, handLowX: 0.8f);
             yield return null;
@@ -325,6 +327,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             Assert.That(split.BoneFallback, Is.True, "the fallback is on by default (NPC-BONE-FALLBACK-DEFAULT-1)");
             split.BoneFallback = false;   // this case is about the bones alone (-zantetsuNpcBoneFallbackOff)
             LogicalFragmentId npcBody = AddNpcBodyWithAHand(root, new Vector3(0f, 0f, 0f), true, shoulderJointY: -0.1f, trunkJointY: -0.2f);
@@ -373,6 +376,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             LogicalFragmentId body = AddNpcBodyWithAHand(root, new Vector3(0f, 0f, 0f), true, handLowX: 0.8f);
             yield return null;
             ProvisionalCutAsk ask = Ask(body, k_planeUp);
@@ -433,6 +437,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             LogicalFragmentId body = AddNpcBodyWithAHand(root, new Vector3(0f, 0f, 0f), true);
             yield return null;
             var sides = new LogicalFragmentId[2];
@@ -509,6 +514,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             LogicalFragmentId body = AddNpcBodyWithAHand(root, new Vector3(0f, 0f, 0f), true, handLowX: 0.8f);
             yield return null;
             var sides = new LogicalFragmentId[2];
@@ -542,7 +548,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(CutWorldRoot.ReadNpcBoneFallback(new[] { "player.exe", CutWorldRoot.NpcBoneFallbackArgument }, out string on), Is.True, "the old on argument: on");
             Assert.That(on, Does.StartWith("on, asked for by -zantetsuNpcBoneFallback"));
             Assert.That(CutWorldRoot.ReadNpcBoneFallback(new[] { "player.exe", CutWorldRoot.NpcBoneFallbackOffArgument }, out string off), Is.False, "the off argument: off");
-            Assert.That(off, Does.StartWith("off, asked for by -zantetsuNpcBoneFallbackOff").And.Contain("the bones alone"));
+            Assert.That(off, Does.StartWith("off, asked for by -zantetsuNpcBoneFallbackOff").And.Contain("does not go on behind an NPC's own decision")
+                .And.Contain("the protected combination's (the default since 2026-11-14)").And.Contain("the bones' alone, as before 2026-11-04, with -zantetsuNpcPairProtectOff as well"));
             Assert.That(CutWorldRoot.ReadNpcBoneFallback(new[] { "player.exe", CutWorldRoot.NpcBoneFallbackArgument, CutWorldRoot.NpcBoneFallbackOffArgument }, out string both), Is.False, "both: off");
             Assert.That(both, Does.Contain("off wins"));
             Assert.That(CutWorldRoot.ReadNpcBoneFallback(null, out _), Is.True, "no arguments at all: on");
@@ -583,6 +590,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             split.BoneFallback = true;
             LogicalFragmentId body = AddNpcBodyWithAHand(root, new Vector3(0f, 0f, 0f), true, handLowX: 0.8f);
             yield return null;
@@ -614,6 +622,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             split.BoneFallback = true;
             LogicalFragmentId body = AddNpcBodyWithAHand(root, new Vector3(0f, 0f, 0f), true, shoulderJointY: -0.1f, trunkJointY: -0.2f);
             yield return null;
@@ -720,6 +729,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             split.Settings = SplitOnWithGraph();
             split.BoneFallback = true;
             Assert.That(split.GraphEffective, Is.True, split.GraphRefusal);
@@ -810,6 +820,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitCutClosed(root, remaining, 12);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             LogicalFragmentId body = AddNpcWrappedBody(root);
             yield return null;
             var sides = new LogicalFragmentId[2];
@@ -862,6 +873,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             split.Settings = SplitOnWithGraph();
             split.BoneFallback = true;
             Assert.That(split.GraphEffective, Is.True, split.GraphRefusal);

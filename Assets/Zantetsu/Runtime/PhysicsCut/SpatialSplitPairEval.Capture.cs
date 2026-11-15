@@ -110,7 +110,8 @@ namespace Zantetsu.PhysicsCut
                     .Append("; pool pc (Background ").Append(pool.Capacity).Append("), no competitor; timeline ").Append(CutSpatialSplit.TimelineObserve ? "on" : "off")
                     .Append(", dispatch observation ").Append(Zantetsu.MeshCut.DispatchObservation.Enabled ? "on" : "off").Append('\n');
                 text.Append("methods: ").Append(string.Join(", ", PairMethodSet)).Append("; each input ").Append(PairWarm ? "warmed once in every method" : "NOT warmed (a re-decision, no time is read)").Append(", then ").Append(repeats)
-                    .Append(" repeats; order by (input + repeat) mod 3; no clock inside the graph bodies in any method (measure 0)\n");
+                    .Append(" repeats; order by (input + repeat) mod 3; no clock inside the graph bodies in any method (measure 0); a fallback's graph stage after the combination ")
+                    .Append(CutSpatialSplit.PairReuse ? "reuses the combination's decision (NPC-PAIR-REUSE-1)" : "runs from the start (" + CutSpatialSplit.PairReuseOffArgument + ")").Append('\n');
                 text.Append("once per process: graph preparation ").Append(Ms(prepareGraph, inv)).Append(" ms (prepared ").Append(graphPrepared).Append(")\n");
                 int last = (int)Math.Min((long)lines.Count, (long)first + count);
                 for (int index = Math.Max(0, first); index < last; index++)
@@ -260,7 +261,9 @@ namespace Zantetsu.PhysicsCut
 
                             analysisFile.Write("{\"index\":" + index + ",\"pick\":" + input.pick + ",\"method\":\"" + method + "\",\"end\":" + (r.end != null ? "\"" + r.end + "\"" : "null") + ",\"placement\":\"" + r.placement
                                 + "\",\"pairVerdict\":" + (r.pair != null ? "\"" + r.pair.verdict + "\"" : "null") + ",\"partition\":\"" + PartitionHash(r.convexSides, r.triangleSides)
-                                + "\",\"analysisError\":" + (error != null ? SpatialSplitCaptureSink.Json(error) : "null") + ",\"analysis\":" + body + "}\n");
+                                + "\",\"needPositive\":" + NeedJson(r.needPositive) + ",\"needNegative\":" + NeedJson(r.needNegative)
+                                + ",\"needFailure\":" + (r.needFailure != null ? SpatialSplitCaptureSink.Json(r.needFailure) : "null")
+                                + ",\"analysisError\":" + (error != null ? SpatialSplitCaptureSink.Json(error) : "null") + ",\"analysis\":" + body + "}\n");
                         }
                     }
                     finally

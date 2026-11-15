@@ -45,6 +45,24 @@ namespace Zantetsu.PhysicsCut
         // NPC-PAIR-EVAL-1: the pair stats of the preparation with the bones' rows (three kinds each: convex-convex, convex-mesh, mesh-mesh).
         internal const int PairStatBoneApart = 0, PairStatBoxApart = 3, PairStatProtectedKept = 6, PairStatProtectedBonesApart = 7, PairStatCount = 8;
 
+        // NPC-PAIR-REUSE-1: a judgment kept of a pair of convexes (one byte a pair, <see cref="Kept"/>). Only a geometric judgment
+        // that was carried out is ever written: a pair the bones left out, or one the protection keeps, was not judged by the
+        // geometry and stays NotRun. The low bits say what the geometry came to -- apart by the boxes (the gap over 2m + 4E1),
+        // apart by the hulls (GJK settled and the projection gap over the bound), not apart (GJK settled: the hulls meet, or their
+        // gap is within the bound -- the same two hulls can never be certified apart), at the limit (GJK's iterations ran out: not
+        // a conclusion) -- the high bits which body carried it out.
+        internal const int JudgedNotRun = 0, JudgedApartByBoxes = 1, JudgedApartByHulls = 2, JudgedNotApart = 3, JudgedAtLimit = 4, JudgedStateMask = 0x0F;
+        internal const int JudgedByCombination = 0x10, JudgedByLinks = 0x20, JudgedByGraph = 0x30;
+
+        // NPC-PAIR-REUSE-1: the counts the bodies write beside the stats where a decision keeps or reuses (their own longs: the
+        // stats' area and its bytes are as before). The preparation: the units its first part (owner coordinates, bounds, slots)
+        // took. The search: the hull judgments asked of two convexes, those answered from the kept ones, those carried out and
+        // kept. The links' check: the convexes' groups left, the pairs apart by the boxes, the judgments carried out and reused,
+        // the pairs that hold two groups together, those at the limit, those apart by the hulls, whether the meter stopped it,
+        // its units.
+        internal const int KeptPrefixUnits = 0, KeptTriedConvex = 1, KeptReused = 2, KeptJudged = 3, KeptLinkGroups = 4, KeptLinkBoxApart = 5, KeptLinkJudged = 6,
+            KeptLinkReused = 7, KeptLinkHolding = 8, KeptLinkAtLimit = 9, KeptLinkApart = 10, KeptLinkStopped = 11, KeptLinkWork = 12, KeptStatCount = 13;
+
         // The measurement: exclusive sections of the search (ticks of ProfilerUnsafeUtility.Timestamp read only at the section
         // boundaries, measure 1) and diagnostic counts (measure 2); nothing is read with measure 0.
         internal const int SecRegroup = 0, SecSeeds = 1, SecSortNearest = 2, SecCutBuild = 3, SecCutFlow = 4, SecCutExtract = 5, SecCollect = 6, SecSortToRefute = 7,
@@ -125,6 +143,22 @@ namespace Zantetsu.PhysicsCut
             public void StopForCapacity()
             {
                 if (stopped == 0) { stopped = 1; reason = StopCapacity; }
+            }
+
+            /// <summary>
+            /// NPC-PAIR-REUSE-1: the units of a computation that is not carried out again (its result is reused), spent as that
+            /// computation spends them -- one at a time, so every check point it would have crossed is crossed here and a budget it
+            /// would have passed stops the meter at the same count.
+            /// </summary>
+            public void Charge(long units)
+            {
+                while (units > 0 && stopped == 0)
+                {
+                    long step = math.min(units, nextCheck - work);
+                    if (step < 1) step = 1;
+                    Spend(step);
+                    units -= step;
+                }
             }
 
             /// <summary>A list is full: the body ends and the driver, which owns every allocation, grows the list and runs the body again.</summary>
@@ -714,6 +748,17 @@ namespace Zantetsu.PhysicsCut
             public int* pairTriComponent;
             /// <summary>PairStatCount longs: the pairs the bones left out by kind, the pairs the boxes left out by kind, the protected pairs kept though their boxes are apart.</summary>
             public long* pairStats;
+
+            // ---- NPC-PAIR-REUSE-1 (0 / null unless a decision keeps or reuses) ----
+            /// <summary>
+            /// 1: owner, bounds and cornerSlot hold what an earlier preparation of this very input wrote (the same compact arrays,
+            /// frames, margin and convexes): the first part is not computed again, and <see cref="reuseUnits"/> -- the units it took
+            /// there -- are charged to the meter as it would have spent them.
+            /// </summary>
+            public int reuse;
+            public long reuseUnits;
+            /// <summary>KeptStatCount longs (null: none): the first part's units are written here when it ran.</summary>
+            public long* keptStats;
             private long last;
             private WorkMeter meter;
 
@@ -764,6 +809,24 @@ namespace Zantetsu.PhysicsCut
                 if (measure == 1) last = ProfilerUnsafeUtility.Timestamp;
                 for (int i = 0; i < StatCount; i++) if (i != StatManagedMarker) stats[i] = 0;
 
+                if (reuse != 0)
+                {
+                    // NPC-PAIR-REUSE-1: the first part's outputs are an earlier preparation's of this input; its units are spent as there
+                    meter.Charge(reuseUnits);
+                    if (meter.Stopped) { Stop(); return; }
+                }
+                else
+                {
+                    if (!OwnerAndSlots()) return;
+                    if (keptStats != null) keptStats[KeptPrefixUnits] = meter.work - workBefore;
+                }
+
+                Components();
+            }
+
+            // The first part: the owner coordinates, the bounds and the corners' slots. False: the body ended here (a stop, an error).
+            private bool OwnerAndSlots()
+            {
                 // Owner coordinates, as the managed OwnerDouble: ((double)E(i,0) * p.x) + ((double)E(i,1) * p.y) + ((double)E(i,2) * p.z) + E(i,3).
                 double bound = 1.0;
                 for (int i = 0; i < named && !meter.Stopped; i++)
@@ -787,7 +850,7 @@ namespace Zantetsu.PhysicsCut
                 Tick(PrepOwnerBounds);
                 Count(PcNamed, named);
                 Count(PcTriangles, triangleCount);
-                if (meter.Stopped) { Stop(); return; }
+                if (meter.Stopped) { Stop(); return false; }
 
                 // The corners' slots: binary search of the sorted ids, an id under the view's length only.
                 for (int i = 0; i < 3 * triangleCount && !meter.Stopped; i++)
@@ -797,17 +860,22 @@ namespace Zantetsu.PhysicsCut
                     meter.Spend(1);
                     if (at < 0)
                     {
-                        if (meter.Stopped) { Stop(); return; }   // a search cut short is the budget's doing, not a bad index
+                        if (meter.Stopped) { Stop(); return false; }   // a search cut short is the budget's doing, not a bad index
                         stats[StatError] = 1;
-                        return;
+                        return false;
                     }
 
                     cornerSlot[i] = at;
                 }
 
                 Tick(PrepSlots);
-                if (meter.Stopped) { Stop(); return; }
+                if (meter.Stopped) { Stop(); return false; }
+                return true;
+            }
 
+            // The rest: the mesh components, the nodes' boxes and hulls, stage A.
+            private void Components()
+            {
                 // Mesh components: triangles sharing a vertex index, united; ids in the order of the first triangle.
                 // scratch: [0, T) union-find parents, [T, T + named) the first triangle of a slot, [T + named, ...) component of a root.
                 int parents = 0, firstOf = triangleCount, compOfRoot = triangleCount + named;
@@ -1038,6 +1106,20 @@ namespace Zantetsu.PhysicsCut
             /// <summary>NPC-PAIR-EVAL-1: the nodes' rows the preparation read (the deal's tie between equal groups reads the clusters); null without the bones.</summary>
             public ulong* pairRows;
             public int pairRowWords, pairClusterWords;
+
+            // ---- NPC-PAIR-REUSE-1 (null / 0 unless a decision keeps or reuses) ----
+            /// <summary>
+            /// The kept judgments of the pairs of convexes (a byte a pair, by <see cref="PairAt"/>; the Judged constants) and the
+            /// units each took. A hull judgment asked of two convexes is answered from them where one was carried out before on
+            /// these two hulls with these bounds and this iteration limit -- its units charged, its counts counted, as if run --
+            /// and written to them where it is carried out here.
+            /// </summary>
+            public byte* judged;
+            public int* judgedWork;
+            public long* keptStats;
+            public int judgedOrigin;
+            /// <summary>1: no search -- the links' check over the convexes alone (<see cref="ExecuteLinks"/>).</summary>
+            public int linksOnly;
             private long last;
             private WorkMeter meter;
 
@@ -1111,6 +1193,12 @@ namespace Zantetsu.PhysicsCut
             public void Execute()
             {
                 MarkManaged(stats);
+                if (linksOnly != 0)
+                {
+                    ExecuteLinks();
+                    return;
+                }
+
                 meter = WorkMeter.Continue(workBudget, workBefore);
                 Mark();
                 for (int i = 0; i < n && !meter.Stopped; i++) { work[Definite + i] = i; meter.Spend(1); }
@@ -1685,9 +1773,104 @@ namespace Zantetsu.PhysicsCut
 
             // ---- B: the hulls ---------------------------------------------------------------------------------------------------
 
+            /// <summary>The place of the pair of convexes a &lt; b among the kept judgments (the pairs in (a, b) order).</summary>
+            private int PairAt(int a, int b) => (int)((((long)a * ((2L * convexCount) - a - 1)) / 2) + (b - a - 1));
+
             private int RefuteByHulls(int a, int b)
             {
                 stats[StatTriedB]++;
+                if (judged == null || b >= convexCount) return RefuteByHullsNow(a, b);
+
+                // NPC-PAIR-REUSE-1: two convexes (a < b): the nodes whose hulls are the same whatever the mesh components are.
+                int at = PairAt(a, b);
+                int state = judged[at] & JudgedStateMask;
+                if (keptStats != null) keptStats[KeptTriedConvex]++;
+                if (state >= JudgedApartByHulls)
+                {
+                    // carried out before on these two hulls: its units as it spent them (a budget it would have passed stops here too)
+                    meter.Charge(judgedWork[at]);
+                    if (meter.Stopped) return 0;
+                    if (keptStats != null) keptStats[KeptReused]++;
+                    if (state == JudgedApartByHulls)
+                    {
+                        stats[StatRefutedB]++;
+                        return 1;
+                    }
+
+                    if (state == JudgedAtLimit) stats[StatGjkLimitHit]++;
+                    stats[StatAmbiguousB]++;
+                    return 0;
+                }
+
+                long before = meter.work, limitBefore = stats[StatGjkLimitHit];
+                int outcome = RefuteByHullsNow(a, b);
+                if (meter.Stopped) return outcome;   // cut short: nothing is kept of it
+                long units = meter.work - before;
+                if (units > int.MaxValue) return outcome;
+                judged[at] = (byte)((outcome == 1 ? JudgedApartByHulls : stats[StatGjkLimitHit] != limitBefore ? JudgedAtLimit : JudgedNotApart) | judgedOrigin);
+                judgedWork[at] = (int)units;
+                if (keptStats != null) keptStats[KeptJudged]++;
+                return outcome;
+            }
+
+            // NPC-PAIR-REUSE-1: whether the convexes are all held together by pairs of convexes the hulls cannot take apart -- pairs
+            // whose boxes are within the bound and whose hulls GJK settled as meeting or within the bound. Such a pair is a candidate
+            // of the graph whatever the mesh components are, and no search over it can take it off: a placement, which has a convex
+            // on each side, would have such a pair across its sides. The pairs in (a, b) order; a pair already in one group is not
+            // judged; a pair at the iteration limit holds nothing (not a conclusion). Its own meter (the decision's budget).
+            // work[0, convexCount): the groups' union-find.
+            private void ExecuteLinks()
+            {
+                meter = WorkMeter.Of(workBudget);
+                int groups = convexCount;
+                for (int i = 0; i < convexCount && !meter.Stopped; i++) { work[i] = i; meter.Spend(1); }
+                for (int a = 0; a < convexCount && groups > 1 && !meter.Stopped; a++)
+                {
+                    for (int b = a + 1; b < convexCount && groups > 1 && !meter.Stopped; b++)
+                    {
+                        meter.Spend(1);
+                        int ra = Find(0, a), rb = Find(0, b);
+                        if (meter.Stopped) break;
+                        if (ra == rb) continue;
+                        int at = PairAt(a, b);
+                        int state = judged[at] & JudgedStateMask;
+                        if (state == JudgedNotRun)
+                        {
+                            if (BoxGap(nodeLo[a], nodeHi[a], nodeLo[b], nodeHi[b]) > bounds[2])
+                            {
+                                judged[at] = (byte)(JudgedApartByBoxes | judgedOrigin);
+                                judgedWork[at] = 0;
+                                keptStats[KeptLinkBoxApart]++;
+                                continue;
+                            }
+
+                            RefuteByHulls(a, b);
+                            if (meter.Stopped) break;
+                            state = judged[at] & JudgedStateMask;
+                            if (state == JudgedNotRun) continue;   // not kept (its units past an int): nothing is concluded from it
+                            keptStats[KeptLinkJudged]++;
+                        }
+                        else if (state == JudgedApartByBoxes) keptStats[KeptLinkBoxApart]++;
+                        else keptStats[KeptLinkReused]++;
+
+                        if (state == JudgedNotApart)
+                        {
+                            work[math.max(ra, rb)] = math.min(ra, rb);
+                            groups--;
+                            keptStats[KeptLinkHolding]++;
+                        }
+                        else if (state == JudgedAtLimit) keptStats[KeptLinkAtLimit]++;
+                        else if (state == JudgedApartByHulls) keptStats[KeptLinkApart]++;
+                    }
+                }
+
+                keptStats[KeptLinkGroups] = groups;
+                keptStats[KeptLinkStopped] = meter.Stopped ? 1 : 0;
+                keptStats[KeptLinkWork] = meter.work;
+            }
+
+            private int RefuteByHullsNow(int a, int b)
+            {
                 bool settled = Gjk(a, b, out double3 direction, out bool meet);
                 Tick(SecGjk);   // GJK's time stops at its return; the projection below is its own section, called only when GJK settled apart
                 Count(CntGjkCalls, 1);

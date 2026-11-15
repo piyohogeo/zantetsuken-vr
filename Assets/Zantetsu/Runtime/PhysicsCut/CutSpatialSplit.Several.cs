@@ -298,7 +298,8 @@ namespace Zantetsu.PhysicsCut
         internal sealed unsafe partial class Attempt
         {
             /// <summary>What this attempt holds of the main thread's blocks now.</summary>
-            internal long HeldBytes => (block.IsCreated ? block.Length : 0) + (classificationBlock.IsCreated ? classificationBlock.Length : 0) + (graphSides.IsCreated ? graphSides.Length : 0);
+            internal long HeldBytes => (block.IsCreated ? block.Length : 0) + (classificationBlock.IsCreated ? classificationBlock.Length : 0) + (graphSides.IsCreated ? graphSides.Length : 0)
+                + (pairMarks.IsCreated ? pairMarks.Length : 0) + pairKeptBytes;
         }
     }
 }

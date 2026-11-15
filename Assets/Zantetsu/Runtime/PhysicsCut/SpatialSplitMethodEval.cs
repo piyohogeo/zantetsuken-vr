@@ -111,8 +111,13 @@ namespace Zantetsu.PhysicsCut
             internal SpatialSplitPairRecord pair;
             internal bool pairLed;
             internal int graphNodes = -1, graphMeshComponents = -1;
+            /// <summary>NPC-PAIR-REUSE-1: the graph stage's whole record where it was entered (its stop, its work, its own clock, what it reused).</summary>
+            internal SpatialSplitGraphRecord graph;
             internal long graphCandidates = -1;
             internal byte[] convexSides, triangleSides;
+            // NPC-PAIR-LIVE-1: the bones each child needs as the live attempt works them out for a placement of the combination (null: not worked out, with why).
+            internal bool[] needPositive, needNegative;
+            internal string needFailure;
             internal string placement = "";
         }
 
@@ -482,6 +487,11 @@ namespace Zantetsu.PhysicsCut
                         // defaults where the issue had no graph stage), and the method as before prepared behind it as a fallback's is.
                         attempt.pairMode = PairModeOf(method);
                         attempt.pairFallback = true;
+                        // NPC-PAIR-LIVE-1: the room the live attempt takes for the children's bones, so that the run works them out as the
+                        // product's does and they can be held against the analysis's own (freed with the attempt).
+                        attempt.pairPositiveBones = new bool[Math.Max(0, b.nodeCount)];
+                        attempt.pairNegativeBones = new bool[Math.Max(0, b.nodeCount)];
+                        attempt.pairMarks = PhysicsCutBlocks.Take<byte>(Math.Max(1, attempt.boneInput.lineage.localCount));
                         attempt.graphLimits = b.graphSearch ? b.graphLimits : SpatialSplitGraphLimits.Default;
                         if (b.graphSearch && attempt.anchors == null && c >= 2)
                         {
@@ -574,6 +584,7 @@ namespace Zantetsu.PhysicsCut
                 r.pair = attempt.pair;
                 r.pairLed = attempt.pairLed;
                 if (attempt.graph.Entered) { r.graphNodes = attempt.graph.nodes; r.graphMeshComponents = attempt.graph.meshComponents; r.graphCandidates = attempt.graph.candidates; }
+                r.graph = attempt.graph;
                 bool boneRoute = method == Bone || (method == BoneFallback && !attempt.boneFellBack);
                 if (attempt.pair != null)
                 {
@@ -677,6 +688,16 @@ namespace Zantetsu.PhysicsCut
                         for (int k = 0; k < c; k++) r.convexSides[k] = sides[k] == (byte)ConvexSide.Positive ? (byte)1 : (byte)0;
                         for (int k = 0; k < triangles; k++) r.triangleSides[k] = sides[c + k] != 0 ? (byte)1 : (byte)0;
                         r.placement = attempt.pairLed ? "pair" : boneRoute ? "bone" : "graph";
+                        if (attempt.pairLed)
+                        {
+                            // NPC-PAIR-LIVE-1: the children's bones as the live attempt works them out (or why not)
+                            r.needFailure = attempt.pairBonesFailure;
+                            if (attempt.pairBonesFailure == null && attempt.pairPositiveBones != null && attempt.pairNegativeBones != null)
+                            {
+                                r.needPositive = (bool[])attempt.pairPositiveBones.Clone();
+                                r.needNegative = (bool[])attempt.pairNegativeBones.Clone();
+                            }
+                        }
                     }
                     else if (!r.bent && attempt.classified && attempt.classification != null)
                     {

@@ -828,6 +828,22 @@ namespace Zantetsu.PhysicsCut
             if (source.IsSet && positiveBones != null && negativeBones != null) _splitConvexBones[source] = (positiveBones, negativeBones);
         }
 
+        /// <summary>
+        /// NPC-PAIR-LIVE-1: the split about to be published of <paramref name="source"/> was placed by the pairwise combination: its
+        /// <see cref="Split"/> keeps on each side the bones that side needs (<see cref="CutSpatialSplit.Attempt"/>'s NeedBones: a convex
+        /// of the bone on the side, or a vertex of the side weighted to it) -- a bone both need on both -- as far as the source's piece
+        /// still holds them (<see cref="NpcBonePiece.KeepBones"/>). The arrays are copied: the attempt that made them is freed.
+        /// </summary>
+        internal void NoteSplitNeededBones(LogicalFragmentId source, bool[] positiveBones, bool[] negativeBones)
+        {
+            if (source.IsSet && positiveBones != null && negativeBones != null) _splitNeededBones[source] = ((bool[])positiveBones.Clone(), (bool[])negativeBones.Clone());
+        }
+
+        private readonly Dictionary<LogicalFragmentId, (bool[] positive, bool[] negative)> _splitNeededBones = new Dictionary<LogicalFragmentId, (bool[], bool[])>();
+
+        /// <summary>NPC-PAIR-LIVE-1: splits followed by the bones each side needs.</summary>
+        public int SplitsByNeededBones { get; private set; }
+
         private readonly Dictionary<LogicalFragmentId, float4> _splitPlanes = new Dictionary<LogicalFragmentId, float4>();
         private readonly Dictionary<LogicalFragmentId, (bool[] positive, bool[] negative)> _splitConvexBones = new Dictionary<LogicalFragmentId, (bool[], bool[])>();
 
@@ -836,15 +852,23 @@ namespace Zantetsu.PhysicsCut
             bool sided = _splitSides.TryGetValue(source, out byte[] sides);
             bool planed = _splitPlanes.TryGetValue(source, out float4 plane);
             bool byConvexes = _splitConvexBones.TryGetValue(source, out (bool[] positive, bool[] negative) convexBones);
+            bool byNeed = _splitNeededBones.TryGetValue(source, out (bool[] positive, bool[] negative) neededBones);
             _splitSides.Remove(source);
             _splitPlanes.Remove(source);
             _splitConvexBones.Remove(source);
+            _splitNeededBones.Remove(source);
             if (!_of.TryGetValue(source, out NpcBoneFragment record)) return;
             _of.Remove(source);
             Splits++;
             NpcBoneLineage lineage = record.Lineage;
             NpcBonePiece up = record.Piece, down = record.Piece;
-            if (sided)
+            if (byNeed)
+            {
+                up = record.Piece.KeepBones(neededBones.positive, lineage.Parent, lineage.Present);
+                down = record.Piece.KeepBones(neededBones.negative, lineage.Parent, lineage.Present);
+                SplitsByNeededBones++;
+            }
+            else if (sided)
             {
                 up = record.Piece.Keep(sides, 1, lineage.Parent, lineage.Present);
                 down = record.Piece.Keep(sides, 0, lineage.Parent, lineage.Present);
@@ -883,6 +907,7 @@ namespace Zantetsu.PhysicsCut
             _splitSides.Remove(fragment);
             _splitPlanes.Remove(fragment);
             _splitConvexBones.Remove(fragment);
+            _splitNeededBones.Remove(fragment);
             if (Remove(fragment)) Forgets++;
         }
 

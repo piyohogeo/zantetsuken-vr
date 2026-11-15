@@ -341,6 +341,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             BuildReplay291(root, sample, saved, out LogicalFragmentId fragment, out VpStoredGeometry geometry, out PhysicsOwnerShape shape, out NpcBoneLineage lineage, out Mesh[] meshes);
             Assert.That(root.NpcBones.TryGet(fragment, out NpcBoneFragment whole), Is.True);
 

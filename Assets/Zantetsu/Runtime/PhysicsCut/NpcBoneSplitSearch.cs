@@ -793,7 +793,7 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>Where the lineage's vertex <paramref name="local"/> (a cut's new vertex) came from.</summary>
-        private static bool TryOrigin(in Lineage lineage, int local, out uint2 origin)
+        internal static bool TryOrigin(in Lineage lineage, int local, out uint2 origin)
         {
             NpcVertexChunk[] chunks = lineage.chunks;
             for (int i = 0; i < chunks.Length; i++)

@@ -27,6 +27,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             split.MaxAttempts = 4;
             var lowers = new LogicalFragmentId[3];
             for (int k = 0; k < 3; k++)
@@ -82,6 +83,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             for (int k = 0; k < 4; k++)
             {
                 LogicalFragmentId body = AddNpcBodyWithAHand(root, new Vector3(0f, 0f, 12f * k), true, handLowX: 0.8f, trunkBottomBone: 1);

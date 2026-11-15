@@ -83,8 +83,10 @@ namespace Zantetsu.PhysicsCut
         public const string NpcBoneFallbackArgument = "-zantetsuNpcBoneFallback";
 
         /// <summary>
-        /// NPC-BONE-FALLBACK-DEFAULT-1: the Player argument that turns the NPC fallback off for a run -- the bones alone decide an NPC's
-        /// piece, as before 2026-11-04. Given with <see cref="NpcBoneFallbackArgument"/>, off wins.
+        /// NPC-BONE-FALLBACK-DEFAULT-1: the Player argument that turns the NPC fallback off for a run -- the method as before does not go
+        /// on behind an NPC's own decision. That decision is the protected combination's (the default since 2026-11-14,
+        /// NPC-PAIR-DEFAULT-1), which then ends where it places nothing; with <see cref="NpcPairProtectOffArgument"/> as well it is the
+        /// bones' alone, as before 2026-11-04. Given with <see cref="NpcBoneFallbackArgument"/>, off wins.
         /// </summary>
         public const string NpcBoneFallbackOffArgument = "-zantetsuNpcBoneFallbackOff";
 
@@ -93,10 +95,49 @@ namespace Zantetsu.PhysicsCut
         {
             bool on = arguments != null && Array.IndexOf(arguments, NpcBoneFallbackArgument) >= 0;
             bool off = arguments != null && Array.IndexOf(arguments, NpcBoneFallbackOffArgument) >= 0;
-            asked = off ? "off, asked for by " + NpcBoneFallbackOffArgument + (on ? " (given with " + NpcBoneFallbackArgument + ": off wins)" : "") + ": the bones alone decide an NPC's piece, as before 2026-11-04"
+            asked = off ? "off, asked for by " + NpcBoneFallbackOffArgument + (on ? " (given with " + NpcBoneFallbackArgument + ": off wins)" : "") + ": the method as before does not go on behind an NPC's own decision -- the protected combination's (the default since 2026-11-14), which ends where it places nothing; the bones' alone, as before 2026-11-04, with " + NpcPairProtectOffArgument + " as well"
                 : on ? "on, asked for by " + NpcBoneFallbackArgument + " (the default since 2026-11-04 in any case): an NPC's piece its bones connect goes on to the method as before"
                 : "on -- the default since 2026-11-04 (NPC-BONE-FALLBACK-DEFAULT-1): an NPC's piece its bones connect goes on to the method as before; " + NpcBoneFallbackOffArgument + " turns it off";
             return !off;
+        }
+
+        /// <summary>
+        /// NPC-PAIR-LIVE-1: the Player argument that asked for an NPC's additional split to be decided by the pairwise combination of the
+        /// bones and the geometry with the protection (pair-or-protect, mode 2) when it was a Development Player's switch; on by default
+        /// in every build since 2026-11-14 (NPC-PAIR-DEFAULT-1), it is kept for the launches that still give it (on, as the default).
+        /// </summary>
+        public const string NpcPairProtectArgument = "-zantetsuNpcPairProtect";
+
+        /// <summary>
+        /// NPC-PAIR-DEFAULT-1: the Player argument that turns the protected combination off for a run -- an NPC's piece is decided by its
+        /// bones, with the method as before behind them as the NPC fallback's own setting has it (as before 2026-11-14). Read by every
+        /// build. Given with <see cref="NpcPairProtectArgument"/>, off wins.
+        /// </summary>
+        public const string NpcPairProtectOffArgument = "-zantetsuNpcPairProtectOff";
+
+        /// <summary>The protected combination a launch asks for (<see cref="NpcPairProtectArgument"/>, <see cref="NpcPairProtectOffArgument"/>): on unless the off argument is given; the launch line's words of what was asked.</summary>
+        internal static bool ReadNpcPairProtect(string[] arguments, out string asked)
+        {
+            bool on = arguments != null && Array.IndexOf(arguments, NpcPairProtectArgument) >= 0;
+            bool off = arguments != null && Array.IndexOf(arguments, NpcPairProtectOffArgument) >= 0;
+            asked = off ? "off, asked for by " + NpcPairProtectOffArgument + (on ? " (given with " + NpcPairProtectArgument + ": off wins)" : "")
+                : on ? "on, asked for by " + NpcPairProtectArgument + " (the default since 2026-11-14 in any case)"
+                : "on -- the default since 2026-11-14 (NPC-PAIR-DEFAULT-1); " + NpcPairProtectOffArgument + " turns it off";
+            return !off;
+        }
+
+        /// <summary>The launch line of the protected combination: what was asked, what is in effect, the engine's preparation, the fallback and its graph stage.</summary>
+        internal static string DescribeNpcPairProtect(string asked, bool askedOn, bool effective, string refusal, bool enginePrepared, bool boneFallback, bool reuse)
+        {
+            string stage = reuse
+                ? "the fallback's graph stage reuses the combination's decision and is not run where the links' check holds (no bent partition after a stage not run)"
+                : "the fallback's graph stage runs from the start (" + CutSpatialSplit.PairReuseOffArgument + "): no links' check, nothing reused";
+            return "NPC PAIR PROTECT: asked: " + asked + "; in effect: " + (effective
+                    ? "on -- an NPC's additional split is decided by the pairwise combination of the bones and the geometry with the protection (pair-or-protect, mode "
+                      + CutSpatialSplit.PairProtectMode + "); where it places nothing the method as before goes on (the NPC fallback " + (boneFallback ? "on" : "OFF: it ends there") + "); " + stage
+                    : askedOn ? "OFF though asked for: " + refusal + "; an NPC's piece is decided by its bones (the NPC fallback " + (boneFallback ? "on" : "off") + ")"
+                    : "off -- an NPC's piece is decided by its bones, the method as before behind them where the NPC fallback is on (" + (boneFallback ? "on" : "off") + ")")
+                + "; the graph engine: " + (enginePrepared ? "prepared" : askedOn ? "NOT prepared" : "not asked of the combination (prepared: no)");
         }
 
         private void MakeSpatialSplit(CutWorldProfile profile)
@@ -104,6 +145,21 @@ namespace Zantetsu.PhysicsCut
             SpatialSplit = new CutSpatialSplit(this, SplitSettings(profile));
             SpatialSplit.BoneFallback = ReadNpcBoneFallback(Environment.GetCommandLineArgs(), out string fallback);
             UnityEngine.Debug.Log("NPC BONE FALLBACK: " + fallback, this);
+            // NPC-PAIR-DEFAULT-1 (every build): the protected combination is settled here, before this world's additional split issues
+            // anything -- on unless the launch turns it off; the graph engine's main-thread preparation is made sure of by the switch,
+            // and where it fails the combination stays off for this world with the reason. One line: what was asked, what is in
+            // effect, the engine's preparation, and the fallback's graph stage (CutSpatialSplit.PairReuse, read from the launch once).
+            bool pairAsked = ReadNpcPairProtect(Environment.GetCommandLineArgs(), out string pairWords);
+            SpatialSplit.SetPairProtect(pairAsked);
+            UnityEngine.Debug.Log(DescribeNpcPairProtect(pairWords, pairAsked, SpatialSplit.PairEffective, SpatialSplit.PairRefusal, SpatialSplitGraph.IsPrepared, SpatialSplit.BoneFallback, CutSpatialSplit.PairReuse), this);
+#if ZANTETSU_OBSERVE
+            if (SpatialSplit.PairEffective && SpatialSplitCaptureSession.Sink != null && SpatialSplitCaptureSession.CaptureBones)
+            {
+                // the capture's bone-results line is the bone-aware decision's own (an attempt the combination decides has none)
+                UnityEngine.Debug.LogError("SPLIT CAPTURE: the NPC attempts' capture is of the bone-aware decision (bone-results.jsonl); with the protected combination on an NPC's attempt "
+                    + "has no result line there. Launch a capture with " + NpcPairProtectOffArgument + ".", this);
+            }
+#endif
             if (TryReadRetryAfter(Environment.GetCommandLineArgs(), out int holds, out double seconds, out string refusal))
             {
                 SpatialSplit.RetryAfterHolds = holds;

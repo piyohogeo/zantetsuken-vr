@@ -635,6 +635,22 @@ namespace Zantetsu.PhysicsCut
         /// A name of the two children a placement makes, the same whichever of them is called positive: the sides with the first
         /// triangle's side as 1 (a convex cut by a plane stays 2), hashed. "" where the placement is not told by sides.
         /// </summary>
+        /// <summary>NPC-PAIR-LIVE-1: the bones a child needs as a list of their numbers ("null" where they were not worked out).</summary>
+        internal static string NeedJson(bool[] bones)
+        {
+            if (bones == null) return "null";
+            var s = new StringBuilder("[");
+            bool first = true;
+            for (int k = 0; k < bones.Length; k++)
+            {
+                if (!bones[k]) continue;
+                s.Append(first ? "" : ",").Append(k);
+                first = false;
+            }
+
+            return s.Append(']').ToString();
+        }
+
         internal static string PartitionHash(byte[] convexSides, byte[] triangleSides)
         {
             if (convexSides == null || triangleSides == null || triangleSides.Length == 0) return "";
@@ -670,7 +686,22 @@ namespace Zantetsu.PhysicsCut
                 .Append(",\"sidesHash\":").Append(r.sidesHash != null ? "\"" + r.sidesHash + "\"" : "null").Append(",\"partition\":\"").Append(PartitionHash(r.convexSides, r.triangleSides)).Append('"')
                 .Append(",\"blockBytes\":").Append(r.blockBytes).Append(",\"classificationBytes\":").Append(r.classificationBytes).Append(",\"sidesBytes\":").Append(r.sidesBytes)
                 .Append(",\"workerNativeBytes\":").Append(r.workerNativeBytes).Append(",\"prepareManagedBytes\":").Append(r.prepareManagedBytes)
-                .Append(",\"graphBurstRan\":").Append(B(r.graphBurstRan)).Append(",\"kernelManaged\":").Append(B(r.kernelManaged)).Append(",\"pair\":");
+                .Append(",\"graphBurstRan\":").Append(B(r.graphBurstRan)).Append(",\"kernelManaged\":").Append(B(r.kernelManaged)).Append(",\"graph\":");
+            SpatialSplitGraphRecord g = r.graph;
+            if (!g.Entered) t.Append("null");
+            else
+            {
+                // NPC-PAIR-REUSE-1: the graph stage as it ended, with what it reused (its seconds are the stage's own clock)
+                t.Append("{\"verdict\":\"").Append(g.verdict).Append("\",\"stop\":\"").Append(g.stop).Append("\",\"skipped\":").Append(B(g.skipped)).Append(",\"reusedInput\":").Append(B(g.reusedInput))
+                    .Append(",\"nodes\":").Append(g.nodes).Append(",\"candidates\":").Append(g.candidates).Append(",\"cutAttempts\":").Append(g.cutAttempts).Append(",\"gjkLimitHit\":").Append(g.gjkLimitHit)
+                    .Append(",\"work\":").Append(g.work).Append(",\"workPrepare\":").Append(g.workPrepare).Append(",\"workSearch\":").Append(g.workSearch).Append(",\"nativeBytes\":").Append(g.nativeBytes)
+                    .Append(",\"hullPairs\":").Append(g.hullPairs).Append(",\"convexHullPairs\":").Append(g.convexHullPairs).Append(",\"reusedPairs\":").Append(g.reusedPairs)
+                    .Append(",\"linkRan\":").Append(B(g.linkRan)).Append(",\"linkHeld\":").Append(B(g.linkHeld)).Append(",\"linkGroups\":").Append(g.linkGroups)
+                    .Append(",\"linkJudged\":").Append(g.linkJudged).Append(",\"linkReused\":").Append(g.linkReused).Append(",\"linkBoxApart\":").Append(g.linkBoxApart).Append(",\"linkAtLimit\":").Append(g.linkAtLimit)
+                    .Append(",\"ms\":").Append(Ms(g.seconds, inv)).Append(",\"linkMs\":").Append(Ms(g.linkSeconds, inv)).Append(",\"reason\":").Append(SpatialSplitCaptureSink.Json(g.reason ?? "")).Append('}');
+            }
+
+            t.Append(",\"pair\":");
             SpatialSplitPairRecord p = r.pair;
             if (p == null)
             {

@@ -92,6 +92,12 @@ namespace Zantetsu.PhysicsCut
             /// <summary>NPC-PAIR-EVAL-1 (the evaluation's): the topology and the bones' attributes of the nodes, and the counts by pair kind; null in the product.</summary>
             public PairInput pair;
 
+            /// <summary>NPC-PAIR-REUSE-1: where this decision's compaction, first preparation and convex judgments are left for a later decision of the same input (null: nothing is kept).</summary>
+            public Kept keep;
+
+            /// <summary>NPC-PAIR-REUSE-1: what an earlier decision left; reused only where <see cref="Kept.Matches"/> says this decision is of the same input under the same conditions (null: nothing is reused).</summary>
+            public Kept reuse;
+
             /// <summary>Tests only: the allocation with this ordinal (1-based) fails. -1 in use.</summary>
             public int testFailNativeAllocation = -1;
 
@@ -237,6 +243,11 @@ namespace Zantetsu.PhysicsCut
 
             /// <summary>How many times the candidate lists were grown (the preparation re-run each time), and how many allocations the decision made.</summary>
             public int listGrowths, allocations;
+
+            /// <summary>NPC-PAIR-REUSE-1: the compaction and the preparation's first part were an earlier decision's (not computed again).</summary>
+            public bool reusedInput;
+            /// <summary>NPC-PAIR-REUSE-1: the hull judgments asked of two convexes; of them, those answered from the kept ones; those carried out and kept.</summary>
+            public long triedConvexB, reusedB, judgedB;
         }
 
         /// <summary>Tests: the preparation's outputs, copied after the body ran (never in a measured run).</summary>
@@ -295,6 +306,214 @@ namespace Zantetsu.PhysicsCut
         internal sealed class GraphAllocationException : Exception
         {
             public GraphAllocationException(string message, Exception inner = null) : base(message, inner) { }
+        }
+
+        // ---- NPC-PAIR-REUSE-1: what one decision leaves for a later one of the same input ---------------------------------------
+
+        /// <summary>
+        /// What a decision of a span input leaves for a later decision of the very same input (<see cref="GraphSettings.keep"/>,
+        /// <see cref="GraphSettings.reuse"/>): the compact arrays, the preparation's first part (the owner coordinates, the bounds,
+        /// the corners' slots), the convexes' hulls and boxes in owner coordinates, and the geometric judgments carried out on pairs
+        /// of convexes. None of it depends on how the mesh components are made, on the bones or on the protection: the convexes are
+        /// the same nodes in every graph of the input, and a judgment is kept only when the geometry carried it out.
+        /// <para>
+        /// It belongs to the thread that decides and lives no longer than that thread's run of the attempt: whoever made it
+        /// disposes it. Its areas are the engine's (counted by the live count); the areas it takes over from the decision that
+        /// filled it were counted against that decision's byte cap, and a decision that reuses them counts them against its own as
+        /// if it had allocated them. Its own small tables (the convexes' copies, the judgments: <see cref="OwnBytes"/>) are apart.
+        /// </para>
+        /// </summary>
+        internal sealed class Kept : IDisposable
+        {
+            // what it was made from
+            internal VpRenderVertex* vertices;
+            internal uint* indices;
+            internal ConvexBrepBank* banks;
+            internal ConvexBrepRange* ranges;
+            internal float3[][] convexArrays;   // the Editor's convexes (the same array object), or null: the banks and ranges
+            internal int vertexViewLength, indexCount, convexCount;
+            internal float4x4 geometryToOwner, shapeToOwner;
+            internal float margin;
+            internal int gjkMaxIterations, maxTriangles, maxConvexes, maxVertexSpan;
+            internal long maxGraphBytes, workBudget;
+
+            // the compaction
+            internal NativeArray<float3> local;
+            internal NativeArray<uint> ids, compactIndices;
+            internal int named, compactAllocations, vertexSpan, referencedVertices;
+            internal long compactWork, compactBytes;
+
+            // the preparation's first part
+            internal NativeArray<double3> owner;
+            internal NativeArray<int> cornerSlot;
+            internal NativeArray<double> bounds;
+            internal long prefixUnits;
+
+            // the convexes, and the judgments of their pairs
+            internal NativeArray<double3> hull, lo, hi;
+            internal NativeArray<int> hullStart;
+            internal NativeArray<byte> judged;
+            internal NativeArray<int> judgedWork;
+
+            /// <summary>The preparation that filled it completed (its tables were made); the areas follow when the decision returns.</summary>
+            internal bool prepared;
+            internal bool hasCompact, hasPrefix, noted;
+
+            /// <summary>Everything a later decision reads is here.</summary>
+            internal bool Usable => prepared && hasCompact && hasPrefix && judged.IsCreated && bounds.IsCreated;
+
+            /// <summary>The bytes of its own tables: the convexes' hulls, starts and boxes, the bounds, the judgments and their units.</summary>
+            internal long OwnBytes => ((long)hull.Length * 24) + ((long)hullStart.Length * 4) + ((long)lo.Length * 24) + ((long)hi.Length * 24) + ((long)bounds.Length * 8)
+                + judged.Length + ((long)judgedWork.Length * 4);
+
+            /// <summary>The most <see cref="OwnBytes"/> can be for an input of so many convexes of at most so many vertices each (known before the decision).</summary>
+            internal static long OwnBytesAtMost(int convexCount, int maxConvexVertices)
+            {
+                long c = Math.Max(0, convexCount), pairs = Math.Max(1, c * (c - 1) / 2);
+                return (Math.Max(1, c * Math.Max(0, maxConvexVertices)) * 24) + ((c + 1) * 4) + (Math.Max(1, c) * 48) + (4 * 8) + (pairs * 5);
+            }
+
+            /// <summary>All the bytes it holds: its own tables and the areas taken over from the decision that filled it.</summary>
+            internal long Bytes => OwnBytes + ((long)local.Length * 12) + ((long)ids.Length * 4) + ((long)compactIndices.Length * 4) + ((long)owner.Length * 24) + ((long)cornerSlot.Length * 4);
+
+            internal void NoteInput(SpanInput span, GraphSettings settings, long compactBytesNow, int allocationsNow, int span0, int referenced)
+            {
+                vertices = span.vertices; indices = span.indices; banks = span.banks; ranges = span.ranges; convexArrays = span.convexVertices;
+                vertexViewLength = span.vertexViewLength; indexCount = span.indexCount; convexCount = ConvexesOf(span);
+                geometryToOwner = span.geometryToOwner; shapeToOwner = span.shapeToOwner; margin = span.margin;
+                gjkMaxIterations = settings.gjkMaxIterations; maxTriangles = settings.maxTriangles; maxConvexes = settings.maxConvexes; maxVertexSpan = settings.maxVertexSpan;
+                maxGraphBytes = settings.maxGraphBytes; workBudget = settings.workBudget;
+                compactBytes = compactBytesNow; compactAllocations = allocationsNow; vertexSpan = span0; referencedVertices = referenced;
+                noted = true;
+            }
+
+            /// <summary>
+            /// Whether a decision of <paramref name="span"/> under <paramref name="settings"/> is of the input this was made from, under
+            /// the conditions its contents were computed with: the same vertex view, indices, convexes, frames and margin (the same
+            /// memory, read under the same lease and hold), the same iteration limit, budget and caps, no pair attributes (their own
+            /// preparation differs), and none of the measuring or test modes (their counts and ordinals are of a full run).
+            /// </summary>
+            internal bool Matches(SpanInput span, GraphSettings settings, PrepareSnapshot snapshot)
+            {
+                return Usable && noted && span != null && settings != null && snapshot == null && settings.pair == null && settings.keep == null
+                    && ReferenceEquals(span.convexVertices, convexArrays) && span.vertices == vertices && span.indices == indices && span.banks == banks && span.ranges == ranges
+                    && span.vertexViewLength == vertexViewLength && span.indexCount == indexCount && ConvexesOf(span) == convexCount
+                    && Same(in span.geometryToOwner, in geometryToOwner) && Same(in span.shapeToOwner, in shapeToOwner) && span.margin == margin
+                    && settings.gjkMaxIterations == gjkMaxIterations && settings.maxTriangles == maxTriangles && settings.maxConvexes == maxConvexes
+                    && settings.maxVertexSpan == maxVertexSpan && settings.maxGraphBytes == maxGraphBytes && settings.workBudget == workBudget
+                    && settings.measure == 0 && !settings.hashPrepare && !settings.pairsSweep && settings.testFailNativeAllocation < 0 && settings.testGuardBytes == 0;
+            }
+
+            private static int ConvexesOf(SpanInput span) => span.convexVertices != null ? span.convexVertices.Length : span.convexCount;
+
+            private static bool Same(in float4x4 a, in float4x4 b) => math.all(a.c0 == b.c0) && math.all(a.c1 == b.c1) && math.all(a.c2 == b.c2) && math.all(a.c3 == b.c3);
+
+            /// <summary>The preparation completed: the first part's units, the bounds, the convexes' hulls and boxes copied, and the judgments' tables made (all pairs not run).</summary>
+            internal void TakePrepared(long units, NativeArray<double> boundsNow, NativeArray<double3> hullNow, NativeArray<int> hullStartNow, NativeArray<double3> loNow, NativeArray<double3> hiNow,
+                int convexes, ref Areas areas)
+            {
+                prefixUnits = units;
+                int hullEnd = convexes > 0 ? hullStartNow[convexes] : 0;
+                int pairs = (int)Math.Min(int.MaxValue, Math.Max(1L, (long)convexes * (convexes - 1) / 2));
+                bounds = NewArray<double>(4, NativeArrayOptions.UninitializedMemory, ref areas, 8);
+                hull = NewArray<double3>(Math.Max(1, hullEnd), NativeArrayOptions.UninitializedMemory, ref areas, 24);
+                hullStart = NewArray<int>(convexes + 1, NativeArrayOptions.UninitializedMemory, ref areas, 4);
+                lo = NewArray<double3>(Math.Max(1, convexes), NativeArrayOptions.UninitializedMemory, ref areas, 24);
+                hi = NewArray<double3>(Math.Max(1, convexes), NativeArrayOptions.UninitializedMemory, ref areas, 24);
+                judged = NewArray<byte>(pairs, NativeArrayOptions.ClearMemory, ref areas, 1);
+                judgedWork = NewArray<int>(pairs, NativeArrayOptions.ClearMemory, ref areas, 4);
+                for (int i = 0; i < 4; i++) bounds[i] = boundsNow[i];
+                for (int i = 0; i < hullEnd; i++) hull[i] = hullNow[i];
+                for (int c = 0; c <= convexes; c++) hullStart[c] = hullStartNow[c];
+                for (int c = 0; c < convexes; c++) { lo[c] = loNow[c]; hi[c] = hiNow[c]; }
+                prepared = true;
+            }
+
+            public void Dispose()
+            {
+                prepared = false; hasCompact = false; hasPrefix = false;
+                Free(ref local); Free(ref ids); Free(ref compactIndices);
+                Free(ref owner); Free(ref cornerSlot); Free(ref bounds);
+                Free(ref hull); Free(ref hullStart); Free(ref lo); Free(ref hi);
+                Free(ref judged); Free(ref judgedWork);
+            }
+        }
+
+        /// <summary>NPC-PAIR-REUSE-1: one run of the links' check (<see cref="ConvexesHeld"/>).</summary>
+        internal sealed class LinkRun
+        {
+            /// <summary>The check's body ran to its end (false: nothing to check with, an allocation refused, the engine not prepared, or its budget passed).</summary>
+            public bool ran;
+            /// <summary>Every convex is in one group held by pairs of convexes the hulls settled as not apart: no placement of any graph of this input has a convex on each side.</summary>
+            public bool held;
+            public bool burstRan;
+            public int convexes, groups;
+            /// <summary>The pairs it looked at by what the geometry says of them, the judgments it carried out itself, and those it read from the kept ones.</summary>
+            public long boxApart, holding, atLimit, apartByHulls, judged, reused, work;
+            public double seconds;
+            public string reason = "";
+        }
+
+        /// <summary>
+        /// NPC-PAIR-REUSE-1: whether no graph of the kept input can place a convex on each side -- the convexes are all held together
+        /// by pairs of convexes whose boxes are within the bound and whose hulls GJK settled as meeting or within the bound. The
+        /// convexes' hulls, the bounds and the iteration limit are the kept ones (the same in every graph of the input); the
+        /// judgments already carried out are read, the others carried out and kept for the decision that follows. A pair at the
+        /// iteration limit holds nothing. Never throws for an allocation; anything short of a proof is "not held".
+        /// </summary>
+        internal static LinkRun ConvexesHeld(Kept kept, GraphSettings settings, bool burst)
+        {
+            long begin = Stopwatch.GetTimestamp();
+            var link = new LinkRun();
+            if (kept == null || !kept.Usable || settings == null) { link.reason = "nothing kept to check with"; return link; }
+            link.convexes = kept.convexCount;
+            if (kept.convexCount < 2) { link.reason = "fewer than two convexes"; return link; }
+            if (settings.gjkMaxIterations != kept.gjkMaxIterations) { link.reason = "another iteration limit"; return link; }
+            if (settings.requirePrepared && !IsPrepared) { link.reason = "the engine is not prepared"; return link; }
+            NativeArray<int> work = default;
+            NativeArray<long> stats = default, keptStats = default;
+            var areas = new Areas { failAt = -1 };
+            try
+            {
+                work = NewArray<int>(kept.convexCount, NativeArrayOptions.UninitializedMemory, ref areas, 4);
+                stats = NewArray<long>(StatCount, NativeArrayOptions.ClearMemory, ref areas, 8);
+                keptStats = NewArray<long>(KeptStatCount, NativeArrayOptions.ClearMemory, ref areas, 8);
+                var body = new SearchBody
+                {
+                    n = kept.convexCount, convexCount = kept.convexCount, candidateCount = 0, gjkMaxIterations = kept.gjkMaxIterations,
+                    nodeLo = (double3*)kept.lo.GetUnsafePtr(), nodeHi = (double3*)kept.hi.GetUnsafePtr(), nodeHullStart = (int*)kept.hullStart.GetUnsafePtr(),
+                    hull = (double3*)kept.hull.GetUnsafePtr(), bounds = (double*)kept.bounds.GetUnsafePtr(), stats = (long*)stats.GetUnsafePtr(),
+                    work = (int*)work.GetUnsafePtr(), measure = 0, workBudget = settings.workBudget,
+                    judged = (byte*)kept.judged.GetUnsafePtr(), judgedWork = (int*)kept.judgedWork.GetUnsafePtr(), keptStats = (long*)keptStats.GetUnsafePtr(),
+                    judgedOrigin = JudgedByLinks, linksOnly = 1,
+                };
+                if (burst) RunSearch(ref body); else body.Execute();
+                link.burstRan = burst && stats[StatManagedMarker] == 0;
+                link.groups = (int)keptStats[KeptLinkGroups];
+                link.boxApart = keptStats[KeptLinkBoxApart]; link.holding = keptStats[KeptLinkHolding]; link.atLimit = keptStats[KeptLinkAtLimit];
+                link.apartByHulls = keptStats[KeptLinkApart]; link.judged = keptStats[KeptLinkJudged]; link.reused = keptStats[KeptLinkReused];
+                link.work = keptStats[KeptLinkWork];
+                link.ran = keptStats[KeptLinkStopped] == 0;
+                link.held = link.ran && link.groups == 1;
+                link.reason = !link.ran ? "the work budget passed in the links' check"
+                    : link.held ? "every convex is held to the others by pairs of convexes the hulls cannot take apart"
+                    : link.groups + " groups of convexes are not held together";
+            }
+            catch (GraphAllocationException e)
+            {
+                link.reason = "a native allocation failed: " + e.Message;
+            }
+            catch (OutOfMemoryException e)
+            {
+                link.reason = "out of memory: " + e.Message;
+            }
+            finally
+            {
+                Free(ref work); Free(ref stats); Free(ref keptStats);
+                link.seconds = Since(begin);
+            }
+
+            return link;
         }
 
         // ---- the main-thread preparation (GRAPH-CONNECT-1 §1.4) ---------------------------------------------------------------
@@ -457,7 +676,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         internal static long LiveNativeAllocations;
 
-        private struct Areas
+        internal struct Areas
         {
             public int allocations, failAt;
             public bool failAsOutOfMemory;
@@ -544,6 +763,8 @@ namespace Zantetsu.PhysicsCut
         {
             var areas = new Areas { failAt = settings.testFailNativeAllocation, failAsOutOfMemory = settings.testFailWithOutOfMemory };
             var nc = new NativeCompact();
+            // NPC-PAIR-REUSE-1: what this decision leaves (a span input's only), and what it reads of an earlier one's
+            Kept keep = compact == null && span != null ? settings.keep : null, reuse = null;
             try
             {
                 // ---- 0. The caps known from the counts alone, before anything is scanned or allocated (Unfinished(capacity), never Invalid).
@@ -582,12 +803,39 @@ namespace Zantetsu.PhysicsCut
                 // The Editor's compact input is copied (unmetered: not the product's path); the span input is scanned and compacted
                 // here, on the deciding thread, with the scans and copies on the work meter (work 3), into areas counted like the engine's.
                 if (compact != null) { if (!FromCompact(compact, settings, r, ref areas, ref nc)) return; }
+                else if (settings.reuse != null && settings.reuse.Matches(span, settings, snapshot))
+                {
+                    // NPC-PAIR-REUSE-1: the same input was compacted by an earlier decision: its arrays are read (they stay the kept
+                    // set's), and the work, the bytes and the counts are what the compaction would have come to here.
+                    reuse = settings.reuse;
+                    nc.local = reuse.local; nc.ids = reuse.ids; nc.indices = reuse.compactIndices;
+                    nc.named = reuse.named; nc.indexCount = reuse.indexCount; nc.vertexViewLength = reuse.vertexViewLength;
+                    nc.geometryToOwner = reuse.geometryToOwner; nc.shapeToOwner = reuse.shapeToOwner; nc.margin = reuse.margin; nc.work = reuse.compactWork;
+                    areas.bytes = reuse.compactBytes; areas.allocations = reuse.compactAllocations;
+                    r.workPrepare = r.work = nc.work;
+                    r.vertexSpan = reuse.vertexSpan; run.vertexSpan = reuse.vertexSpan;
+                    r.referencedVertices = reuse.referencedVertices; run.referencedVertices = reuse.referencedVertices;
+                    run.reusedInput = true;
+                }
                 else if (!FromSpan(span, settings, r, run, ref areas, ref nc)) return;
 
-                DecideCore(in nc, in convexes, settings, burst, r, run, begin, snapshot, ref areas, sidesOut);
+                if (keep != null) keep.NoteInput(span, settings, areas.bytes, areas.allocations, r.vertexSpan, r.referencedVertices);
+                DecideCore(in nc, in convexes, settings, burst, r, run, begin, snapshot, ref areas, sidesOut, keep, reuse);
             }
             finally
             {
+                if (reuse != null)
+                {
+                    nc = default;   // the kept set's arrays: not this decision's to release
+                }
+                else if (keep != null && keep.prepared && keep.hasPrefix && nc.local.IsCreated)
+                {
+                    // the compact arrays go to the kept set with the preparation's (they were counted against this decision's cap)
+                    keep.local = nc.local; keep.ids = nc.ids; keep.compactIndices = nc.indices;
+                    keep.named = nc.named; keep.compactWork = nc.work; keep.hasCompact = true;
+                    nc = default;
+                }
+
                 Free(ref nc.local); Free(ref nc.ids); Free(ref nc.indices);
                 run.nativeBytes = areas.bytes;
                 run.allocations = areas.allocations;
@@ -797,7 +1045,8 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
-        private static void DecideCore(in NativeCompact nc, in ConvexSource convexes, GraphSettings settings, bool burst, GraphOutcome r, NativeRun run, long begin, PrepareSnapshot snapshot, ref Areas areas, byte* sidesOut)
+        private static void DecideCore(in NativeCompact nc, in ConvexSource convexes, GraphSettings settings, bool burst, GraphOutcome r, NativeRun run, long begin, PrepareSnapshot snapshot, ref Areas areas, byte* sidesOut,
+            Kept keep = null, Kept reuse = null)
         {
             int named = nc.named;
             int triangleCount = nc.indexCount / 3;
@@ -822,6 +1071,9 @@ namespace Zantetsu.PhysicsCut
             NativeArray<int> slotKey = default, topologyFirst = default;
             NativeArray<byte> candInit = default;
             NativeArray<long> pairStats = default;
+            // NPC-PAIR-REUSE-1: the kept set's counts, in an area of their own (not this decision's bytes: its caps read as before)
+            NativeArray<long> keptStats = default;
+            var keptAreas = new Areas { failAt = -1 };
             PairInput pair = settings.pair;
             int nodeCapacity = convexCount + triangleCount;
             int hullCapacity = convexVertexTotal + (3 * triangleCount);
@@ -842,10 +1094,35 @@ namespace Zantetsu.PhysicsCut
                     return;
                 }
 
+                if (keep != null || reuse != null)
+                {
+                    try
+                    {
+                        keptStats = NewArray<long>(KeptStatCount, NativeArrayOptions.ClearMemory, ref keptAreas, 8);
+                    }
+                    catch (GraphAllocationException)
+                    {
+                        keep = null;   // nothing is kept of this decision; a reuse goes on without its counts
+                    }
+                }
+
                 convexLocal = NewArray<float3>(Math.Max(1, convexVertexTotal), NativeArrayOptions.UninitializedMemory, ref areas, 12);
                 convexStart = NewArray<int>(convexCount + 1, NativeArrayOptions.ClearMemory, ref areas, 4);
-                owner = NewArray<double3>(Math.Max(1, named), NativeArrayOptions.UninitializedMemory, ref areas, 24);
-                cornerSlot = NewArray<int>(Math.Max(1, nc.indexCount), NativeArrayOptions.UninitializedMemory, ref areas, 4);
+                if (reuse != null)
+                {
+                    // NPC-PAIR-REUSE-1: the owner coordinates and the corners' slots of this input are the kept set's -- read in
+                    // place, counted against this decision's cap as the two areas it would have allocated.
+                    owner = reuse.owner;
+                    cornerSlot = reuse.cornerSlot;
+                    areas.allocations += 2;
+                    areas.bytes += ((long)owner.Length * 24) + ((long)cornerSlot.Length * 4);
+                }
+                else
+                {
+                    owner = NewArray<double3>(Math.Max(1, named), NativeArrayOptions.UninitializedMemory, ref areas, 24);
+                    cornerSlot = NewArray<int>(Math.Max(1, nc.indexCount), NativeArrayOptions.UninitializedMemory, ref areas, 4);
+                }
+
                 triComponent = NewArray<int>(Math.Max(1, triangleCount), NativeArrayOptions.UninitializedMemory, ref areas, 4);
                 nodeLo = NewArray<double3>(Math.Max(1, nodeCapacity), NativeArrayOptions.UninitializedMemory, ref areas, 24);
                 nodeHi = NewArray<double3>(Math.Max(1, nodeCapacity), NativeArrayOptions.UninitializedMemory, ref areas, 24);
@@ -964,7 +1241,10 @@ namespace Zantetsu.PhysicsCut
                     pairRows = pair != null ? pair.rows : null, pairNodes = pair != null ? pair.nodes : 0, pairClusterWords = pair != null ? pair.clusterWords : 0,
                     pairRowWords = pair != null ? pair.rowWords : 0, pairProtect = pair != null && pair.protect ? 1 : 0, pairTriComponent = pair != null ? pair.triComponent : null,
                     pairStats = pairStats.IsCreated ? (long*)pairStats.GetUnsafePtr() : null,
+                    reuse = reuse != null ? 1 : 0, reuseUnits = reuse != null ? reuse.prefixUnits : 0,
+                    keptStats = keptStats.IsCreated ? (long*)keptStats.GetUnsafePtr() : null,
                 };
+                if (reuse != null) for (int i = 0; i < 4; i++) bounds[i] = reuse.bounds[i];   // the first part's bounds (the body does not write them again)
                 run.pairsSweep = settings.pairsSweep;
                 // The body never reallocates a list: a full list ends it with StopGrow and the next capacity. The driver -- the one
                 // place that allocates, through NewList and its failure boundary -- frees the lists, allocates them at that capacity
@@ -1038,6 +1318,27 @@ namespace Zantetsu.PhysicsCut
                         : "a growth of the candidate lists to " + stats[StatNeededCapacity] + " pairs was refused (cap " + run.candidateCap + "; maxCandidates " + settings.maxCandidates + ", maxGraphBytes " + settings.maxGraphBytes + ")";
                     Unfinish(r, stats[StatStop] == StopWork ? "work" : "capacity", why);
                     return;
+                }
+
+                if (keep != null)
+                {
+                    // NPC-PAIR-REUSE-1: the preparation completed: the first part's units, the bounds and the convexes' hulls and boxes
+                    // for a later decision of this input, and the table its judgments of pairs of convexes go to. A refusal here
+                    // keeps nothing and changes nothing of this decision.
+                    try
+                    {
+                        keep.TakePrepared(keptStats[KeptPrefixUnits], bounds, hull, nodeHullStart, nodeLo, nodeHi, convexCount, ref keptAreas);
+                    }
+                    catch (GraphAllocationException)
+                    {
+                        keep.Dispose();
+                        keep = null;
+                    }
+                    catch (OutOfMemoryException)
+                    {
+                        keep.Dispose();
+                        keep = null;
+                    }
                 }
 
                 if (settings.hashPrepare)
@@ -1146,6 +1447,16 @@ namespace Zantetsu.PhysicsCut
                     deal = pair != null && pair.rows != null ? 1 : 0,   // with the bones: the bone-aware split's placement among the full groups
                     pairRows = pair != null ? pair.rows : null, pairRowWords = pair != null ? pair.rowWords : 0, pairClusterWords = pair != null ? pair.clusterWords : 0,
                 };
+                Kept table = keep ?? reuse;
+                if (table != null && table.judged.IsCreated && table.convexCount == convexCount && table.gjkMaxIterations == settings.gjkMaxIterations)
+                {
+                    // NPC-PAIR-REUSE-1: the judgments of pairs of convexes carried out on this input -- read where one exists, written where one is made
+                    search.judged = (byte*)table.judged.GetUnsafePtr();
+                    search.judgedWork = (int*)table.judgedWork.GetUnsafePtr();
+                    search.keptStats = keptStats.IsCreated ? (long*)keptStats.GetUnsafePtr() : null;
+                    search.judgedOrigin = pair != null ? JudgedByCombination : JudgedByGraph;
+                }
+
                 run.nearestSelection = settings.nearestSelection;
                 run.flowDinic = settings.flowDinic;
                 if (burst) RunSearch(ref search); else search.Execute();
@@ -1153,6 +1464,7 @@ namespace Zantetsu.PhysicsCut
                 run.bodiesRan = true;
                 run.burstRan = burst && stats[StatManagedMarker] == 0;
                 run.secondsSearch = Since(t3);
+                if (keptStats.IsCreated) { run.triedConvexB = keptStats[KeptTriedConvex]; run.reusedB = keptStats[KeptReused]; run.judgedB = keptStats[KeptJudged]; }
                 CheckGuard(nodeSide, mLen, 1, guard, "nodeSide"); CheckGuard(work, workLen, 4, guard, "work"); CheckGuard(work3, work3Len, 24, guard, "work3"); CheckGuard(workD, workDLen, 8, guard, "workD"); CheckGuard(workB, workBLen, 1, guard, "workB");
                 r.workSearch = stats[StatWorkSearch];
                 r.work = r.workPrepare + r.workSearch;
@@ -1377,6 +1689,18 @@ namespace Zantetsu.PhysicsCut
             {
                 // Whatever happened -- an input refused after the first allocation, an allocation failed, a body threw -- every
                 // native area that was created is released here; the live count proves it in the tests.
+                if (reuse != null)
+                {
+                    owner = default; cornerSlot = default;   // the kept set's: not this decision's to release
+                }
+                else if (keep != null && keep.prepared)
+                {
+                    // NPC-PAIR-REUSE-1: the first part's areas go to the kept set (the compact arrays follow in DecideInto)
+                    keep.owner = owner; keep.cornerSlot = cornerSlot; keep.hasPrefix = true;
+                    owner = default; cornerSlot = default;
+                }
+
+                Free(ref keptStats);
                 Free(ref convexLocal); Free(ref convexStart);   // (local, ids and indices are the caller's: freed in DecideInto)
                 Free(ref owner); Free(ref cornerSlot); Free(ref triComponent); Free(ref nodeLo); Free(ref nodeHi); Free(ref nodeHullStart); Free(ref nodeTriangleCount);
                 Free(ref hull); Free(ref scratchInt); Free(ref bounds); Free(ref stats); Free(ref sections); Free(ref candidates); Free(ref gaps);

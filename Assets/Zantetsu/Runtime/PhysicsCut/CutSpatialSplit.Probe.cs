@@ -57,7 +57,7 @@ namespace Zantetsu.PhysicsCut
             note.endFrame = Time.frameCount;
             note.end = end;
             note.boneLed = attempt.boneLed;
-            note.fellBack = attempt.boneFellBack;
+            note.fellBack = attempt.FellBack;
             note.bone = attempt.bone;
             VpStoredGeometry g = attempt.input.geometry;
             note.inputVertexStart = g.vertexStart;
@@ -73,8 +73,8 @@ namespace Zantetsu.PhysicsCut
 
         private void NotePieceMade(LogicalFragmentId source, LogicalFragmentId positive, LogicalFragmentId negative, Attempt attempt)
         {
-            string by = attempt.BoneRoute ? "the bones"
-                : (attempt.boneFellBack ? "the fallback's " : "") + (attempt.graphLed ? "graph" : IsBentResult(in attempt.search) ? "bent partition" : attempt.cut ? "convex cut" : "plane");
+            string by = attempt.pairLed ? "the pairwise combination (protected)" : attempt.BoneRoute ? "the bones"
+                : (attempt.FellBack ? "the fallback's " : "") + (attempt.graphLed ? "graph" : IsBentResult(in attempt.search) ? "bent partition" : attempt.cut ? "convex cut" : "plane");
             if (_pieceNotes.Count >= PieceNoteRoom - 2) _pieceNotes.Clear();
             _pieceNotes[positive] = new PieceNote { madeFrom = source, madeFrame = Time.frameCount, madeBy = by + " (positive side)" };
             _pieceNotes[negative] = new PieceNote { madeFrom = source, madeFrame = Time.frameCount, madeBy = by + " (negative side)" };

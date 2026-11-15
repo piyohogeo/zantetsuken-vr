@@ -136,6 +136,25 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Whether the bodies ran through Burst (the direct call's own mark; false with bodiesRan: the managed fallback). Meaningful only with bodiesRan.</summary>
         public bool burstRan;
 
+        // NPC-PAIR-REUSE-1 (a fallback after the pairwise combination; all false / 0 otherwise).
+        /// <summary>
+        /// The stage was not run: the links' check proved that no graph of this input can put a convex on each side (the convexes are
+        /// all held together by pairs of convexes the hulls settled as not apart), so the stage's search could only end without a
+        /// placement. The verdict is NotFound -- a conclusion, whatever limit the search itself would have stopped at. In the
+        /// graph-first order the bent partition is not looked for after it (a policy, not a proof about the bent partition).
+        /// </summary>
+        public bool skipped;
+        /// <summary>The stage ran on the compaction and the preparation's first part the combination's decision left (not computed again).</summary>
+        public bool reusedInput;
+        /// <summary>The links' check ran to its end; it found the convexes held together; the groups of convexes it left.</summary>
+        public bool linkRan, linkHeld;
+        public int linkGroups;
+        /// <summary>The links' check: hull judgments it carried out, those it read from the kept ones, pairs apart by the boxes, pairs at the iteration limit.</summary>
+        public long linkJudged, linkReused, linkBoxApart, linkAtLimit;
+        /// <summary>The stage's own search: hull judgments asked, of them of two convexes, of them answered from the kept ones (not carried out again).</summary>
+        public long hullPairs, convexHullPairs, reusedPairs;
+        public double linkSeconds;
+
         public bool Entered => verdict != SpatialSplitGraphVerdict.None;
     }
 

@@ -168,6 +168,13 @@ namespace Zantetsu.PhysicsCut
 
         private void CountBone(Attempt attempt)
         {
+            if (attempt.pairMode != 0)
+            {
+                // NPC-PAIR-LIVE-1: the combination's attempt is counted as its own, once, and not as a decision of the bones.
+                CountPair(attempt);
+                return;
+            }
+
             if (!attempt.boneLed || !attempt.bone.Entered)
             {
                 return;
@@ -279,8 +286,11 @@ namespace Zantetsu.PhysicsCut
             // NPC-BONE-FALLBACK-1: the fallback asked for at the issue (its stages prepared), and -- the worker's -- that it ran.
             internal bool boneFallback, boneFellBack;
 
-            /// <summary>The bones decide this attempt's end and placement: an NPC's attempt that did not fall back (read after the worker).</summary>
-            internal bool BoneRoute => boneLed && !boneFellBack;
+            /// <summary>
+            /// The bones decide this attempt's end and placement: an NPC's attempt that did not fall back (read after the worker), and
+            /// was not the pairwise combination's (NPC-PAIR-LIVE-1: there the bones' decision gives the combination its attributes only).
+            /// </summary>
+            internal bool BoneRoute => boneLed && pairMode == 0 && !boneFellBack;
 
             /// <summary>The decision over the attempt's own indices, the sides into its sides' bytes (the worker).</summary>
             private void RunBone()

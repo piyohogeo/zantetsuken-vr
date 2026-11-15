@@ -272,6 +272,7 @@ namespace Zantetsu.PhysicsCut
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeConvexCut(), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeGraph(), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeBone(), this);
+                if (SpatialSplit.PairProtect) UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribePair(), this);
                 // The several-attempts control, the scan and the one-component pass (the defaults since 2026-11-13): in every build.
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeSeveral(), this);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD

@@ -140,6 +140,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(handle.TryFinishPreparation(), Is.True);
 
             CutSpatialSplit split = coldWorld.SpatialSplit;
+            split.SetPairProtect(false);   // NPC-PAIR-DEFAULT-1: this case is about the bone-aware decision (and its fallback); the protected combination, on by default, is off here
             Assert.That(split.Settings.enabled, Is.True, "the layout: the split is on by the profile");
             split.RemainingMainSeconds = () => 0.0;   // closed until the cut is over
             coldWorld.Driver.RemainingMainSeconds = () => 1.0;   // the cut's own budget open: its acceptance (Published) is not what this case is about
