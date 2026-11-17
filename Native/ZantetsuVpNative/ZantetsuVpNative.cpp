@@ -14,9 +14,9 @@
 // "not available" with its reason -- never a silent change of route (the managed side decides, and records).
 //
 // Lifetime: constants are copied into an upload ring and descriptors written into a shader-visible ring, both divided
-// into regions stamped with the frame fence value of the frame that used them; a region is reused only when that
-// fence has passed, and a frame that finds no free region is refused and counted -- it never waits. A pipeline
-// released is kept until the fence of the frame that last used it has passed. The event data belongs to the managed
+// into regions stamped with the frame fence value read in the frame that used them; a region is reused only when the
+// fence has passed that value by a margin (kFenceReuseMargin), and a frame that finds no free region is refused and
+// counted -- it never waits. A pipeline released is kept until the fence has passed its last stamp likewise. The event data belongs to the managed
 // side, which keeps it until `consumed` is set here.
 //
 // Threads: ZvnCreatePipeline/ZvnReleasePipeline run on the main thread; the event runs on Unity's rendering thread
@@ -39,9 +39,23 @@
 // page, asks the destination into the copy-destination state through Unity (RequestResourceState: Unity's later uses
 // add their own barriers) and records CopyBufferRegion into the command list Unity is recording. An event takes every
 // sealed batch up to its number, so a batch is never written before the place its event was issued at, and an event
-// that never ran is made up for by the next. A page is reused only when the frame fence of the frame that copied from
-// it has passed; a write that cannot be recorded (no command list, no page, outside the destination) is counted as
+// that never ran is made up for by the next. A page is reused only when the frame fence has passed, by a margin
+// (kFenceReuseMargin), the value read when it was copied from; a write that cannot be recorded (no command list, no page, outside the destination) is counted as
 // lost, never retried at another place in the order.
+//
+// The watch on those pages (2026-11-18, the fragments that vanish for a moment under Link): whether "the frame fence
+// of the frame that copied from it has passed" is judged on a value that stands for the command list being recorded
+// is not something the plugin API states for the rendering thread. So the main thread tells each batch the number of
+// its frame (ZvnUploadSealAt), and the event counts, always: (1) the frame fence value read differing between two
+// batches of one main frame, and (2) a page taken as free in the main frame it was last copied from or in the one
+// after -- a page whose copies may not have run yet. (Run1 of 2026-11-18 proved the fault this way, 128 of 128; the
+// margin on reuse came of it, and with it a count under (2) means the fence passed the margin within a frame or two:
+// a flush by Unity, or the margin falling short.) Asked for (ZvnUploadWatchSet), it also proves what such a reuse did:
+// before the page is overwritten it keeps the bytes each copy of this frame was to write, records a copy of the
+// destination's range into a readback buffer right there in the command list (after that copy, before anything
+// later), and once the frame fence has passed by a margin compares the two. Bytes that differ are bytes a copy read
+// from a page already overwritten; the same bytes although the page's range was overwritten mean the copy had run
+// first (Unity flushed in between), which is harmless. Nothing is corrected: the watch reports.
 
 #include <cstdarg>
 #include <cstdint>
@@ -50,6 +64,7 @@
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #define WIN32_LEAN_AND_MEAN
@@ -78,7 +93,18 @@ namespace
     const uint32_t kUploadPageIdleEvents = 256;        // upload events a free page may go unused before it is released
     const size_t kUploadSpareBatches = 8;
     const size_t kUploadSpareBatchBytes = 4 * 1024 * 1024;
-    const uint32_t kDefaultRegions = 4;
+    const uint32_t kWatchReadbackBytes = 1024 * 1024;  // of destination ranges read back and not yet compared
+    const uint32_t kWatchCheckMostBytes = 64 * 1024;   // of one write that is compared (its first bytes)
+    const size_t kWatchWritesMost = 4096;              // writes of one main frame the watch keeps
+    const size_t kWatchIncidentsKept = 6;
+    const uint64_t kWatchFenceMargin = 3;              // frame fence values past the one read before a readback is read
+    // What is stamped with a frame fence value is taken as done with only once the fence has passed the stamp by this
+    // much (2026-11-18). The value GetNextFrameFenceValue gives on the rendering thread is not the one the command
+    // list being recorded there will be signalled with: under Link it was seen one behind, the fence moving twice a
+    // frame (the watch, run1 of 2026-11-18: a page stamped 704 was free at 704 while its copy had not run). Four
+    // values are two such frames. It is a margin, not a proof: the watch on the upload pages stays to see it fail.
+    const uint64_t kFenceReuseMargin = 4;
+    const uint32_t kDefaultRegions = 16;               // a region a fence value; the margin and the GPU's lag both hold regions back
     const uint32_t kDefaultRegionBytes = 256 * 1024;
     const uint32_t kDefaultRegionDescriptors = 1024;
     const uint32_t kConstantAlignment = 256;
@@ -91,6 +117,12 @@ namespace
             object->Release();
             object = nullptr;
         }
+    }
+
+    // Whether the GPU is done with what was stamped `stamped` (see kFenceReuseMargin).
+    inline bool FencePassed(uint64_t stamped, uint64_t completedFence)
+    {
+        return stamped <= UINT64_MAX - kFenceReuseMargin && stamped + kFenceReuseMargin <= completedFence;
     }
 
     void Append(std::string& text, const char* format, ...)
@@ -224,6 +256,7 @@ namespace
     struct UploadBatch
     {
         uint64_t sequence = 0;
+        uint64_t mainFrame = 0;        // the main thread's frame it was sealed in; 0 = not told
         std::vector<UploadWrite> writes;
         std::vector<uint8_t> bytes;
     };
@@ -236,6 +269,9 @@ namespace
         uint32_t used = 0;
         uint64_t fence = 0;        // the frame fence value of the frame that copied from it; 0 = never used
         uint32_t idleEvents = 0;   // upload events it was free through and not taken in
+        uint64_t id = 0;           // the watch's name for it: the vector's places move
+        uint64_t mainFrame = 0;    // the main thread's frame of the batch that last copied from it; 0 = not told
+        uint32_t generation = 0;   // how many times it was taken as free
 
         void Destroy()
         {
@@ -265,6 +301,61 @@ namespace
     std::vector<UploadBatch*> s_uploadTaken;
     uint64_t s_uploadEvents = 0, s_uploadBatches = 0, s_uploadWrites = 0, s_uploadBytes = 0, s_uploadWritesLost = 0;
     uint64_t s_uploadPagesMade = 0, s_uploadPagesReleased = 0;
+
+    // The watch on the pages (see the notes at the top). The counts are plain atomics, written under s_mutex by the
+    // thread that saw the thing and read without it (ZvnUploadWatchCounts): the main thread asks every frame and must
+    // not wait for a draw event's recording. Everything else here is under s_mutex.
+    struct WatchWrite
+    {
+        ID3D12Resource* destination;   // a reference is held through the main thread's frame after the write's
+        uint64_t destinationOffset;
+        uint32_t bytes;
+        uint64_t page;                 // the page's id
+        uint32_t at;
+        uint32_t generation;           // the page's when the write was copied from it
+        uint64_t mainFrame;
+    };
+
+    struct WatchCheck
+    {
+        uint64_t incident = 0;
+        void* destination = nullptr;   // for the record alone: never used as a resource
+        uint64_t destinationOffset = 0;
+        uint32_t bytes = 0;
+        uint32_t readbackAt = 0;
+        uint64_t page = 0;
+        uint32_t pageAt = 0;
+        uint32_t generation = 0;       // the page's after the reuse: the writes of this generation are what overwrote
+        bool overwritten = false;      // a write of that generation took bytes of the range
+        bool snapshotTaken = false;
+        uint64_t stamp = 0;            // the frame fence value read when the readback was recorded
+        std::vector<uint8_t> intended, overwriting;
+    };
+
+    struct WatchIncident
+    {
+        uint64_t number, mainFrame, pageMainFrame, stampOfPage, stampNow, completed;
+        uint32_t pageBytesUsed, writes;   // writes: this main frame's, copied from the page before the reuse (watched ones)
+        uint32_t checks, pending, differing, sameOverwritten, same, skipped;
+        uint64_t bytesDiffering, bytesExplained;
+        void* firstDestination;           // the first differing check: where, and its first differing bytes
+        uint64_t firstOffset;
+        uint32_t firstBytes;
+        uint8_t firstWanted[8], firstFound[8];
+    };
+
+    std::atomic<bool> s_watchVerify{ false }, s_watchReuseAtOnce{ false };
+    std::atomic<uint64_t> s_watchStampChanges{ 0 }, s_watchReuses{ 0 }, s_watchChecks{ 0 }, s_watchChecksPending{ 0 },
+        s_watchChecksDiffering{ 0 }, s_watchChecksSameOverwritten{ 0 }, s_watchChecksSame{ 0 }, s_watchChecksSkipped{ 0 },
+        s_watchBytesDiffering{ 0 }, s_watchBytesExplained{ 0 };
+    uint64_t s_watchMainFrame = 0, s_watchStamp = 0;                           // of the batch being written, or the last
+    uint64_t s_watchChangeFrame = 0, s_watchChangeFrom = 0, s_watchChangeTo = 0;   // the last change counted
+    uint64_t s_uploadPageIds = 0;
+    std::vector<WatchWrite> s_watchWrites;       // of the main frame being written, in the order copied
+    std::vector<WatchCheck> s_watchPending;
+    std::vector<WatchIncident> s_watchIncidents; // the last few
+    ID3D12Resource* s_watchReadback = nullptr;
+    uint32_t s_watchReadbackUsed = 0;
 
     static_assert(sizeof(ZvnDraw) == 240, "the extension of a version 2 draw follows the 240-byte ZvnDraw");
     static_assert(sizeof(ZvnDrawExtension) == 16, "ZvnDrawExtension");
@@ -417,6 +508,30 @@ namespace
         s_uploadSpare.clear();
     }
 
+    // The watch lets go of the main frame's writes: their references.
+    void WatchReleaseWritesLocked()
+    {
+        for (size_t i = 0; i < s_watchWrites.size(); i++)
+        {
+            s_watchWrites[i].destination->Release();
+        }
+
+        s_watchWrites.clear();
+    }
+
+    // The device is going: what was read back and not compared is given up (counted as skipped), the counts stand.
+    void WatchDestroyLocked()
+    {
+        WatchReleaseWritesLocked();
+        s_watchChecksSkipped.fetch_add(s_watchPending.size(), std::memory_order_relaxed);
+        s_watchPending.clear();
+        s_watchChecksPending.store(0, std::memory_order_relaxed);
+        Release(s_watchReadback);
+        s_watchReadbackUsed = 0;
+        s_watchMainFrame = 0;
+        s_watchStamp = 0;
+    }
+
     void DestroyEverythingLocked()
     {
         for (size_t i = 0; i < s_pipelines.size(); i++)
@@ -426,6 +541,7 @@ namespace
 
         s_pipelines.clear();
         s_rings.Destroy();
+        WatchDestroyLocked();
         DropUploadsLocked();
         for (size_t i = 0; i < s_uploadPages.size(); i++)
         {
@@ -602,7 +718,8 @@ namespace
     }
 
     // The region for the frame being recorded: the one in use if the frame fence value has not moved since, else the
-    // next, if the GPU is done with it. False when it is not: nothing waits.
+    // next, if the GPU is done with it (the fence has passed its stamp by the margin). False when it is not: nothing
+    // waits.
     bool TakeRegionLocked(uint64_t frameFence, uint64_t completedFence, Region*& region)
     {
         if (s_rings.currentFence == frameFence && s_rings.regions[s_rings.current].fence == frameFence)
@@ -613,7 +730,7 @@ namespace
 
         uint32_t next = (s_rings.current + 1) % (uint32_t)s_rings.regions.size();
         Region& candidate = s_rings.regions[next];
-        if (candidate.fence != 0 && candidate.fence > completedFence)
+        if (candidate.fence != 0 && !FencePassed(candidate.fence, completedFence))
         {
             return false;
         }
@@ -913,7 +1030,7 @@ namespace
         for (size_t i = 0; i < s_pipelines.size(); i++)
         {
             Pipeline& pipeline = s_pipelines[i];
-            if (pipeline.alive && pipeline.released && pipeline.lastUsedFence <= completedFence)
+            if (pipeline.alive && pipeline.released && (completedFence == UINT64_MAX || FencePassed(pipeline.lastUsedFence, completedFence)))
             {
                 pipeline.Destroy();
             }
@@ -1098,15 +1215,316 @@ namespace
         Consume(draw, ZvnResult_Recorded);
     }
 
+    // ---- the watch on the upload pages ------------------------------------------------------------------------------
+
+    UploadPage* WatchPageLocked(uint64_t id)
+    {
+        for (size_t i = 0; i < s_uploadPages.size(); i++)
+        {
+            if (s_uploadPages[i].id == id)
+            {
+                return &s_uploadPages[i];
+            }
+        }
+
+        return nullptr;
+    }
+
+    WatchIncident* WatchIncidentLocked(uint64_t number)
+    {
+        for (size_t i = 0; i < s_watchIncidents.size(); i++)
+        {
+            if (s_watchIncidents[i].number == number)
+            {
+                return &s_watchIncidents[i];
+            }
+        }
+
+        return nullptr;
+    }
+
+    // What stands now where a check's bytes stood in its page, while the page is still of the generation that
+    // overwrote them: the bytes the copy read, if it read the page after the reuse. Taken once.
+    void WatchSnapshotLocked(WatchCheck& check)
+    {
+        if (check.snapshotTaken)
+        {
+            return;
+        }
+
+        check.snapshotTaken = true;
+        UploadPage* page = WatchPageLocked(check.page);
+        if (check.overwritten && page != nullptr && page->cpu != nullptr && page->generation == check.generation)
+        {
+            check.overwriting.assign(page->cpu + check.pageAt, page->cpu + check.pageAt + check.bytes);
+        }
+    }
+
+    // A batch is about to be written: the frame fence value read for it against the one read for the batch before it
+    // of the same main frame, and with a new main frame the watch's writes older than the last one are let go.
+    void WatchBatchLocked(uint64_t mainFrame, uint64_t frameFence)
+    {
+        if (mainFrame != s_watchMainFrame)
+        {
+            for (size_t i = 0; i < s_watchPending.size(); i++)
+            {
+                WatchSnapshotLocked(s_watchPending[i]);
+            }
+
+            // The writes of the frame just before this one stay: a page they were copied from may be taken in this.
+            size_t kept = 0;
+            for (size_t i = 0; i < s_watchWrites.size(); i++)
+            {
+                if (mainFrame != 0 && s_watchWrites[i].mainFrame + 1 == mainFrame)
+                {
+                    s_watchWrites[kept++] = s_watchWrites[i];
+                }
+                else
+                {
+                    s_watchWrites[i].destination->Release();
+                }
+            }
+
+            s_watchWrites.resize(kept);
+        }
+        else if (mainFrame != 0 && frameFence != s_watchStamp)
+        {
+            s_watchStampChanges.fetch_add(1, std::memory_order_relaxed);
+            s_watchChangeFrame = mainFrame;
+            s_watchChangeFrom = s_watchStamp;
+            s_watchChangeTo = frameFence;
+        }
+
+        s_watchMainFrame = mainFrame;
+        s_watchStamp = frameFence;
+    }
+
+    bool WatchEnsureReadbackLocked()
+    {
+        if (s_watchReadback != nullptr)
+        {
+            return true;
+        }
+
+        D3D12_HEAP_PROPERTIES heap = {};
+        heap.Type = D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC description = {};
+        description.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        description.Width = kWatchReadbackBytes;
+        description.Height = 1;
+        description.DepthOrArraySize = 1;
+        description.MipLevels = 1;
+        description.SampleDesc.Count = 1;
+        description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(s_device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&s_watchReadback))))
+        {
+            s_watchReadback = nullptr;
+            return false;
+        }
+
+        s_watchReadback->SetName(L"Zantetsu VP native upload watch");
+        s_watchReadbackUsed = 0;
+        return true;
+    }
+
+    // A page is taken as free in the main frame it was last copied from, or in the one after. Counted; and, watched,
+    // every write copied from it since it was last taken is put to the proof before its bytes are overwritten: the bytes kept,
+    // and a copy of the destination's range into the readback buffer recorded here -- after the write's own copy in
+    // the command list's order, before anything recorded later. A write whose range a later write of this frame took
+    // again proves nothing and is passed over.
+    void WatchReuseLocked(UploadPage& page, uint64_t frameFence, uint64_t completedFence, ID3D12GraphicsCommandList* list)
+    {
+        WatchIncident incident = {};
+        incident.number = s_watchReuses.fetch_add(1, std::memory_order_relaxed) + 1;
+        incident.mainFrame = s_watchMainFrame;
+        incident.pageMainFrame = page.mainFrame;
+        incident.stampOfPage = page.fence;
+        incident.stampNow = frameFence;
+        incident.completed = completedFence;
+        incident.pageBytesUsed = page.used;
+        for (size_t i = 0; i < s_watchWrites.size(); i++)
+        {
+            const WatchWrite& held = s_watchWrites[i];
+            if (held.page != page.id || held.generation != page.generation)
+            {
+                continue;
+            }
+
+            incident.writes++;
+            bool superseded = false;
+            for (size_t j = i + 1; j < s_watchWrites.size() && !superseded; j++)
+            {
+                const WatchWrite& later = s_watchWrites[j];
+                superseded = later.destination == held.destination && later.destinationOffset < held.destinationOffset + held.bytes
+                    && held.destinationOffset < later.destinationOffset + later.bytes;
+            }
+
+            uint32_t bytes = held.bytes < kWatchCheckMostBytes ? held.bytes : kWatchCheckMostBytes;
+            uint32_t room = (bytes + 15u) & ~15u;
+            if (superseded || list == nullptr || !WatchEnsureReadbackLocked() || kWatchReadbackBytes - s_watchReadbackUsed < room)
+            {
+                incident.skipped++;
+                s_watchChecksSkipped.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+
+            s_watchPending.emplace_back();
+            WatchCheck& check = s_watchPending.back();
+            check.incident = incident.number;
+            check.destination = held.destination;
+            check.destinationOffset = held.destinationOffset;
+            check.bytes = bytes;
+            check.readbackAt = s_watchReadbackUsed;
+            check.page = page.id;
+            check.pageAt = held.at;
+            check.generation = page.generation + 1;
+            check.stamp = frameFence;
+            check.intended.assign(page.cpu + held.at, page.cpu + held.at + bytes);
+            s_watchReadbackUsed += room;
+            s_d3d12->RequestResourceState(held.destination, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            list->CopyBufferRegion(s_watchReadback, check.readbackAt, held.destination, held.destinationOffset, bytes);
+            incident.checks++;
+            incident.pending++;
+            s_watchChecks.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        s_watchChecksPending.store(s_watchPending.size(), std::memory_order_relaxed);
+        if (s_watchIncidents.size() >= kWatchIncidentsKept)
+        {
+            s_watchIncidents.erase(s_watchIncidents.begin());
+        }
+
+        s_watchIncidents.push_back(incident);
+    }
+
+    // Room was taken in a page: the checks whose bytes stood there, in the page as it was before this generation,
+    // are overwritten from here on.
+    void WatchRoomTakenLocked(const UploadPage& page, uint32_t at, uint32_t bytes)
+    {
+        for (size_t i = 0; i < s_watchPending.size(); i++)
+        {
+            WatchCheck& check = s_watchPending[i];
+            if (check.page == page.id && check.generation == page.generation && !check.snapshotTaken
+                && at < check.pageAt + check.bytes && check.pageAt < at + bytes)
+            {
+                check.overwritten = true;
+            }
+        }
+    }
+
+    // The readbacks whose frame fence has passed by the margin are compared with the bytes their writes were to
+    // leave. On the rendering thread at an upload event, or on the main thread when it asks for the account.
+    void WatchResolveLocked(uint64_t completedFence)
+    {
+        bool due = false;
+        for (size_t i = 0; i < s_watchPending.size() && !due; i++)
+        {
+            due = completedFence >= s_watchPending[i].stamp + kWatchFenceMargin;
+        }
+
+        if (!due || s_watchReadback == nullptr)
+        {
+            return;
+        }
+
+        D3D12_RANGE read = { 0, s_watchReadbackUsed };
+        void* mapped = nullptr;
+        if (FAILED(s_watchReadback->Map(0, &read, &mapped)) || mapped == nullptr)
+        {
+            return;
+        }
+
+        const uint8_t* back = (const uint8_t*)mapped;
+        size_t kept = 0;
+        for (size_t i = 0; i < s_watchPending.size(); i++)
+        {
+            WatchCheck& check = s_watchPending[i];
+            if (completedFence < check.stamp + kWatchFenceMargin)
+            {
+                if (kept != i)
+                {
+                    s_watchPending[kept] = std::move(check);
+                }
+
+                kept++;
+                continue;
+            }
+
+            WatchSnapshotLocked(check);
+            const uint8_t* found = back + check.readbackAt;
+            uint32_t differing = 0, explained = 0, first = check.bytes;
+            bool snapshot = check.overwriting.size() == check.bytes;
+            for (uint32_t b = 0; b < check.bytes; b++)
+            {
+                if (found[b] != check.intended[b])
+                {
+                    if (first == check.bytes) first = b;
+                    differing++;
+                    if (snapshot && found[b] == check.overwriting[b]) explained++;
+                }
+            }
+
+            WatchIncident* incident = WatchIncidentLocked(check.incident);
+            if (incident != nullptr && incident->pending > 0) incident->pending--;
+            if (differing > 0)
+            {
+                s_watchChecksDiffering.fetch_add(1, std::memory_order_relaxed);
+                s_watchBytesDiffering.fetch_add(differing, std::memory_order_relaxed);
+                s_watchBytesExplained.fetch_add(explained, std::memory_order_relaxed);
+                if (incident != nullptr)
+                {
+                    if (incident->differing == 0)
+                    {
+                        incident->firstDestination = check.destination;
+                        incident->firstOffset = check.destinationOffset + first;
+                        incident->firstBytes = differing;
+                        for (uint32_t b = 0; b < 8; b++)
+                        {
+                            incident->firstWanted[b] = first + b < check.bytes ? check.intended[first + b] : 0;
+                            incident->firstFound[b] = first + b < check.bytes ? found[first + b] : 0;
+                        }
+                    }
+
+                    incident->differing++;
+                    incident->bytesDiffering += differing;
+                    incident->bytesExplained += explained;
+                }
+            }
+            else if (check.overwritten)
+            {
+                s_watchChecksSameOverwritten.fetch_add(1, std::memory_order_relaxed);
+                if (incident != nullptr) incident->sameOverwritten++;
+            }
+            else
+            {
+                s_watchChecksSame.fetch_add(1, std::memory_order_relaxed);
+                if (incident != nullptr) incident->same++;
+            }
+        }
+
+        D3D12_RANGE nothingWritten = { 0, 0 };
+        s_watchReadback->Unmap(0, &nothingWritten);
+        s_watchPending.resize(kept);
+        s_watchChecksPending.store(kept, std::memory_order_relaxed);
+        if (kept == 0)
+        {
+            s_watchReadbackUsed = 0;
+        }
+    }
+
     // ---- the upload event -------------------------------------------------------------------------------------------
 
     // Room for a copy's source: in a page this frame already copies from, else in the smallest free page that holds
-    // it (the frame fence of its last use has passed), else in a page made for it. False when none could be made.
-    bool TakeUploadRoomLocked(uint32_t bytes, uint64_t frameFence, uint64_t completedFence, UploadPage*& page, uint32_t& at)
+    // it (the frame fence has passed the stamp of its last use by the margin), else in a page made for it. False when
+    // none could be made. A page taken as free in the main frame it was last copied from, or the one after, is the
+    // watch's (WatchReuseLocked), which needs the command list; the watch's test control takes any page as free at
+    // once, whatever its fence.
+    bool TakeUploadRoomLocked(uint32_t bytes, uint64_t frameFence, uint64_t completedFence, ID3D12GraphicsCommandList* list, UploadPage*& page, uint32_t& at)
     {
         uint32_t needed = (bytes + 15u) & ~15u;
+        bool atOnce = s_watchReuseAtOnce.load(std::memory_order_relaxed);
         UploadPage* chosen = nullptr;
-        for (size_t i = 0; i < s_uploadPages.size(); i++)
+        for (size_t i = 0; i < s_uploadPages.size() && !atOnce; i++)
         {
             UploadPage& candidate = s_uploadPages[i];
             if (candidate.fence == frameFence && candidate.bytes - candidate.used >= needed)
@@ -1121,7 +1539,7 @@ namespace
             for (size_t i = 0; i < s_uploadPages.size(); i++)
             {
                 UploadPage& candidate = s_uploadPages[i];
-                if (candidate.fence != frameFence && candidate.fence <= completedFence && candidate.bytes >= needed
+                if ((atOnce || (candidate.fence != frameFence && FencePassed(candidate.fence, completedFence))) && candidate.bytes >= needed
                     && (chosen == nullptr || candidate.bytes < chosen->bytes))
                 {
                     chosen = &candidate;
@@ -1130,8 +1548,15 @@ namespace
 
             if (chosen != nullptr)
             {
+                if (s_watchMainFrame != 0 && chosen->mainFrame != 0
+                    && (chosen->mainFrame == s_watchMainFrame || chosen->mainFrame + 1 == s_watchMainFrame))
+                {
+                    WatchReuseLocked(*chosen, frameFence, completedFence, list);
+                }
+
                 chosen->fence = frameFence;
                 chosen->used = 0;
+                chosen->generation++;
             }
         }
 
@@ -1169,15 +1594,22 @@ namespace
 
             made.cpu = (uint8_t*)mapped;
             made.fence = frameFence;
+            made.id = ++s_uploadPageIds;
             s_uploadPages.push_back(made);
             s_uploadPagesMade++;
             chosen = &s_uploadPages.back();
         }
 
         chosen->idleEvents = 0;
+        chosen->mainFrame = s_watchMainFrame;
         page = chosen;
         at = chosen->used;
         chosen->used += needed;
+        if (!s_watchPending.empty())
+        {
+            WatchRoomTakenLocked(*chosen, at, needed);
+        }
+
         return true;
     }
 
@@ -1203,22 +1635,32 @@ namespace
         ID3D12Fence* fence = s_d3d12->GetFrameFence();
         uint64_t frameFence = s_d3d12->GetNextFrameFenceValue();
         uint64_t completed = fence != nullptr ? fence->GetCompletedValue() : 0;
+        WatchResolveLocked(completed);
+        bool watched = s_watchVerify.load(std::memory_order_relaxed);
         for (size_t b = 0; b < s_uploadTaken.size(); b++)
         {
             UploadBatch* batch = s_uploadTaken[b];
+            WatchBatchLocked(batch->mainFrame, frameFence);
             for (size_t w = 0; w < batch->writes.size(); w++)
             {
                 const UploadWrite& write = batch->writes[w];
                 UploadPage* page = nullptr;
                 uint32_t at = 0;
                 if (list != nullptr && write.destinationOffset + write.bytes <= write.destination->GetDesc().Width
-                    && TakeUploadRoomLocked(write.bytes, frameFence, completed, page, at))
+                    && TakeUploadRoomLocked(write.bytes, frameFence, completed, list, page, at))
                 {
                     memcpy(page->cpu + at, batch->bytes.data() + write.at, write.bytes);
                     s_d3d12->RequestResourceState(write.destination, D3D12_RESOURCE_STATE_COPY_DEST);
                     list->CopyBufferRegion(write.destination, write.destinationOffset, page->resource, at, write.bytes);
                     s_uploadWrites++;
                     s_uploadBytes += write.bytes;
+                    if (watched && batch->mainFrame != 0 && s_watchWrites.size() < kWatchWritesMost)
+                    {
+                        // Kept, with a reference, to be put to the proof should its page be taken again in this main frame.
+                        WatchWrite held = { write.destination, write.destinationOffset, write.bytes, page->id, at, page->generation, batch->mainFrame };
+                        held.destination->AddRef();
+                        s_watchWrites.push_back(held);
+                    }
                 }
                 else
                 {
@@ -1235,7 +1677,7 @@ namespace
         for (size_t i = 0; i < s_uploadPages.size();)
         {
             UploadPage& page = s_uploadPages[i];
-            if (page.fence != frameFence && page.fence <= completed && ++page.idleEvents >= kUploadPageIdleEvents)
+            if (page.fence != frameFence && FencePassed(page.fence, completed) && ++page.idleEvents >= kUploadPageIdleEvents)
             {
                 page.Destroy();
                 s_uploadPages.erase(s_uploadPages.begin() + i);
@@ -1879,7 +2321,17 @@ extern "C"
     // Main thread: seals the writes handed over since the last seal as one batch and returns its number (from 1, in
     // order), to be the data of the upload event issued next; 0 when nothing was handed over, and then no event is
     // to be issued.
+    uint64_t UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnUploadSealAt(uint64_t mainFrame);
+
     uint64_t UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnUploadSeal()
+    {
+        return ZvnUploadSealAt(0);
+    }
+
+    // ZvnUploadSeal, with the number of the main thread's frame the batch is sealed in (not 0), for the watch on the
+    // pages: two batches of one number were handed over with no frame's end between them. A library built before the
+    // watch has no such export.
+    uint64_t UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnUploadSealAt(uint64_t mainFrame)
     {
         std::lock_guard<std::mutex> lock(s_uploadMutex);
         if (s_uploadFilling == nullptr)
@@ -1888,9 +2340,85 @@ extern "C"
         }
 
         s_uploadFilling->sequence = ++s_uploadSequence;
+        s_uploadFilling->mainFrame = mainFrame;
         s_uploadSealed.push_back(s_uploadFilling);
         s_uploadFilling = nullptr;
         return s_uploadSequence;
+    }
+
+    // The watch's two switches (see the notes at the top). verify: the writes of a main frame are kept, and a page
+    // taken as free in the main frame it was copied from has them read back and compared. reuseAtOnce: TEST CONTROL --
+    // every page is taken as free at once, whatever its fence, which makes the very fault the watch is there to see;
+    // never on in a product run.
+    void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnUploadWatchSet(int verify, int reuseAtOnce)
+    {
+        s_watchVerify.store(verify != 0, std::memory_order_relaxed);
+        s_watchReuseAtOnce.store(reuseAtOnce != 0, std::memory_order_relaxed);
+    }
+
+    // The watch's counts, read without the mutex (the main thread asks every frame). Fills up to `count` of: [0] times
+    // the frame fence value read differed between two batches of one main frame, [1] pages taken as free in the main
+    // frame they were last copied from or the one after, [2] writes read back to be compared, [3] of them not yet compared, [4] compared
+    // and differing, [5] the same although their bytes in the page had been overwritten (the copy had run first),
+    // [6] the same, their bytes in the page not overwritten, [7] writes not read back (taken again later in the frame,
+    // no room, no command list, or the device went), [8] bytes differing, [9] of them equal to the bytes that
+    // overwrote the page. Returns how many were filled; with no `out`, how many there are.
+    int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnUploadWatchCounts(uint64_t* out, int count)
+    {
+        const std::atomic<uint64_t>* values[10] = { &s_watchStampChanges, &s_watchReuses, &s_watchChecks, &s_watchChecksPending,
+            &s_watchChecksDiffering, &s_watchChecksSameOverwritten, &s_watchChecksSame, &s_watchChecksSkipped,
+            &s_watchBytesDiffering, &s_watchBytesExplained };
+        if (out == nullptr) return 10;
+        int n = count < 10 ? count : 10;
+        for (int i = 0; i < n; i++) out[i] = values[i]->load(std::memory_order_relaxed);
+        return n > 0 ? n : 0;
+    }
+
+    // The watch's account in words: the switches, the last change of the frame fence value within a main frame, and
+    // the last few pages taken as free in the main frame they were copied from. Compares what is due first. Returns
+    // the text's length.
+    int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnUploadWatchText(char* out, int outSize)
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        if (AvailableLocked())
+        {
+            ID3D12Fence* fence = s_d3d12->GetFrameFence();
+            if (fence != nullptr) WatchResolveLocked(fence->GetCompletedValue());
+        }
+
+        std::string text;
+        Append(text, "comparison %s%s", s_watchVerify.load(std::memory_order_relaxed) ? "on" : "off",
+            s_watchReuseAtOnce.load(std::memory_order_relaxed) ? ", TEST CONTROL: every page taken as free at once" : "");
+        if (s_watchChangeFrame != 0)
+        {
+            Append(text, "; last change of the fence value within a main frame: frame %llu, %llu -> %llu",
+                (unsigned long long)s_watchChangeFrame, (unsigned long long)s_watchChangeFrom, (unsigned long long)s_watchChangeTo);
+        }
+
+        for (size_t i = 0; i < s_watchIncidents.size(); i++)
+        {
+            const WatchIncident& incident = s_watchIncidents[i];
+            Append(text, " | reuse %llu in main frame %llu: a page last copied from in main frame %llu, stamped %llu (%u bytes used), taken at %llu, completed %llu",
+                (unsigned long long)incident.number, (unsigned long long)incident.mainFrame, (unsigned long long)incident.pageMainFrame,
+                (unsigned long long)incident.stampOfPage, incident.pageBytesUsed, (unsigned long long)incident.stampNow, (unsigned long long)incident.completed);
+            if (incident.writes > 0)
+            {
+                Append(text, "; %u writes in it: %u read back (%u differing, %u same though overwritten, %u same, %u pending), %u not",
+                    incident.writes, incident.checks, incident.differing, incident.sameOverwritten, incident.same, incident.pending, incident.skipped);
+            }
+
+            if (incident.differing > 0)
+            {
+                Append(text, "; %llu bytes differ (%llu are the bytes that overwrote the page), first at buffer %p +%llu: wanted",
+                    (unsigned long long)incident.bytesDiffering, (unsigned long long)incident.bytesExplained, incident.firstDestination,
+                    (unsigned long long)incident.firstOffset);
+                for (int b = 0; b < 8; b++) Append(text, " %02x", incident.firstWanted[b]);
+                text += ", found";
+                for (int b = 0; b < 8; b++) Append(text, " %02x", incident.firstFound[b]);
+            }
+        }
+
+        return CopyOut(text, out, outSize);
     }
 
     // For the managed side's records. Fills up to `count` of: [0] upload events run, [1] batches written, [2] writes

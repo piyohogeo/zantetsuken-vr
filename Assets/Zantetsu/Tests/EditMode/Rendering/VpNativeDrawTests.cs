@@ -1260,6 +1260,251 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(last.events, Is.EqualTo(after.events), "the refused writes left nothing to submit");
         }
 
+        // ---- the watch on the library's upload pages (2026-11-18) ---------------------------------------------------
+
+        private static unsafe void UploadWords(IntPtr native, uint[] words, int count)
+        {
+            fixed (uint* w = words)
+            {
+                Assert.That(VpNativeUpload.Write(native, 0, w, count * sizeof(uint)), Is.True);
+            }
+
+            VpNativeUpload.Submit();
+        }
+
+        private static uint[] Words(int count, uint value)
+        {
+            var words = new uint[count];
+            for (int i = 0; i < count; i++) words[i] = value;
+            return words;
+        }
+
+        // Frames of the main thread no run of the Editor reaches: the watch goes by the number alone.
+        private static int s_watchFrame = 900000;
+
+        // The comparison waits for the frame fence to pass by a margin: frames are let by, each with a flush, until
+        // nothing is pending (or the frames run out, which the caller then reports).
+        private System.Collections.IEnumerator LetTheWatchCompare(GraphicsBuffer buffer, uint[] held)
+        {
+            var back = new uint[held.Length];
+            for (int i = 0; i < 120; i++)
+            {
+                Assert.That(Plugin.TryReadUploadWatch(out Plugin.UploadWatch now), Is.True);
+                if (now.pending == 0) yield break;
+                VpNativeUpload.FrameForTest = ++s_watchFrame;
+                UploadWords(buffer.GetNativeBufferPtr(), held, held.Length);
+                buffer.GetData(back);
+                Plugin.UploadWatchText();   // compares what is due
+                yield return null;
+            }
+        }
+
+        // The detector, proved on the fault itself: the library is told to take a page as free at once, so the second
+        // event of a frame overwrites the page the first event's copy has yet to read. The first buffer then holds the
+        // second's bytes -- and the watch says so: one page reused in its own frame, one write read back, every byte
+        // of it differing, and every differing byte one of the bytes that overwrote the page.
+        [UnityEngine.TestTools.UnityTest]
+        public System.Collections.IEnumerator UploadWatch_ProvesWhatAPageReusedInItsOwnFrameDid()
+        {
+            if (!UploadIsHere()) yield break;
+            Assert.That(Plugin.UploadWatchHere, Is.True, "the library in the project has the watch");
+            const int count = 256;
+            GraphicsBuffer first = Track(new GraphicsBuffer(GraphicsBuffer.Target.Structured, count, sizeof(uint)));
+            GraphicsBuffer second = Track(new GraphicsBuffer(GraphicsBuffer.Target.Structured, count, sizeof(uint)));
+            uint[] ones = Words(count, 0x11111111u), twos = Words(count, 0x22222222u);
+            bool watch = VpNativeUpload.Watch;
+            try
+            {
+                VpNativeUpload.Watch = true;
+                Assert.That(Plugin.TryReadUploadWatch(out Plugin.UploadWatch before), Is.True);
+                VpNativeUpload.FrameForTest = ++s_watchFrame;
+                VpNativeUpload.ReuseAtOnceForTest = true;
+                UploadWords(first.GetNativeBufferPtr(), ones, count);
+                UploadWords(second.GetNativeBufferPtr(), twos, count);
+                VpNativeUpload.ReuseAtOnceForTest = false;
+
+                var back = new uint[count];
+                first.GetData(back);
+                Assert.That(back, Is.EqualTo(twos), "the fault is made: the first write's copy read its page after the second overwrote it");
+                second.GetData(back);
+                Assert.That(back, Is.EqualTo(twos));
+
+                yield return LetTheWatchCompare(second, twos);
+                Assert.That(Plugin.TryReadUploadWatch(out Plugin.UploadWatch after), Is.True);
+                TestContext.WriteLine(VpNativeUpload.Describe());
+                Assert.That(after.pending, Is.Zero, "the comparison was made");
+                Assert.That(after.reuses - before.reuses, Is.EqualTo(1ul), "the page was taken again in the main frame it was copied from");
+                Assert.That(after.checks - before.checks, Is.EqualTo(1ul), "the first write was read back");
+                Assert.That(after.differing - before.differing, Is.EqualTo(1ul));
+                Assert.That(after.bytesDiffering - before.bytesDiffering, Is.EqualTo((ulong)(count * sizeof(uint))), "every byte differs");
+                Assert.That(after.bytesExplained - before.bytesExplained, Is.EqualTo((ulong)(count * sizeof(uint))), "and is a byte that overwrote the page");
+                Assert.That(after.sameOverwritten, Is.EqualTo(before.sameOverwritten));
+                Assert.That(Plugin.UploadWatchText(), Does.Contain("wanted 11 11 11 11 11 11 11 11, found 22 22 22 22 22 22 22 22"));
+            }
+            finally
+            {
+                VpNativeUpload.ReuseAtOnceForTest = false;
+                VpNativeUpload.Watch = watch;
+                VpNativeUpload.FrameForTest = null;
+            }
+        }
+
+        // The margin on reuse, and what the watch must not call a fault. Two events of one main frame as the library
+        // writes them unforced: the page is not taken again. One flush by Unity between two frames' events (a read of
+        // the buffer; the fence moves by one, which is all the library went by before 2026-11-18): the page is still
+        // not taken again -- the fence has not passed its stamp by the margin. Many flushes within one frame: the
+        // fence has passed, the page is taken again in the frame it was copied from, and the write read back is
+        // found as handed over -- its copy ran before the page was overwritten.
+        [UnityEngine.TestTools.UnityTest]
+        public System.Collections.IEnumerator UploadWatch_ThePageIsHeldBackByTheMargin_AndACopyThatRanFirstIsNoDifference()
+        {
+            if (!UploadIsHere()) yield break;
+            Assert.That(Plugin.UploadWatchHere, Is.True, "the library in the project has the watch");
+
+            // Which free page the library takes is its own choice (the smallest that holds the write), so the writes
+            // here are larger than any page it has: each then has one page that can hold it -- the one made for the
+            // write before it of the same size -- or none.
+            const int small = 256, mid = 3 * 128 * 1024, big = 4 * 128 * 1024;   // words: 1 KiB, 1.5 MiB, 2 MiB
+            GraphicsBuffer first = Track(new GraphicsBuffer(GraphicsBuffer.Target.Structured, big, sizeof(uint)));
+            GraphicsBuffer second = Track(new GraphicsBuffer(GraphicsBuffer.Target.Structured, big, sizeof(uint)));
+            GraphicsBuffer scratch = Track(new GraphicsBuffer(GraphicsBuffer.Target.Structured, small, sizeof(uint)));
+            uint[] ones = Words(big, 0x11111111u), twos = Words(big, 0x22222222u), few = Words(small, 5u);
+            var back = new uint[big];
+            var fewBack = new uint[small];
+            bool watch = VpNativeUpload.Watch;
+            try
+            {
+                VpNativeUpload.Watch = true;
+
+                // Unforced, no flush between the two.
+                Assert.That(Plugin.TryReadUploadWatch(out Plugin.UploadWatch before), Is.True);
+                VpNativeUpload.FrameForTest = ++s_watchFrame;
+                UploadWords(first.GetNativeBufferPtr(), ones, small);
+                UploadWords(second.GetNativeBufferPtr(), twos, small);
+                first.GetData(back);
+                Assert.That(Holds(back, small, 0x11111111u), Is.True);
+                Assert.That(Plugin.TryReadUploadWatch(out Plugin.UploadWatch unforced), Is.True);
+                Assert.That(unforced.reuses, Is.EqualTo(before.reuses), "two events of one frame, nothing between: the page is not taken again");
+
+                // One flush, then the next frame's event: the fence moved, not by the margin.
+                Assert.That(Plugin.TryReadUploadInfo(out Plugin.UploadInfo pagesBefore), Is.True);
+                VpNativeUpload.FrameForTest = ++s_watchFrame;
+                UploadWords(first.GetNativeBufferPtr(), twos, mid);
+                first.GetData(back);
+                Assert.That(Holds(back, mid, 0x22222222u), Is.True);
+                VpNativeUpload.FrameForTest = ++s_watchFrame;
+                UploadWords(second.GetNativeBufferPtr(), ones, mid);
+                first.GetData(back);
+                Assert.That(Holds(back, mid, 0x22222222u), Is.True, "the first buffer holds what it was handed");
+                Assert.That(Plugin.TryReadUploadWatch(out Plugin.UploadWatch held), Is.True);
+                Assert.That(Plugin.TryReadUploadInfo(out Plugin.UploadInfo pagesAfter), Is.True);
+                Assert.That(held.reuses, Is.EqualTo(before.reuses), "one fence value past its stamp, a frame later: the page is not taken again");
+                Assert.That(pagesAfter.pagesMade - pagesBefore.pagesMade, Is.EqualTo(2ul), "a page was made for each of the two: the first's was not free for the second");
+
+                // Many flushes within one frame: the fence passes the margin, and the page's copy has long run.
+                VpNativeUpload.FrameForTest = ++s_watchFrame;
+                UploadWords(first.GetNativeBufferPtr(), ones, big);
+                Plugin.FrameFence(out ulong completedBefore, out _);
+                for (int i = 0; i < 12; i++)
+                {
+                    // Each read needs something to run: a write through Unity to a buffer of no one's, then its read.
+                    scratch.SetData(few);
+                    scratch.GetData(fewBack);
+                }
+
+                Plugin.FrameFence(out ulong completedAfter, out _);
+                UploadWords(second.GetNativeBufferPtr(), twos, big);
+                first.GetData(back);
+                Assert.That(Holds(back, big, 0x11111111u), Is.True, "the first buffer holds what it was handed");
+
+                yield return LetTheWatchCompare(scratch, few);
+                Assert.That(Plugin.TryReadUploadWatch(out Plugin.UploadWatch after), Is.True);
+                TestContext.WriteLine("fence completed " + completedBefore + " -> " + completedAfter + " over the flushes; reuses after them " + (after.reuses - held.reuses) + "; " + VpNativeUpload.Describe());
+                Assert.That(after.pending, Is.Zero, "the comparison was made");
+                Assert.That(after.reuses - held.reuses, Is.EqualTo(1ul), "the fence passed the margin within the frame: the page was taken again");
+                Assert.That(after.differing, Is.EqualTo(before.differing), "nothing differs");
+                Assert.That(after.bytesDiffering, Is.EqualTo(before.bytesDiffering));
+                Assert.That(after.sameOverwritten - before.sameOverwritten, Is.EqualTo(1ul),
+                    "its write was read back: as handed over, though the page was overwritten");
+            }
+            finally
+            {
+                VpNativeUpload.Watch = watch;
+                VpNativeUpload.FrameForTest = null;
+            }
+        }
+
+        private static bool Holds(uint[] words, int count, uint value)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if (words[i] != value) return false;
+            }
+
+            return true;
+        }
+
+        [Test]
+        public void UploadGap_IsReadFromItsArgument_AsWholeMilliseconds()
+        {
+            Assert.That(VpNativeUpload.GapArgument, Is.EqualTo("-zantetsuVpNativeUploadGap"));
+            Assert.That(VpNativeUpload.WatchArgument, Is.EqualTo("-zantetsuVpNativeUploadWatch"));
+            Assert.That(VpNativeUpload.ReadGap(null, out string error), Is.Zero);
+            Assert.That(error, Is.Null);
+            Assert.That(VpNativeUpload.ReadGap(new[] { "player", VpNativeUpload.WatchArgument }, out error), Is.Zero, "no wait unless asked for");
+            Assert.That(error, Is.Null);
+            Assert.That(VpNativeUpload.ReadGap(new[] { "player", VpNativeUpload.GapArgument, "8" }, out error), Is.EqualTo(8));
+            Assert.That(error, Is.Null);
+            foreach (string bad in new[] { "0", "-3", "101", "8.5", "long" })
+            {
+                Assert.That(VpNativeUpload.ReadGap(new[] { "player", VpNativeUpload.GapArgument, bad }, out error), Is.Zero, bad);
+                Assert.That(error, Does.Contain(VpNativeUpload.GapArgument), bad);
+            }
+
+            Assert.That(VpNativeUpload.ReadGap(new[] { "player", VpNativeUpload.GapArgument }, out error), Is.Zero, "nothing after it");
+            Assert.That(error, Is.Not.Null);
+        }
+
+        // The measurement's wait stands between a frame's first event and its second, once a frame, and nowhere else.
+        [Test]
+        public void UploadGap_WaitsOnceAFrame_BetweenTheFirstEventAndTheSecond()
+        {
+            if (!UploadIsHere()) return;
+            const int count = 16;
+            GraphicsBuffer buffer = Track(new GraphicsBuffer(GraphicsBuffer.Target.Structured, count, sizeof(uint)));
+            uint[] words = Words(count, 7u);
+            int gap = VpNativeUpload.GapMilliseconds;
+            try
+            {
+                VpNativeUpload.GapMilliseconds = 20;
+                VpNativeUpload.FrameForTest = ++s_watchFrame;
+                long waits = VpNativeUpload.GapWaits;
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                UploadWords(buffer.GetNativeBufferPtr(), words, count);
+                long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+                Assert.That(VpNativeUpload.GapWaits, Is.EqualTo(waits), "the frame's first event does not wait");
+                UploadWords(buffer.GetNativeBufferPtr(), words, count);
+                long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                Assert.That(VpNativeUpload.GapWaits, Is.EqualTo(waits + 1), "the second does");
+                UploadWords(buffer.GetNativeBufferPtr(), words, count);
+                Assert.That(VpNativeUpload.GapWaits, Is.EqualTo(waits + 1), "once a frame");
+                double toMs = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                Assert.That((t2 - t1) * toMs, Is.GreaterThanOrEqualTo(20.0), "the wait was made (the first event took " + (t1 - t0) * toMs + " ms)");
+
+                VpNativeUpload.FrameForTest = ++s_watchFrame;
+                UploadWords(buffer.GetNativeBufferPtr(), words, count);
+                Assert.That(VpNativeUpload.GapWaits, Is.EqualTo(waits + 1), "the next frame's first event does not wait");
+                var back = new uint[count];
+                buffer.GetData(back);
+                Assert.That(back, Is.EqualTo(words));
+            }
+            finally
+            {
+                VpNativeUpload.GapMilliseconds = gap;
+                VpNativeUpload.FrameForTest = null;
+            }
+        }
+
         private static VpIndirectCommand[] UploadCommands()
         {
             var box = new Bounds(Vector3.zero, Vector3.one);

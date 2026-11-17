@@ -1522,6 +1522,9 @@ namespace Zantetsu.Rendering
             try
             {
                 SendRecords(false, objectToWorlds, first, count, transformSite, kind);
+                // The measurement's wait (VpNativeUpload.GapArgument) needs a frame with two events: the transforms
+                // then go as an event of their own, in the same order, and the wait stands before the clips'.
+                if (VpNativeUpload.GapMilliseconds > 0) SubmitWrites();
                 SendRecords(true, clips, first, count, clipSite, kind);
             }
             finally

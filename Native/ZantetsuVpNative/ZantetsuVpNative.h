@@ -28,6 +28,17 @@
 // (0: nothing); the upload event, issued with that number as its data pointer (a number, never dereferenced), writes
 // every sealed batch up to it. Older libraries omit these exports; callers then write through Unity's API.
 
+// Optional Direct3D 12 exports (the watch on the upload's pages, 2026-11-18):
+// uint64_t ZvnUploadSealAt(uint64_t mainFrame);
+// void ZvnUploadWatchSet(int verify, int reuseAtOnce);
+// int ZvnUploadWatchCounts(uint64_t* out, int count);
+// int ZvnUploadWatchText(char* out, int outSize);
+// ZvnUploadSealAt is ZvnUploadSeal with the number of the main thread's frame; the library then counts a page taken
+// as free in the main frame it was last copied from or the one after and, with `verify`, reads back what its copies
+// left in their destinations and compares it with what they were to write. `reuseAtOnce` is a test control that makes the
+// fault. The counts are read without the library's mutex. Older libraries omit these exports; callers then seal with
+// ZvnUploadSeal and have no watch.
+
 // What a shader stage binds, as Unity reported it when the Editor compiled the variant (VpNativeShaderBake).
 enum ZvnBindingKind
 {

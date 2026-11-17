@@ -348,6 +348,19 @@ namespace Zantetsu.Rendering
 
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnUploadInfo(ulong* output, int count);
+
+        // The watch on the upload's pages (2026-11-18; absent in older libraries).
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern ulong ZvnUploadSealAt(ulong mainFrame);
+
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern void ZvnUploadWatchSet(int verify, int reuseAtOnce);
+
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnUploadWatchCounts(ulong* output, int count);
+
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnUploadWatchText(byte* output, int outputSize);
 #endif
 
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
@@ -474,6 +487,9 @@ namespace Zantetsu.Rendering
                         // The library's own buffer write (D-261); a library built before it has none, and then every write is Unity's.
                         try { s_uploadEventId = ZvnUploadEventId(); }
                         catch (EntryPointNotFoundException) { s_uploadEventId = 0; }
+                        // The watch on its pages; a library built before it seals without the frame's number.
+                        try { s_uploadWatch = s_uploadEventId != 0 && ZvnUploadWatchCounts(null, 0) == UploadWatchValues; }
+                        catch (EntryPointNotFoundException) { s_uploadWatch = false; }
 #endif
                         s_loaded = s_eventFunction != IntPtr.Zero;
                         if (!s_loaded)
@@ -718,13 +734,98 @@ namespace Zantetsu.Rendering
 #endif
         }
 
-        /// <summary>Seals what was handed over since the last seal; its number for the upload event's data, or 0 when there was nothing.</summary>
-        public static ulong UploadSeal()
+        /// <summary>
+        /// Seals what was handed over since the last seal; its number for the upload event's data, or 0 when there was
+        /// nothing. <paramref name="mainFrame"/> is the number of the main thread's frame (not 0), which the library's
+        /// watch on its pages goes by (<see cref="UploadWatch"/>); a library without the watch is not told.
+        /// </summary>
+        public static ulong UploadSeal(ulong mainFrame)
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
             return 0;
 #else
-            return UploadEventId == 0 ? 0 : ZvnUploadSeal();
+            if (UploadEventId == 0) return 0;
+            return s_uploadWatch ? ZvnUploadSealAt(mainFrame) : ZvnUploadSeal();
+#endif
+        }
+
+        /// <summary>Whether the loaded library has the watch on its upload pages (the Direct3D 12 one, built with it).</summary>
+        public static bool UploadWatchHere => s_loaded && s_uploadWatch;
+
+        private static bool s_uploadWatch;
+        private const int UploadWatchValues = 10;
+
+        /// <summary>
+        /// The library's watch on its upload pages (cumulative). A page is reused when the frame fence value it was
+        /// stamped with has passed; whether the value read on the rendering thread stands for the command list being
+        /// recorded there is what the watch is for. See the library's notes.
+        /// </summary>
+        public struct UploadWatch
+        {
+            /// <summary>Times the frame fence value read differed between two batches of one main frame.</summary>
+            public ulong stampChanges;
+            /// <summary>
+            /// Pages taken as free in the main frame they were last copied from, or in the one after. With the margin
+            /// on reuse (the library's kFenceReuseMargin) the fence must have moved by that much within a frame or
+            /// two for this to count: Unity flushed, or the margin fell short -- which the comparison tells apart.
+            /// </summary>
+            public ulong reuses;
+            /// <summary>Writes read back to be compared, and of them: not yet compared, differing, the same although their bytes in the page had been overwritten (the copy had run first), the same.</summary>
+            public ulong checks, pending, differing, sameOverwritten, same;
+            /// <summary>Writes of a reused page not read back (taken again later in the frame, no room, no command list).</summary>
+            public ulong skipped;
+            /// <summary>Bytes differing, and of them the ones equal to the bytes that overwrote the page.</summary>
+            public ulong bytesDiffering, bytesExplained;
+
+            public override string ToString()
+            {
+                return "fence value changed within a main frame " + stampChanges + ", pages reused within a main frame of their last copy " + reuses
+                    + ", writes read back " + checks + " (differing " + differing + " = " + bytesDiffering + " bytes, " + bytesExplained
+                    + " of them the bytes that overwrote the page; same though overwritten " + sameOverwritten + ", same " + same
+                    + ", pending " + pending + "), not read back " + skipped;
+            }
+        }
+
+        /// <summary>False where the library has no watch; the values are then zeros. Takes no lock of the library's: cheap enough for every frame.</summary>
+        public static bool TryReadUploadWatch(out UploadWatch watch)
+        {
+            watch = default;
+#if UNITY_ANDROID && !UNITY_EDITOR
+            return false;
+#else
+            if (!UploadWatchHere) return false;
+            ulong* values = stackalloc ulong[UploadWatchValues];
+            if (ZvnUploadWatchCounts(values, UploadWatchValues) != UploadWatchValues) return false;
+            watch.stampChanges = values[0]; watch.reuses = values[1]; watch.checks = values[2]; watch.pending = values[3];
+            watch.differing = values[4]; watch.sameOverwritten = values[5]; watch.same = values[6]; watch.skipped = values[7];
+            watch.bytesDiffering = values[8]; watch.bytesExplained = values[9];
+            return true;
+#endif
+        }
+
+        /// <summary>
+        /// The watch's switches. <paramref name="verify"/>: a page reused in the main frame it was copied from has that
+        /// frame's writes read back and compared. <paramref name="reuseAtOnce"/>: TEST CONTROL -- the library takes
+        /// every page as free at once, which makes the very fault the watch is there to see. Never on in a product run.
+        /// </summary>
+        public static void SetUploadWatch(bool verify, bool reuseAtOnce)
+        {
+#if !(UNITY_ANDROID && !UNITY_EDITOR)
+            if (UploadWatchHere) ZvnUploadWatchSet(verify ? 1 : 0, reuseAtOnce ? 1 : 0);
+#endif
+        }
+
+        /// <summary>The watch's account in words: its switches and the last few reuses, each with what its comparison found. Waits for the library's mutex.</summary>
+        public static string UploadWatchText()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            return string.Empty;
+#else
+            if (!UploadWatchHere) return string.Empty;
+            const int size = 8192;
+            byte* buffer = stackalloc byte[size];
+            int n = ZvnUploadWatchText(buffer, size);
+            return Encoding.ASCII.GetString(buffer, Math.Max(0, Math.Min(n, size - 1)));
 #endif
         }
 
