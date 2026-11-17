@@ -16,6 +16,12 @@ namespace Zantetsu.Core.MobPlan
         /// <summary>LOD state carried between cycles: earliest time this agent wants a new search, and whether its goal changed since its plan.</summary>
         public float NextReplanTime;
         public bool GoalChanged;
+        /// <summary>PROP-GOAL-REACH: GoalX/GoalZ is a point to walk to inside the reach of the goal proper, which is here: "at the goal" is judged against this point.</summary>
+        public bool HasArrive;
+        public float ArriveX;
+        public float ArriveZ;
+        /// <summary>PLANNER-LOCAL-STAY: where the agent was lately (time, x, z; ascending, not after Now); null: unknown.</summary>
+        public float[] RecentT, RecentX, RecentZ;
     }
 
     /// <summary>Immutable input of one planning cycle (Section 14.1). Plans are cloned; dataset and map are read-only.</summary>
@@ -25,6 +31,8 @@ namespace Zantetsu.Core.MobPlan
         public int Revision;
         public List<AgentSnapshot> Agents = new List<AgentSnapshot>();
         public List<ObstaclePrediction> Obstacles = new List<ObstaclePrediction>();
+        /// <summary>PROP-OBSTACLE-1: the prop fragments' map version taken for this cycle (null: none). Read-only; the cycle uses this one to its end.</summary>
+        public PropObstacleMap Props;
         public float PlayerMaxSpeed = 1f;
     }
 
@@ -32,6 +40,7 @@ namespace Zantetsu.Core.MobPlan
     {
         public int AgentId;
         public float Boundary;                 // actual freeze boundary (first clip end >= now + commit)
+        public bool PrefixShortened;           // PROP-PREFIX-RECHECK ended the freeze early
         public int PrefixCount;
         public int StartClip;
         public Pose2 StartPose;
@@ -42,6 +51,11 @@ namespace Zantetsu.Core.MobPlan
         public bool Changed;                   // chosen != old suffix
         public int Tier;                        // 0 near, 1 mid, 2 far (distance from the player)
         public float DistanceToPlayer = float.PositiveInfinity;
+        /// <summary>PLANNER-FIELD-RECOVERY: this NPC's recovery patch of the cycle (made when first needed; null patch: not needed or no way back).</summary>
+        public FieldRecoveryHolder Recovery;
+        /// <summary>Evaluation (PlannerConfig.rescoreSuffixes): the given plans costed by this cycle's cost function, and whether each passed the static check.</summary>
+        public List<CostBreakdown> Rescored;
+        public List<bool> RescoredStaticOk;
         public float NextReplanTime;            // written back to the agent on publish
         public float CommitSeconds;             // commit target used for this agent (tier / player reach)
         public bool LodSkipped;
@@ -75,8 +89,18 @@ namespace Zantetsu.Core.MobPlan
         public int regenerationCandidates;
         public int regenerationSuccesses; // rounds after which the regenerated agent got a better compatible plan
         public int localDeadlocks;        // agents still blocked (or without any alternative while far from the goal) after the rounds
-        public int dynamicPredictedHits;  // chosen candidates that still overlap an external circle in prediction
+        public int dynamicPredictedHits;  // chosen candidates that still overlap an external circle (or the prop map) in prediction
         public float dynamicPredictedSeconds;
+        public int propPredictedHits;     // PROP-OBSTACLE-1: chosen candidates that overlap the prop fragments' map in prediction
+        public float propPredictedSeconds;
+        public int propMapVersion;        // the version this cycle took (0: none)
+        public int propMapOccupiedCells;
+        public int propPrefixShortened;   // PROP-PREFIX-RECHECK: agents whose frozen part was ended early for an overlap with the prop map
+        public float propPrefixCutSeconds; // and the frozen seconds given back to the search
+        public double propPrefixRecheckMilliseconds;   // measured only: the time of the re-check itself in this cycle
+        public int propPrefixRecheckSamples;           // the places it looked at
+        public int propPrefixStartInside; // overlaps seen in the frozen part that did not end the freeze: the search would have started inside the pieces (propPrefixRecheckClearStart)
+        public int propPrefixOnlyEvent;   // of those, the agents for which nothing else called for a search (no overlap in the old plan's cost, no static violation, no goal change)
         public int lodNear;
         public int lodMid;
         public int lodFar;
@@ -131,9 +155,13 @@ namespace Zantetsu.Core.MobPlan
             metrics.revision = snapshot.Revision;
             metrics.now = snapshot.Now;
             metrics.agentCount = snapshot.Agents.Count;
-            var deadline = new Deadline(config.cycleBudgetMilliseconds);
+            var deadline = new Deadline(config.cycleBudgetMilliseconds, config.workLimitsOnly);
             var wall = Stopwatch.StartNew();
             obstacles = snapshot.Obstacles ?? new List<ObstaclePrediction>();
+            props = config.propObstacles && snapshot.Props != null && snapshot.Props.OccupiedCells > 0 ? snapshot.Props : null;
+            cycleDataset = dataset; cycleNow = snapshot.Now;
+            metrics.propMapVersion = snapshot.Props?.Version ?? 0;
+            metrics.propMapOccupiedCells = snapshot.Props?.OccupiedCells ?? 0;
             var now = snapshot.Now;
             var horizonEnd = now + config.planningHorizonSeconds;
             var search = new SingleAgentSearch(dataset, map);
@@ -178,6 +206,43 @@ namespace Zantetsu.Core.MobPlan
                 }
 
                 if (boundaryIndex < 0) boundaryIndex = plan.Segments.Count - 1;
+                if (config.propPrefixRecheck && props != null)
+                {
+                    long recheckFrom = Stopwatch.GetTimestamp();
+                    // the part about to be frozen against the newest map: an overlap there ends the freeze at the earliest clip end allowed
+                    var earliest = boundaryIndex;
+                    var earliestTarget = now + config.propPrefixRecheckCommitSeconds;
+                    for (var i = 0; i < boundaryIndex; i++)
+                    {
+                        if (plan.Segments[i].EndTime >= earliestTarget - 1e-4f) { earliest = i; break; }
+                    }
+
+                    if (earliest < boundaryIndex)
+                    {
+                        var inflate = agent.Radius + config.propKeepMeters;
+                        var until = plan.Segments[boundaryIndex].EndTime;
+                        for (var time = plan.Segments[earliest].EndTime; time <= until; time += 0.1f)
+                        {
+                            var where = AgentPlan.PoseAt(dataset, plan.Segments, time);
+                            metrics.propPrefixRecheckSamples++;
+                            if (props.DistanceAt(where.X, where.Z) >= inflate) continue;
+                            if (config.propPrefixRecheckClearStart)
+                            {
+                                var startAt = plan.Segments[earliest].WorldStart.Compose(dataset.Clips[plan.Segments[earliest].Clip].EndPose);
+                                if (props.DistanceAt(startAt.X, startAt.Z) < inflate) { metrics.propPrefixStartInside++; break; }
+                            }
+
+                            info.PrefixShortened = true;
+                            metrics.propPrefixShortened++;
+                            metrics.propPrefixCutSeconds += until - plan.Segments[earliest].EndTime;
+                            boundaryIndex = earliest;
+                            break;
+                        }
+                    }
+
+                    metrics.propPrefixRecheckMilliseconds += (Stopwatch.GetTimestamp() - recheckFrom) * 1000.0 / Stopwatch.Frequency;
+                }
+
                 var prefix = plan.Segments.GetRange(0, boundaryIndex + 1);
                 var suffix = plan.Segments.GetRange(boundaryIndex + 1, plan.Segments.Count - boundaryIndex - 1);
                 var boundarySegment = plan.Segments[boundaryIndex];
@@ -224,9 +289,12 @@ namespace Zantetsu.Core.MobPlan
                 }
 
                 if (info.Candidates[0].Cost.DynamicOverlapSeconds > 0f) info.Candidates[0].Cost.Dynamic += config.dynamicCollisionPenalty;
-                var eventful = !staticOk || info.Candidates[0].Suffix.Count == 0 || info.Candidates[0].Cost.DynamicOverlapSeconds > 0f || agent.GoalChanged;
+                // a freeze ended early for an overlap (PROP-PREFIX-RECHECK) is an event too: the old plan's cost samples otherwise and may not see it
+                var otherEvent = !staticOk || info.Candidates[0].Suffix.Count == 0 || info.Candidates[0].Cost.DynamicOverlapSeconds > 0f || agent.GoalChanged;
+                if (info.PrefixShortened && !otherEvent) metrics.propPrefixOnlyEvent++;
+                var eventful = otherEvent || info.PrefixShortened;
                 var end = AgentPlan.EndPose(dataset, info.Candidates[0].Suffix);
-                var reachesGoal = end.DistanceTo(agent.GoalX, agent.GoalZ) <= config.goalRadiusMeters;
+                var reachesGoal = ArriveDistance(agent, end) <= config.goalRadiusMeters;
                 // LOD: a mid/far agent whose replan interval has not elapsed keeps its plan unless something happened
                 // (goal changed, predicted hit, static violation, conflict with a neighbour, or its walking portion runs out).
                 if (info.Tier > 0 && !eventful && now < agent.NextReplanTime)
@@ -328,7 +396,7 @@ namespace Zantetsu.Core.MobPlan
                 var remainingBudget = generationBudget - deadline.ElapsedMilliseconds;
                 var slice = Math.Max(5.0, remainingBudget / Math.Max(1, remainingAgents));
                 remainingAgents--;
-                var agentDeadline = new Deadline(slice);
+                var agentDeadline = new Deadline(slice, config.workLimitsOnly);
                 if (remainingBudget <= 0) { info.Status += " skipped(budget)"; metrics.searchTimeouts++; continue; }
                 var others = new List<OtherAgentTrajectory>();
                 foreach (var other in oldTrajectories) if (other.AgentId != agent.Id) others.Add(other);
@@ -340,6 +408,16 @@ namespace Zantetsu.Core.MobPlan
                 var candidates = search.Run(request, out var stats);
                 info.Stats = stats;
                 if (stats.Timeout) metrics.searchTimeouts++;
+                if (config.rescoreSuffixes != null && config.rescoreSuffixes.TryGetValue(agent.Id, out var again))
+                {
+                    // evaluation only: the given plans by this cycle's cost function, with this NPC's own request
+                    info.Rescored = new List<CostBreakdown>(); info.RescoredStaticOk = new List<bool>();
+                    foreach (var suffix in again)
+                    {
+                        var rescored = search.EvaluateSegments(request, suffix, out var rescoredOk);
+                        info.Rescored.Add(rescored.Clone()); info.RescoredStaticOk.Add(rescoredOk);
+                    }
+                }
                 foreach (var candidate in candidates)
                 {
                     candidate.Index = info.Candidates.Count;
@@ -402,7 +480,7 @@ namespace Zantetsu.Core.MobPlan
                     var sel = selection[a];
                     var chosenCost = sel.Candidates[sel.Chosen].TotalCost;
                     var bestCost = sel.Candidates[MultiAgentSelector.BestIndex(sel)].TotalCost;
-                    var far = infos[a].StartPose.DistanceTo(snapshot.Agents[a].GoalX, snapshot.Agents[a].GoalZ) > config.goalRadiusMeters;
+                    var far = ArriveDistance(snapshot.Agents[a], infos[a].StartPose) > config.goalRadiusMeters;
                     var blocked = MultiAgentSelector.BestIndex(sel) != sel.Chosen;
                     var stuck = sel.Chosen == 0 && far && sel.Candidates.Count > 1 && !blocked ? false : sel.Chosen == 0 && far;
                     if (!blocked && !stuck) continue;
@@ -423,7 +501,7 @@ namespace Zantetsu.Core.MobPlan
                 }
 
                 var slice = Math.Max(10.0, Math.Min(deadline.RemainingMilliseconds - config.cycleBudgetMilliseconds * 0.1, config.cycleBudgetMilliseconds * 0.15));
-                var request = MakeRequest(agent, info, config, horizonEnd, new List<OtherAgentTrajectory>(), new Deadline(slice));
+                var request = MakeRequest(agent, info, config, horizonEnd, new List<OtherAgentTrajectory>(), new Deadline(slice, config.workLimitsOnly));
                 request.Reservations = reservations;
                 request.OldNextClip = info.Candidates[0].Suffix.Count > 0 ? info.Candidates[0].Suffix[0].Clip : -1;
                 var extra = search.Run(request, out var regenStats);
@@ -451,7 +529,7 @@ namespace Zantetsu.Core.MobPlan
             for (var a = 0; a < selection.Count; a++)
             {
                 var sel = selection[a];
-                var far = infos[a].StartPose.DistanceTo(snapshot.Agents[a].GoalX, snapshot.Agents[a].GoalZ) > config.goalRadiusMeters;
+                var far = ArriveDistance(snapshot.Agents[a], infos[a].StartPose) > config.goalRadiusMeters;
                 if (MultiAgentSelector.BestIndex(sel) != sel.Chosen || (sel.Chosen == 0 && far)) metrics.localDeadlocks++;
             }
 
@@ -502,6 +580,7 @@ namespace Zantetsu.Core.MobPlan
                 result.NewPlans[info.AgentId] = plan;
                 if (!info.LodSkipped) info.NextReplanTime = now + (info.Tier == 2 ? config.lodFarReplanSeconds : info.Tier == 1 ? config.lodMidReplanSeconds : 0f);
                 if (chosen.Cost.DynamicOverlapSeconds > 0f) { metrics.dynamicPredictedHits++; metrics.dynamicPredictedSeconds += chosen.Cost.DynamicOverlapSeconds; }
+                if (chosen.Cost.PropOverlapSeconds > 0f) { metrics.propPredictedHits++; metrics.propPredictedSeconds += chosen.Cost.PropOverlapSeconds; }
                 metrics.actualCommitHorizonMin = Math.Min(metrics.actualCommitHorizonMin, info.Boundary - now);
                 metrics.actualCommitHorizonMax = Math.Max(metrics.actualCommitHorizonMax, info.Boundary - now);
                 metrics.plannedUntilMin = Math.Min(metrics.plannedUntilMin, plan.EndTime - now);
@@ -707,17 +786,55 @@ namespace Zantetsu.Core.MobPlan
         }
 
         [ThreadStatic] private static List<ObstaclePrediction> obstacles;
+        [ThreadStatic] private static PropObstacleMap props;
+        [ThreadStatic] private static ClipDataset cycleDataset;
+        [ThreadStatic] private static float cycleNow;
+
+        /// <summary>
+        /// PLANNER-LOCAL-STAY: the track before a search's start -- the agent's recent places up to now, then the fixed part of its
+        /// plan from now to the boundary -- as (time, x, z) ascending, at most the window and a little more back from the boundary.
+        /// </summary>
+        private static void History(AgentSnapshot agent, float boundary, PlannerConfig config, SearchRequest request)
+        {
+            var from = boundary - config.localStayWindowSeconds - 1.2f;
+            var t = new List<float>(); var x = new List<float>(); var z = new List<float>();
+            if (agent.RecentT != null)
+            {
+                for (var i = 0; i < agent.RecentT.Length; i++)
+                {
+                    if (agent.RecentT[i] < from || agent.RecentT[i] >= cycleNow - 1e-3f) continue;
+                    t.Add(agent.RecentT[i]); x.Add(agent.RecentX[i]); z.Add(agent.RecentZ[i]);
+                }
+            }
+
+            var segments = agent.Plan.Segments;
+            if (segments.Count > 0)
+            {
+                var step = 1f / Math.Max(1f, config.collisionSampleHz);
+                for (var time = Math.Max(Math.Max(cycleNow, from), segments[0].StartTime); time < boundary - 1e-3f; time += step)
+                {
+                    var pose = AgentPlan.PoseAt(cycleDataset, segments, time);
+                    t.Add(time); x.Add(pose.X); z.Add(pose.Z);
+                }
+            }
+
+            request.HistoryT = t.ToArray(); request.HistoryX = x.ToArray(); request.HistoryZ = z.ToArray();
+        }
+
+        private static float ArriveDistance(AgentSnapshot agent, Pose2 pose) => agent.HasArrive ? pose.DistanceTo(agent.ArriveX, agent.ArriveZ) : pose.DistanceTo(agent.GoalX, agent.GoalZ);
 
         private static SearchRequest MakeRequest(AgentSnapshot agent, AgentCycleInfo info, PlannerConfig config, float horizonEnd, List<OtherAgentTrajectory> others, Deadline deadline)
         {
-            return new SearchRequest
+            var request = new SearchRequest
             {
                 AgentId = agent.Id,
                 Radius = agent.Radius,
                 GoalX = agent.GoalX,
                 GoalZ = agent.GoalZ,
+                HasArrive = agent.HasArrive, ArriveX = agent.ArriveX, ArriveZ = agent.ArriveZ,
                 Field = agent.Field,   // the simulation decides (config toggle, or always on scene maps)
                 Obstacles = obstacles,
+                Props = props,
                 StartClip = info.StartClip,
                 StartPose = info.StartPose,
                 StartTime = info.Boundary,
@@ -728,6 +845,20 @@ namespace Zantetsu.Core.MobPlan
                 MaxExpansions = config.maxExpansionsPerAgent,
                 MaxCandidates = Math.Max(1, config.maxCandidatesPerAgent - 1)
             };
+            if (config.localStayCost) History(agent, info.Boundary, config, request);
+            if (config.goalFieldRecovery && agent.Field != null)
+            {
+                if (info.Recovery == null) info.Recovery = new FieldRecoveryHolder();
+                request.Recovery = info.Recovery;   // one patch for every evaluation of this NPC in this cycle
+            }
+
+            request.Trace = config.traceAgents != null && config.traceAgents.Contains(agent.Id);
+            if (config.followSuffixes != null && config.followSuffixes.TryGetValue(agent.Id, out var follow))
+            {
+                request.Follow = new List<int>();
+                foreach (var segment in follow) request.Follow.Add(segment.Clip);
+            }
+            return request;
         }
     }
 

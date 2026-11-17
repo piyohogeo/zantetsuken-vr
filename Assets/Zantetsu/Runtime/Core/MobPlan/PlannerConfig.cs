@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Zantetsu.Core.MobPlan
 {
@@ -70,6 +71,28 @@ namespace Zantetsu.Core.MobPlan
         public float wHeading = 0.3f;     // heading error at the candidate end (fraction of 180 deg), only while far from the goal
         public float wSpeed = 0.2f;       // mean |speed - desired| while far from the goal (m/s)
         public float wIdle = 0.5f;        // stationary seconds while far from the goal
+        // PLANNER-IDLE-TURN (2026-11-15, under evaluation, off): the idle cost also for a clip that hardly translates though it is not
+        // "stationary" (IsStationary asks little translation AND little yaw, so a turn on the spot paid no idle cost: 80 deg/s of
+        // turning cost 0.044 a second by wTurn against 0.5 a second of waiting). IsStationary itself is untouched: it also decides
+        // the stationary continuation and the successor limits. The test is the clip's own average speed.
+        public bool idleCostLowTranslation = false;
+        public float idleCostSpeedMps = 0.15f;   // a clip slower than this on average counts as standing for the idle cost
+        // PLANNER-LOCAL-STAY (2026-11-15, under evaluation, off): a cost on the time a candidate's track stays in a small place,
+        // judged over a few seconds of the track ACROSS clip borders (the NPC's last seconds and the fixed part of its plan before
+        // the candidate count too), so that several clips making a small circle, a turn on the spot and a step out and back are
+        // one thing. A sample is "staying" when, over the window before it, the net displacement is at most localStayNetMeters
+        // AND no sample of the window is farther than localStayMaxSeparationMeters from it. Stationary clips are left to the
+        // idle cost; near the goal nothing is counted (as the idle cost). No goal distance enters: a detour that leads away
+        // from the goal for a while is not a stay. The same test for a new candidate, the old plan and the stop and wait tails.
+        public bool localStayCost = false;
+        public float localStayWindowSeconds = 4f;          // first comparison value (3-5 s)
+        public float localStayNetMeters = 0.5f;
+        public float localStayMaxSeparationMeters = 1.5f;
+        public float wLocalStay = 0.5f;                    // a staying second (the idle cost's weight)
+        /// <summary>Evaluation only: the shared track is NOT made again for a sibling after a stop path overwrote it (the defect of the first version, kept to count what it changed).</summary>
+        [NonSerialized] public bool localStayNoRestoreForTest;
+        /// <summary>Evaluation: the NPC ids whose searches keep a per-bucket record of what the beam kept and cut (SearchStats.Trace).</summary>
+        [NonSerialized] public HashSet<int> traceAgents;
         public float wTurn = 0.2f;        // yaw travel (sum of |yaw change|, wiggles included) in full turns (0.05 on TotalYaw before 2026-09-27)
         public float wFacing = 3f;        // mean angle between travel direction and facing (fraction of 180 deg) while far: penalises strafing / backing up (INERTIAL 3, COREMOTION 1.5 via ApplyDatasetDefaults)
         public float wHeadingPath = 0.8f; // mean heading error towards the goal (or field waypoint) along the trajectory while far, not only at the end
@@ -93,6 +116,66 @@ namespace Zantetsu.Core.MobPlan
         public float wDynamicObstacle = 10f;      // predicted overlap seconds with an external circle (soft, Section 9.4)
         public float dynamicCollisionPenalty = 20f; // per candidate that overlaps an external circle at all: collision-free candidates always win
         public float dynamicKeepMeters = 0.3f;    // extra distance beyond touching that counts as overlap for the planner
+        // PROP-OBSTACLE-1: the map of prop fragments (a felled tree's pieces) as a best-effort dynamic obstacle, where the host gives one.
+        public bool propObstacles = true;         // false: the map is not looked at (the comparison's OFF)
+        public float wPropObstacle = 10f;         // predicted overlap seconds with the occupied cells (soft, as the external circle's)
+        public float propKeepMeters = 0.1f;       // beyond the NPC radius; the map itself is not inflated, so radius and keep count once
+        public float propSpawnKeepMeters = 0.3f;  // a spawn spot keeps this beyond the NPC radius from the occupied cells (hard)
+        public bool propGoalField = false;        // comparison option: goal fields route around the occupied cells (a field per map version)
+        public float propGoalFieldCellMeters = 0f; // with propGoalField and occupied cells: the goal fields' cell (m); 0 = goalFieldCellMeters
+        // Evaluation (off): the goal field's two reaches in METRES instead of cells, as they are at the usual 0.5 m cell -- the step
+        // its waypoint search probes at (3 cells: 1.5 m at 0.5 m, 3 m at 1 m) and the neighbourhood a point without a path reads
+        // (+-2 cells: +-1 m at 0.5 m, +-2 m at 1 m). With it a coarser cell changes the cell only.
+        public bool goalFieldMetricReach = false;
+        // PLANNER-FIELD-RECOVERY (under evaluation, off): from a place the goal field has no path at, the progress, the heading and the
+        // cheap rank use "the walk to the nearest place the field can be entered + the field's remaining distance" (GoalFieldRecovery.cs)
+        // instead of the straight line; the walk is looked for over goalFieldRecoveryMeters with the WALKING clearance.
+        public bool goalFieldRecovery = false;
+        public float goalFieldRecoveryMeters = 4f;
+        // With goalFieldRecovery (off): a point inside a patch's reach that has no field path and no way back takes, FOR THE COST ONLY, the
+        // least of "a patch cell's value + the distance to it" instead of the straight line to the goal -- so that staying beside the
+        // way back is not costed some metres nearer the goal than the way back itself. Never a way: paths, guide points and the
+        // "way back found" count come from the connected values alone.
+        public bool goalFieldRecoveryExtrapolate = false;
+        /// <summary>Evaluation only: the beam key's time-bucket correction is held in a float local before it is added (the same arithmetic rounded once more; it changed which states the beam kept, 2026-11-15) -- a second condition to see how far a comparison's direction holds.</summary>
+        [NonSerialized] public bool beamKeyExtraRoundingForTest;
+        /// <summary>
+        /// Evaluation only (a saved-input replay): the cycle's and the searches' deadlines never read the clock (Deadline.WorkLimitsOnly),
+        /// so the per-NPC time slices, the start of a regeneration round and the end of the assignment cannot differ between two runs;
+        /// the counted limits stay as they are. The product runs with this off.
+        /// </summary>
+        [NonSerialized] public bool workLimitsOnly;
+        // PROP-GOAL-REACH (off: evaluation): a goal whose point is nearer the prop fragments' cells than walking keeps (radius +
+        // propKeepMeters) is not moved; the planner is led to the nearest point within goalRadiusMeters - propGoalReachInsetMeters of
+        // it that walking can stand on (static clearance and the prop cells) and that has a way. Arriving stays "within
+        // goalRadiusMeters of the goal itself, standing".
+        public bool propGoalReach = false;
+        public float propGoalReachInsetMeters = 0.1f;
+        // What is done when the sample (a 0.1 m grid within goalRadiusMeters - inset of the goal) finds no point to stand on, once that
+        // has lasted propGoalNoReachSeconds: 0 nothing (as before); 1 standoff -- the nearest standable point within
+        // propGoalStandoffMeters of the goal, standing there counts as arriving (counted apart); 2 give up -- the goal is dropped and
+        // the next goal of the scenario's order is taken (a pass waypoint -> its far goal; a far goal -> a new pass waypoint);
+        // 3 pick again -- another goal of the same kind (a far goal -> another far goal; a pass waypoint -> its far goal, as 2).
+        public int propGoalNoReachMode = 0;
+        public float propGoalNoReachSeconds = 2f;
+        public float propGoalStandoffMeters = 3f;
+        // PROP-PREFIX-RECHECK (off): each cycle looks at the part of a plan it would freeze against the newest prop map; where
+        // that part overlaps the cells (radius + propKeepMeters) later than propPrefixRecheckCommitSeconds from now, the freeze ends
+        // at the first clip end at or after now + propPrefixRecheckCommitSeconds instead, and the search starts from there.
+        public bool propPrefixRecheck = false;
+        public float propPrefixRecheckCommitSeconds = 1f;
+        // true: the freeze is not ended early where the search would then start within radius + propKeepMeters of the cells (the
+        // NPC is already going in by then: a search from inside the pieces found only overlapping plans and circled there --
+        // NPC 1182, record 27); the plan made earlier is left to carry it through.
+        public bool propPrefixRecheckClearStart = false;
+        /// <summary>Evaluation only: per NPC id, plans (suffixes from the cycle's boundary) to be costed again by this cycle's cost function (AgentCycleInfo.Rescored).</summary>
+        [NonSerialized] public Dictionary<int, List<List<PlanSegment>>> rescoreSuffixes;
+        /// <summary>Evaluation only: per NPC id, a plan whose clips the search is to report on as it goes -- ranked, taken, made, kept or cut (SearchStats.FollowTrace).</summary>
+        [NonSerialized] public Dictionary<int, List<PlanSegment>> followSuffixes;
+        public float goalFieldRecoveryEscapeMeters = 1f;   // an NPC already nearer the prop cells than walking keeps may get out through cells no nearer than it is now -- within this of where it stands only
+        // With propGoalField: the distance from the prop cells the goal fields close (m); 0 = the field's own clearance (radius + margin +
+        // goalFieldExtraClearanceMeters = 0.77 m). The extra 0.4 m is for narrow STATIC slots; the walking cost keeps radius + propKeepMeters.
+        public float propGoalFieldClosureMeters = 0f;
         // Goal inside the external circle (simulation layer): 0 = ignore (NPC idles at the ring edge), 1 = arriving at the ring counts
         // as reached, 2 = plan towards a standoff point away from the circle until the goal is free again.
         public int blockedGoalMode = 2;
@@ -103,6 +186,24 @@ namespace Zantetsu.Core.MobPlan
         // planned before the far goal arrives (COREMOTION stops take 2-4.5 m; INERTIAL 0.2 m).
         public float flowSwitchMeters = 5f;
         public float flowWaypointStepMeters = 1f;        // the waypoint follows the player in steps of this size (each step forces a replan) // the goal is free again once it is this far outside the blocked distance
+
+        /// <summary>
+        /// PROP-OBSTACLE-1, the configuration adopted with the prop fragments' map (D-264, 2026-11-17; tried in ordinary play
+        /// from 2026-11-16): the goal fields route around the pieces at 1 m cells, the recovery patch, the idle cost fix, and a
+        /// goal among the pieces is led to a standable point of its reach or given up. The re-check of the frozen part stays
+        /// off. The crowd applies it whenever the map is on (the default); the fields' own defaults stay the planner of
+        /// before, which a launch with -zantetsuPropObstaclesOff runs. The replay's `on+field1.0+recover+idlefix+giveup`.
+        /// </summary>
+        public void ApplyPropTrial()
+        {
+            propGoalField = true;
+            propGoalFieldCellMeters = 1f;
+            goalFieldRecovery = true;
+            idleCostLowTranslation = true;
+            propGoalReach = true;
+            propGoalNoReachMode = 2;
+            propPrefixRecheck = false;
+        }
 
         public PlannerConfig Clone() => (PlannerConfig)MemberwiseClone();
 

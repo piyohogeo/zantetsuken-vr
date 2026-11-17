@@ -100,6 +100,7 @@ namespace Zantetsu.PhysicsCut
         }
         private readonly CutWorldRoot _world;
         private readonly HashSet<LogicalFragmentId> _lineageRoots = new HashSet<LogicalFragmentId>();
+        private readonly HashSet<LogicalFragmentId> _propRoots = new HashSet<LogicalFragmentId>();
         private readonly List<LogicalFragmentId> _round = new List<LogicalFragmentId>();
         private readonly Plane[] _eyePlanes = new Plane[2 * VpInstanceCulling.EyePlaneCount];
         private int _cursor;
@@ -161,6 +162,26 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>Whether <paramref name="root"/> was marked (a character's lineage root: <see cref="MarkLineage"/>). Reads only.</summary>
         public bool IsMarkedLineage(LogicalFragmentId root) => root.IsSet && _lineageRoots.Contains(root);
+
+        /// <summary>
+        /// PROP-OBSTACLE-1: marks <paramref name="root"/> as the lineage root of a placed prop (a tree, a bench) at its first cut.
+        /// The mark is the lineage's own and stays for the world's life (ids are never used again): the pieces are known as a
+        /// prop's after the object they came from is no longer registered -- collected, returned and armed again under a new root.
+        /// It says where a piece came from and nothing else; it makes nothing a target of this collection.
+        /// </summary>
+        public void MarkPropLineage(LogicalFragmentId root)
+        {
+            if (root.IsSet)
+            {
+                _propRoots.Add(root);
+            }
+        }
+
+        /// <summary>Whether <paramref name="root"/> is a placed prop's lineage root (<see cref="MarkPropLineage"/>). Reads only.</summary>
+        public bool IsPropLineage(LogicalFragmentId root) => root.IsSet && _propRoots.Contains(root);
+
+        /// <summary>How many prop lineages were marked in this world.</summary>
+        public int PropLineageCount => _propRoots.Count;
 
         /// <summary>
         /// Whether this fragment is a target: produced by a cut, and of a marked lineage. Reads the ledger's origins

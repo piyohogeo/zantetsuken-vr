@@ -93,17 +93,104 @@ namespace Zantetsu.Core.MobPlan
         public float LastAttackTime { get; private set; } = float.NegativeInfinity;
         private float nextRecycleCheck;
 
-        private FieldGrid FieldGridFor(float required)
+        /// <summary>The goal fields' cell now: the prop option's own cell while the prop map closes cells (propGoalFieldCellMeters), else the usual one.</summary>
+        private float FieldCell(bool withProps) => withProps && Config.propGoalFieldCellMeters > 0f ? Config.propGoalFieldCellMeters : Config.goalFieldCellMeters;
+        private static long GridKey(float required, float cell) => (long)Math.Round(required * 1000f) + ((long)Math.Round(cell * 1000f) << 32);
+
+        // what the goal fields cost (the simulation's own counts; the worker's only)
+        public int GoalFieldBuilds { get; private set; }
+        public int GoalFieldCacheHits { get; private set; }
+        public long GoalFieldCellsReached { get; private set; }
+        public double GoalFieldBuildMilliseconds { get; private set; }
+        public double FieldGridMilliseconds { get; private set; }
+        public int FieldGridBuilds { get; private set; }
+
+        private FieldGrid StaticGridFor(float required, float cell)
         {
-            var key = (long)Math.Round(required * 1000f);
+            var key = GridKey(required, cell);
             if (!fieldGrids.TryGetValue(key, out var grid))
             {
-                grid = new FieldGrid(Map, required, Config.goalFieldCellMeters);
+                grid = new FieldGrid(Map, required, cell);
+                if (Config.goalFieldMetricReach) grid.UseMetricReach();
                 fieldGrids[key] = grid;
                 GoalFieldMilliseconds += grid.BuildMilliseconds;
+                FieldGridMilliseconds += grid.BuildMilliseconds; FieldGridBuilds++;
             }
 
             return grid;
+        }
+
+        private FieldGrid FieldGridFor(float required)
+        {
+            var grid = StaticGridFor(required, FieldCell(propFieldsOn));
+            var key = GridKey(required, grid.CellSize);
+            if (!propFieldsOn) return grid;
+            // PROP-OBSTACLE-1 (propGoalField): the static grid with the cells the prop fragments' map closes for this clearance
+            if (!propGrids.TryGetValue(key, out var over))
+            {
+                propClosed.Clear();
+                PropClosedCells(grid, required, propClosed);
+                over = new FieldGrid(grid, propClosed);
+                propGrids[key] = over;
+                GoalFieldMilliseconds += over.BuildMilliseconds;
+                FieldGridMilliseconds += over.BuildMilliseconds; FieldGridBuilds++;
+                PropFieldGridBuilds++;
+            }
+
+            return over;
+        }
+
+        private readonly Dictionary<long, FieldGrid> propGrids = new Dictionary<long, FieldGrid>();
+        private readonly List<int> propClosed = new List<int>();
+        private bool propFieldsOn;
+        private ulong propFieldHash;
+        /// <summary>PROP-OBSTACLE-1: times the goal fields were dropped because the prop fragments' map closed other cells than before, and overlay grids made.</summary>
+        public int PropFieldResets { get; private set; }
+        public int PropFieldGridBuilds { get; private set; }
+
+        /// <summary>The field cells (of a passable static grid) whose centre is nearer than `required` to the prop map's occupied cells.</summary>
+        private void PropClosedCells(FieldGrid grid, float required, List<int> into)
+        {
+            if (Config.propGoalFieldClosureMeters > 0f) required = Config.propGoalFieldClosureMeters;   // the prop cells' own band, not the static clearance's
+            var map = Props;
+            int x0 = Math.Max(0, grid.CellX(map.MinX - required)), x1 = Math.Min(grid.Width - 1, grid.CellX(map.MaxX + required));
+            int z0 = Math.Max(0, grid.CellZ(map.MinZ - required)), z1 = Math.Min(grid.Height - 1, grid.CellZ(map.MaxZ + required));
+            for (var cz = z0; cz <= z1; cz++)
+            {
+                for (var cx = x0; cx <= x1; cx++)
+                {
+                    var index = cz * grid.Width + cx;
+                    if (grid.Passable[index] && map.DistanceAt(grid.OriginX + (cx + 0.5f) * grid.CellSize, grid.OriginZ + (cz + 0.5f) * grid.CellSize) < required) into.Add(index);
+                }
+            }
+        }
+
+        /// <summary>
+        /// PROP-OBSTACLE-1 (propGoalField, a comparison option): whether the goal fields take the prop fragments' map of this cycle.
+        /// The fields made so far are dropped only when the map closes other field cells than the last one did (a map that is
+        /// made again with nothing moved keeps them).
+        /// </summary>
+        private void UpdatePropFields()
+        {
+            var on = Config.propObstacles && Config.propGoalField && UseGoalField && Props != null && Props.OccupiedCells > 0;
+            ulong hash = 0;
+            if (on)
+            {
+                var required = Scenario.npcRadius + Config.staticMarginMeters + (Map is PolygonWalkable ? Config.goalFieldExtraClearanceMeters : 0f);
+                var grid = StaticGridFor(required, FieldCell(true));
+
+                propClosed.Clear();
+                PropClosedCells(grid, required, propClosed);
+                hash = 1469598103934665603UL;
+                foreach (var index in propClosed) hash = (hash ^ (ulong)index) * 1099511628211UL;
+                if (propClosed.Count == 0) on = false;
+            }
+
+            if (on == propFieldsOn && hash == propFieldHash) return;
+            propFieldsOn = on; propFieldHash = hash;
+            propGrids.Clear();
+            goalFields.Clear();
+            PropFieldResets++;
         }
 
         /// <summary>Field for a goal, cached per goal cell and radius; the Dijkstra is bounded by max(goalFieldMaxPathMeters, 3 x distance from `fromX/Z` + 40).</summary>
@@ -114,13 +201,15 @@ namespace Zantetsu.Core.MobPlan
             var required = radius + Config.staticMarginMeters + (Map is PolygonWalkable ? Config.goalFieldExtraClearanceMeters : 0f);
             var grid = FieldGridFor(required);
             var key = ((long)grid.CellX(goalX) << 40) ^ ((long)grid.CellZ(goalZ) << 16) ^ (long)Math.Round(required * 1000f);
-            if (!goalFields.TryGetValue(key, out var field))
+            if (goalFields.TryGetValue(key, out var field)) GoalFieldCacheHits++;
+            else
             {
                 var bound = Config.goalFieldMaxPathMeters;
                 if (!float.IsNaN(fromX)) bound = Math.Max(bound, 3f * (float)Math.Sqrt((fromX - goalX) * (fromX - goalX) + (fromZ - goalZ) * (fromZ - goalZ)) + 40f);
                 field = new GoalField(grid, goalX, goalZ, bound);
                 goalFields[key] = field;
                 GoalFieldMilliseconds += field.BuildMilliseconds;
+                GoalFieldBuildMilliseconds += field.BuildMilliseconds; GoalFieldBuilds++; GoalFieldCellsReached += field.ReachableCells;
                 if (goalFields.Count > 256) goalFields.Clear();
             }
 
@@ -139,7 +228,7 @@ namespace Zantetsu.Core.MobPlan
         }
         private System.Diagnostics.Stopwatch taskWatch;
         private float taskRequestedAt;
-        private Random goalRandom;
+        private PlannerRandom goalRandom;
         private readonly Dictionary<long, FieldGrid> fieldGrids = new Dictionary<long, FieldGrid>();
 
         public LocomotionSimulation(ClipDataset dataset, PlannerConfig config)
@@ -185,7 +274,7 @@ namespace Zantetsu.Core.MobPlan
             FailedCycles = 0;
             PublishedCycles = 0;
             TotalGoalsReached = 0;
-            goalRandom = new Random(Scenario.seed * 31 + 7);
+            goalRandom = new PlannerRandom((ulong)(Scenario.seed * 31 + 7));
             Obstacle = null;
             ObstacleStats = new ObstacleStats();
             LastPrediction = null;
@@ -246,7 +335,7 @@ namespace Zantetsu.Core.MobPlan
 
         public PlanningSnapshot Snapshot()
         {
-            var snapshot = new PlanningSnapshot { Now = Time, Revision = Revision + 1, PlayerMaxSpeed = Scenario.obstacleMaxSpeed };
+            var snapshot = new PlanningSnapshot { Now = Time, Revision = Revision + 1, PlayerMaxSpeed = Scenario.obstacleMaxSpeed, Props = Props };
             if (Obstacle != null)
             {
                 LastPrediction = ObstaclePrediction.Build(0, Obstacle, Scenario.obstaclePrediction, Scenario.obstaclePredictionSeconds, Time, Config.planningHorizonSeconds + 12f, Config.collisionSampleHz, Map);
@@ -259,7 +348,8 @@ namespace Zantetsu.Core.MobPlan
                 // Drop segments that already ended (keep the one containing now) so plans do not grow without bound.
                 var keepFrom = plan.SegmentIndexAt(Time);
                 if (keepFrom > 0) plan.Segments.RemoveRange(0, keepFrom);
-                snapshot.Agents.Add(new AgentSnapshot { Id = agent.Id, Radius = agent.Radius, GoalX = agent.PlanGoalX, GoalZ = agent.PlanGoalZ, Plan = plan, Field = UseGoalField ? FieldFor(agent.PlanGoalX, agent.PlanGoalZ, agent.Radius, agent.Pose.X, agent.Pose.Z) : null, NextReplanTime = agent.NextReplanTime, GoalChanged = agent.GoalRevision != agent.PlannedGoalRevision });
+                snapshot.Agents.Add(new AgentSnapshot { Id = agent.Id, Radius = agent.Radius, GoalX = agent.PlanGoalX, GoalZ = agent.PlanGoalZ, HasArrive = agent.ReachValid && !agent.GoalBlocked && !agent.ReachStandoff, ArriveX = agent.GoalX, ArriveZ = agent.GoalZ, Plan = plan, Field = UseGoalField ? FieldFor(agent.PlanGoalX, agent.PlanGoalZ, agent.Radius, agent.Pose.X, agent.Pose.Z) : null, NextReplanTime = agent.NextReplanTime, GoalChanged = agent.GoalRevision != agent.PlannedGoalRevision,
+                    RecentT = agent.RecentT.ToArray(), RecentX = agent.RecentX.ToArray(), RecentZ = agent.RecentZ.ToArray() });
             }
 
             return snapshot;
@@ -358,6 +448,13 @@ namespace Zantetsu.Core.MobPlan
                 var moved = Pose2.Distance(pose, agent.Pose);
                 agent.TravelDistance += moved;
                 agent.Pose = pose;
+                // PLANNER-LOCAL-STAY: the agent's recent places (a jump -- a spawn, a recycle -- starts them anew)
+                if (moved > 3f) { agent.RecentT.Clear(); agent.RecentX.Clear(); agent.RecentZ.Clear(); }
+                if (agent.RecentT.Count == 0 || Time - agent.RecentT[agent.RecentT.Count - 1] >= 0.2f)
+                {
+                    agent.RecentT.Add(Time); agent.RecentX.Add(pose.X); agent.RecentZ.Add(pose.Z);
+                    while (agent.RecentT.Count > 0 && agent.RecentT[0] < Time - 8f) { agent.RecentT.RemoveAt(0); agent.RecentX.RemoveAt(0); agent.RecentZ.RemoveAt(0); }
+                }
                 agent.CurrentClip = segment.Clip;
                 agent.ClipLocalTime = local;
             }
@@ -370,7 +467,13 @@ namespace Zantetsu.Core.MobPlan
             {
                 // Mode 1: while the goal is blocked, standing at the ring point counts as arriving.
                 var arriveAtRing = agent.GoalBlocked && Config.blockedGoalMode == 1;
-                var distance = arriveAtRing ? agent.Pose.DistanceTo(agent.StandoffX, agent.StandoffZ) : agent.Pose.DistanceTo(agent.GoalX, agent.GoalZ);
+                // PROP-GOAL-REACH, no-point mode 1: standing at the standoff counts as arriving (counted apart)
+                // -- only a standoff of the goal as it is now (ReachValid), and the goal's own condition first
+                var atPropStandoff = !agent.GoalBlocked && agent.ReachValid && agent.ReachStandoff;
+                var byGoalItself = true;
+                var distance = arriveAtRing ? agent.Pose.DistanceTo(agent.StandoffX, agent.StandoffZ)
+                    : atPropStandoff ? SimAgent.StandoffArrivalDistance(agent.Pose.DistanceTo(agent.GoalX, agent.GoalZ), agent.Pose.DistanceTo(agent.ReachX, agent.ReachZ), Config.goalRadiusMeters, out byGoalItself)
+                    : agent.Pose.DistanceTo(agent.GoalX, agent.GoalZ);
                 if (agent.FlowPhase == 1)
                 {
                     // Pass waypoint: switch to the far goal early and without stopping (also when the NPC already went past it).
@@ -402,6 +505,9 @@ namespace Zantetsu.Core.MobPlan
                 if (agent.CurrentClip < 0 || !Dataset.Clips[agent.CurrentClip].IsStationary) continue;
                 agent.GoalsReached++;
                 TotalGoalsReached++;
+                if (atPropStandoff && !byGoalItself) GoalStandoffArrivals++;
+                else if (atPropStandoff) GoalReachedWhileAtStandoff++;
+                else if (agent.ReachValid && !agent.GoalBlocked) GoalReachArrivals++;
                 if (arriveAtRing) BlockedArrivals++;
                 agent.GoalTimes.Add(Time - agent.LastGoalTime);
                 if (agent.GoalTimes.Count > 256) agent.GoalTimes.RemoveAt(0);
@@ -411,6 +517,7 @@ namespace Zantetsu.Core.MobPlan
 
         private void AssignNextGoal(SimAgent agent, string reason, bool initial = false)
         {
+            agent.GoalStage++;
             agent.LastGoalTime = Time;
             var required = agent.Radius + Config.staticMarginMeters + 0.1f;
             float gx, gz;
@@ -449,6 +556,7 @@ namespace Zantetsu.Core.MobPlan
             for (var attempt = 0; attempt < 12; attempt++)
             {
                 ScenarioBuilder.PickGoal(Map, goalRandom, required, minDistance, fromX, fromZ, out gx, out gz);
+                if (attempt < 11 && InProps(gx, gz, agent.Radius + Config.propSpawnKeepMeters)) { PropGoalRejects++; continue; }   // PROP-OBSTACLE-1
                 if (GoalReachable(agent.Pose.X, agent.Pose.Z, gx, gz, agent.Radius)) return;
             }
         }
@@ -516,6 +624,7 @@ namespace Zantetsu.Core.MobPlan
                     x = Obstacle.X + (float)Math.Sin(angle) * rho; z = Obstacle.Z + (float)Math.Cos(angle) * rho;
                     if (x < Map.SampleOriginX || x > Map.SampleOriginX + Map.SampleWidth || z < Map.SampleOriginZ || z > Map.SampleOriginZ + Map.SampleHeight) continue;
                     if (Map.ClearanceAt(x, z) < required) continue;
+                    if (InProps(x, z, agent.Radius + Config.propSpawnKeepMeters)) { PropSpawnRejects++; continue; }   // PROP-OBSTACLE-1: not inside a felled piece
                     var inView = Math.Abs(Pose2.WrapDeg(relative)) <= Scenario.recycleViewDeg * 0.5f;
                     if (inView && (!Scenario.recycleOcclusionInView || !Map.SegmentBlocked(Obstacle.X, Obstacle.Z, x, z))) continue;
                     if (TooCloseNow(agent, x, z, 2f)) continue;
@@ -626,6 +735,7 @@ namespace Zantetsu.Core.MobPlan
         /// <summary>PlayerFlow phase 2: far goal beyond the player within a cone of the pass direction; falls back to a random far goal.</summary>
         private void AssignFarGoal(SimAgent agent)
         {
+            agent.GoalStage++;
             agent.FlowPhase = 2;
             agent.GoalBlocked = false; agent.BlockedWaitSeconds = 0f;
             var required = agent.Radius + Config.staticMarginMeters + 0.1f;

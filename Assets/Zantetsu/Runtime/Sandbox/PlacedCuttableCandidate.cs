@@ -549,6 +549,7 @@ namespace Zantetsu.Sandbox
                         if (registered) owner = found;
                     }
 
+                    _world.Lifetime?.MarkPropLineage(Source);   // PROP-OBSTACLE-1: the lineage is a placed prop's, for as long as its pieces live
                     cutPropHookForTest?.Invoke("after owner");
                     _world.Geometry.RegisterBaseGeometry(Source, geometry, Matrix4x4.identity);
                     cutPropHookForTest?.Invoke("after base geometry");

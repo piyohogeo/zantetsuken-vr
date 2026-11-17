@@ -231,6 +231,7 @@ namespace Zantetsu.Sandbox
             {
                 RunRefill();
             }
+            StepProps();
             Vector3 position = player.transform.position;
             playerVelocity = Time.deltaTime > 0 ? (position - previousPlayer) / Time.deltaTime : Vector3.zero;
             previousPlayer = position;
@@ -254,12 +255,15 @@ namespace Zantetsu.Sandbox
             var polygons = assets.polygons.bytes;
             var tables = assets.poseTables.Select(t => t.bytes).ToArray();
             Vector2 centre = mapCentre;
+            bool propPlanner = PropObstacleSource.On(Environment.GetCommandLineArgs());
             var load = new Work(() =>
             {
                 var dataset = ClipDataset.Read(data);
                 var map = PolygonWalkable.Read(polygons, centre.x, centre.y, 300, 300);
                 map.BuildAllTiles();
-                var made = new LocomotionSimulation(dataset, MobPlanPreset.Planner()) { AutoPlan = false, ExternalPlayer = true };
+                PlannerConfig planner = MobPlanPreset.Planner();
+                if (propPlanner) planner.ApplyPropTrial();   // D-264: with the map (the default), the planner's parts taken with it
+                var made = new LocomotionSimulation(dataset, planner) { AutoPlan = false, ExternalPlayer = true };
                 var scenario = MobPlanPreset.Scenario(null);
                 scenario.sceneCenterX = centre.x;
                 scenario.sceneCenterZ = centre.y;
@@ -293,6 +297,7 @@ namespace Zantetsu.Sandbox
             PrepareLodPlans();
             for (int i = 0; i < simulation.Agents.Count && pool.TryTake(out SandboxNpcCharacter slot); i++)
                 AddActor(simulation.Agents[i].Id, slot, new PublishedMobPlan(simulation.Agents[i].Plan, generation));
+            BeginProps();
             ready = true;
             Debug.Log($"MobPlan ready: {actors.Count} NPC, {simulation.Dataset.Count} nodes, {bank.Tables.Count} tables, 66 bones; slots {pool.SlotCount} ({pool.FreeCount} free)");
         }
@@ -462,12 +467,22 @@ namespace Zantetsu.Sandbox
                 if (!bank.TryEvaluate(plan, PlanTime, simulation.Dataset, out _, out _, out var root))
                 {
                     refillStartsDroppedUnplaced++;
+                    CaptureStart(id, 0f, 0f, PropCapture.StartUnplaced);
                     return MobPlanRefillQueue<PublishedMobPlan>.StartResult.Dropped;
                 }
 
                 if (Visible(root.position.x, root.position.z))
                 {
                     refillStartsDroppedInView++;
+                    CaptureStart(id, root.position.x, root.position.z, PropCapture.StartInView);
+                    return MobPlanRefillQueue<PublishedMobPlan>.StartResult.Dropped;
+                }
+
+                // PROP-OBSTACLE-1: not inside a felled piece, by the newest finished map (the plan was made with an older one)
+                if (InProps(root.position.x, root.position.z))
+                {
+                    refillStartsDroppedInProps++;
+                    CaptureStart(id, root.position.x, root.position.z, PropCapture.StartInProps);
                     return MobPlanRefillQueue<PublishedMobPlan>.StartResult.Dropped;
                 }
 
@@ -482,6 +497,7 @@ namespace Zantetsu.Sandbox
                 {
                     if (!AddActor(id, slot, plan, true)) return MobPlanRefillQueue<PublishedMobPlan>.StartResult.Dropped;
                     ReplacementsAdded++;
+                    CaptureStart(id, root.position.x, root.position.z, PropCapture.StartStarted);
                 }
 
                 return MobPlanRefillQueue<PublishedMobPlan>.StartResult.Started;
@@ -523,6 +539,7 @@ namespace Zantetsu.Sandbox
             foreach (int id in gone)
             {
                 SandboxNpcCharacter character = actors[id].character;
+                CaptureRetired(id, actors[id]);
                 ActorRetired?.Invoke(id, character);
                 actors.Remove(id);
                 // A cut character's pose is no longer updated: it leaves the bone level of detail with its retirement.
@@ -569,12 +586,16 @@ namespace Zantetsu.Sandbox
             Vector3 p = player.transform.position - mapOffset, velocity = playerVelocity;
             float yaw = view != null ? view.eulerAngles.y : player.transform.eulerAngles.y;
             var accepted = lastAccepted;
+            // PROP-OBSTACLE-1: the newest finished version of the prop fragments' map, kept for this cycle to its collection
+            PropObstacleMap propMap = props?.Pool.RetainCurrent();
+            int[] waitingIds = propCapture != null ? refill.Waiting.Select(w => w.Key).ToArray() : null;
             var stopwatch = Stopwatch.StartNew();
             var work = new Work(() =>
             {
                 if (stopwatch.Elapsed.TotalSeconds >= 1.9) return null;
                 if (accepted != null) simulation.AcknowledgeExternal(accepted);
-                var snapshot = simulation.PrepareExternal(now, baseline, p.x, p.z, velocity.x, velocity.z, yaw);
+                CaptureCycleStart(now, queuedFrame, capturedGeneration, p, velocity, yaw, propMap, baseline, waitingIds);
+                var snapshot = simulation.PrepareExternal(now, baseline, p.x, p.z, velocity.x, velocity.z, yaw, propMap);
                 double remaining = 1.9 - stopwatch.Elapsed.TotalSeconds;
                 if (remaining <= 0) return null;
                 var config = simulation.Config.Clone();
@@ -590,10 +611,12 @@ namespace Zantetsu.Sandbox
                     plans = result.NewPlans.ToDictionary(pair => pair.Key, pair => new PublishedMobPlan(pair.Value, capturedGeneration)) };
             }, (job, completion) =>
             {
+                propMap?.Release();
                 using (s_collect.Auto())
                 {
                     int before = ReplacementsAdded;
                     string outcome = CollectCycle(job, completion, capturedGeneration);
+                    CaptureCycleEnd(now, outcome, (job.result as Product)?.cycle, ReplacementsAdded - before);
                     timings.Add(new CycleTiming(QueueMilliseconds, ComputeMilliseconds, CollectionMilliseconds, queuedFrame, Time.frameCount, outcome, ReplacementsAdded - before));
                     if (timings.Count > 600) timings.RemoveAt(0);
                 }
@@ -602,7 +625,8 @@ namespace Zantetsu.Sandbox
             work.measured = job => ReportProfile(job, now);
 #endif
             if (world.Dispatcher.TryEnqueue(WorkPurpose.MobPlanning, work, out _))
-            { busy = true; lastAccepted = null; nextRequest = now + 1; }
+            { busy = true; lastAccepted = null; nextRequest = now + 1; NoteCycleProps(propMap, now); }
+            else propMap?.Release();
         }
 
         // The collection of one cycle on the main thread: what became of it ("published", or why not).
@@ -658,6 +682,7 @@ namespace Zantetsu.Sandbox
         private void OnDestroy()
         {
             stopped = true; generation++;
+            EndProps();
             int waitingAtEnd = refill.WaitingStarts;
             refill.CancelAll();
             if (ready)

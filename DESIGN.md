@@ -2294,6 +2294,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-261 | Direct3D 12ネイティブ経路で、行列とClipのBufferへの書込みをプラグインが行う（D-215の「更新処理のネイティブ化は行わない」「追加のGPUコピーは行わない」を、この2個のBufferについて改める） | 4.5.8「行列とClipの書込み」のとおり。`VpNativeUpload`、`VpIndexedIndirectDrawBatch` の書込み6か所、プラグインの `ZvnUploadWrite`／`ZvnUploadSeal`／Uploadイベント。書込みごとのネイティブポインタの取り直しがなくなる。`-zantetsuVpNativeUnityUploads` で従来の `SetData` へ戻せる。Unity描画・Vulkan・選別のCommand・Skin用のBufferは対象外 | 2026-11-11、TL指示（「SetData相当を自前で持つ」実装）。mitra-host・RX 5500 XT・Simulator 90 Hz・Releaseの街歩き、同一ビルドで各3回：Main中央値は固定長2.484→2.362 ms、Wave 2.504→2.417 ms（Waveは1回が重なる）。取り直しは約2万〜3万回→460〜590回、失われた書込み0。Render／GPUは差なし。Unity描画との差は0.16 ms残る。書込みイベントを次の描画の開始時に発行する変更は同日に測って不採用（Mainに差なし、4.5.8）。Vulkanへの適用は行わない（同日、Quest 3Sで取り直しをやめてもMainが縮まなかった、4.5.8、TL判断）。Link・実機は未測定。記録 `C:\log\zantetsuken-vr\main-route-sim-20261110\RESULT.md`。番号は実装担当の付番でTL未確認 | 暫定採用（TL指示で実装、2026-11-11） |
 | D-262 | Direct3D 12ネイティブ経路で、定数ブロックの組立てをPassごとに1回、影スライスの選別をフレームに1回のComputeにまとめ、主光源のカスケードのスライスをGPU選別とCasterPassで共有する | 4.5.8「Computeの集約と影カスケード行列の共有」のとおり。`VpNativeConstantCopy.compute` の `AssembleGlobalsBatch`、`VpInstanceCull.compute` の `CullShadowSlices`、`VpMainLightSlices`。定数組立ての集約とスライスの共有はVulkanにも適用する（Quest 3S実機で確認、`-zantetsuVpNativeUnbatchedConstants` で戻せる）。影スライスの集約はDirect3D 12だけの機能。Unity描画は変えない | 2026-11-11、TL指示（CPUサンプリングで見つけた上位2箇所を進める）。mitra-host・RX 5500 XT・Simulator 90 Hz・Release、CPUサンプリング付きの街歩きで変更前後を各1回：Mainの描画は1フレーム0.933→0.904 ms（ディスパッチ0.031→0.015 ms、カスケード行列0.021→0.003 ms）。同じビルドのUnity描画との描画部分の差は+0.147→+0.116 ms。記録 `C:\log\zantetsuken-vr\main-route-etw-20261111\RESULT.md`。番号は実装担当の付番でTL未確認 | 暫定採用（TL指示で実装、2026-11-11） |
 | D-263 | NPC片の追加分割を、保護つきペア判定（`pair-or-protect`、mode 2）とフォールバックのグラフ段の再利用（結合チェックによる段省略を含む）を既定にする。PC・Quest共通、全ビルド | 7.9.2「NPC片の保護つきペア判定と、フォールバックのグラフ段の再利用」のとおり。`CutWorldRoot.ReadNpcPairProtect`、`CutSpatialSplit.SetPairProtect`／`PairReuse`、`SpatialSplitGraph.Kept`／`ConvexesHeld`。切り戻し：`-zantetsuNpcPairProtectOff`（Bone-aware＋既存設定のフォールバックへ。ONとの併記はOFF優先）、`-zantetsuNpcPairReuseOff`（ペア判定は使い、再利用と段省略だけOFF）。結合チェックで段を省略した後はbentへ進まない（実行した段がUnfinishedのときは従来どおり進む）。NPC試行の自動採取は `-zantetsuNpcPairProtectOff` を明示する | 2026-11-14、TL指示。保存入力（3,640入力・28選択）で成立・配分・子の骨記録に差がなく成立の損失なし。終了理由の変化（Unfinished→NotFound）230件・8件。省略後にbentへ進まないのは費用を優先した探索方針で、他の入力ではbentによる分離機会が減る可能性を受け入れた。保存入力・暖機なし各1回の合計で、グラフ段に入ったフォールバックの判定時間 5,046.7→2,969.1 ms（Development Player。フレーム時間・Releaseでの効果は未計測）。Link・Quest 3Sの通常プレイで例外0 | 採用（TL指示、2026-11-14） |
+| D-264 | 切断された小道具片の障害物地図と、それに合わせた計画器設定（目標場1 m、復帰、低速Clipの待機費用、目標への誘導＋断念。確定済み部分の再検査は無効）を既定にする。窓の余白は20 m。PC・Quest共通、全ビルド | 20.7のとおり。`PropObstacleSource`／`PropObstacleMap`／`PropObstacleWindow`、`MobPlanCrowd.BeginProps`、`PlannerConfig.ApplyPropTrial`、`CutFragmentLifetime.MarkPropLineage`。切り戻し：`-zantetsuPropObstaclesOff`（地図なし・従来の計画器）。`-zantetsuPropObstacles` は受け付けるが効果なし | 2026-11-17、TL指示。保存入力の再生で、地図ONは1.7 m断面内の時間を84 %減らし、誘導＋断念は到達数を保って立ち止まっての回転を12 %減らした（断面内の時間の増加は受け入れた）。PC（Link、Release／Development）とQuest 3S（Release）の通常プレイで例外0・全版公開・利用者所見は問題なし。侵入は残る（計画の確定済み部分、窓の外、1.7 mより低い片）。Quest 3SのMain収集の最大7.674 ms／公開の遅れの最大66.7 msは原因未特定。地図OFFとの性能比較・全体の性能判定は行っていない | 採用（TL指示、2026-11-17） |
 
 ## 13. 未決事項
 
@@ -3261,6 +3262,52 @@ Phase 4.65で未来用非同期ベイクを採用した場合だけ、MobPlanの
 MobId、PlanGeneration、Work・Slashとの因果相関を既存Traceへ残す。未投入仕事の取消、投入済み仕事の完了後不採用・回収と使用中資源の保護は§4.4／§8に従う。研究方式固有のEvent・Counter・保存Schemaを先行追加しない。
 
 計画済みAnimationの時間進行だけではPlanGenerationを更新せず、計画内容の変更は既存PlanGenerationで扱う。第二のruntime Animation Generationを追加しない。単なるPlayer Physics Contactを必須の無効化要因にせず、ゲーム側で観測できる介入を扱う。
+
+### 20.7 切断された小道具片の障害物地図（2026-11-17、PROP-OBSTACLE-1。D-264）
+
+**目的。** 静的な歩行可能地図は切断に追従しないため、倒れた木などの片の中にNPCが出現し、片を通り抜けていた。配置された小道具（木、ベンチ等）に由来する片を、計画器が読む局所的な動的障害物地図にする。PC・Questの全ビルドで、指定なしのとき有効とする。
+
+**地図。** 小道具の系統は最初の切断で印を付ける（`CutFragmentLifetime.MarkPropLineage`。由来を示すだけで、回収の対象にはしない）。その系統の片のConvexを、NPCの床から1.7 mの水平面1枚で切った断面を、0.2 mセル×250（50 m四方）の窓へ書き、占有セルと3.0 mまでの距離を持つ地図にする（`PropObstacleMap`、`PropObstacleSource`）。静的地図が既に塞いでいるセルには書かない（その判定用の静的マスクは窓を置くたびにワーカーで作る）。窓はPlayerに追従し、Playerが窓の端から20 m以内に入ったら置き直す（`PropObstacleWindow.Follow`、`recentreMarginMeters` 20）。更新は200 msごとを目標に1回ずつ行う。Mainは形状の番号と姿勢を集め（未複写の形状だけ複写）、作成はBackground Poolの仕事1件、完成版を読み取り専用で公開する。計画周期は開始時に取った版を終わりまで使い、作成中は前の版が現行のまま残る。Mainから作成の完了を待たない。
+
+**計画器。** 地図があるとき、歩行費用はNPC半径0.35 m＋余裕0.10 mで占有セルとの重なりに費用を課す（通行禁止にはしない）。出現位置は半径＋0.30 mで占有セルに触れる候補を拒否し、出現の直前にも最新の版で確かめる。あわせて次を有効にする（`PlannerConfig.ApplyPropTrial`。群衆が地図ONのときに適用し、各項目の既定値そのものは従来の計画器のまま残す）。
+
+- 目標場を片のセルを避けて作る。セルは1 m（`propGoalField`、`propGoalFieldCellMeters`）。
+- 目標場に経路がない場所からの復帰（`goalFieldRecovery`）。歩行の余裕で戻り道の小さな場を作る。
+- 低速Clipへの待機費用（`idleCostLowTranslation`）。片の縁でその場回転を続ける選択を減らす。
+- 片の中の目標は、目標の到達範囲内で立てる最寄りの点へ誘導し、到達判定は目標そのもので行う（`propGoalReach`）。立てる点が2秒見つからなければその目標を断念して次へ進む（`propGoalNoReachMode` 2）。
+- 計画の確定済み部分を最新の地図で再検査して早く切り上げる処理（`propPrefixRecheck`）は実装済みだが無効とする。
+
+**切り戻しと観測。** `-zantetsuPropObstaclesOff` で地図と上の計画器設定をまとめて外す（地図なし、従来の計画器）。評価中の有効化引数 `-zantetsuPropObstacles` は受け付けるが効果はない。起動時に `MOBPLAN PROPS:` と `MOBPLAN PROPS PLANNER:`、終了時に `MOBPLAN PROPS (end):` を出す（終了行は800文字以下の部分にも分けて出す。Questのログは1行約1,000文字で切れる）。`-zantetsuPropObstacleEndFile` を付けると、終了行の全文を `persistentDataPath` の `prop-obstacles-end.txt` へ、一時停止時と終了時に書く。Editor／Development Playerでは `-zantetsuPropCapture <dir>` で地図と計画器の数値入力を保存でき（`PropCaptureWriter`。保存状態は形式2で、形式1も読める）、`PropObstacleReplayTool` が製品のCoreで保存入力を再生・集計する。Releaseに採取はない。
+
+**評価結果。** 評価は人間の通常プレイから保存した入力の再生と、通常プレイそのものの記録で行った。尺度は1.7 m断面、範囲はPlayer中心50 m四方。別々のプレイ・各1回の再生であり、差の大きさを一般化しない。
+
+- 地図ON（従来の計画器）は、再生で1.7 m断面の内側にいる時間を84 %減らした（最初の記録、1,303秒）。目標到達は減り、片の縁でのその場回転が増えたため、上の計画器設定を順に加えた。
+- 誘導＋断念（10区間の再生、従来の計画器＋目標場1 m等との比較）：目標到達112＝112、立ち止まっての回転−12 %、断面内の時間は50.3→66.5 NPC秒に増えた。回転の減少と到達数の維持を理由に採用し、この増加は受け入れた。
+- 余白10 m→20 m（1,798秒の記録全体の再生）：窓の外になる近傍のNPC周期918→159（37,207中）、断面内183.5→176.4 NPC秒、窓の置き直し14→139回。
+- 採用構成の通常プレイ（PC、Link、Development）：3,871秒で侵入199件・断面内284.80 NPC秒（範囲内75,332 NPC秒、1,000 NPC秒あたり3.78）、1,962秒で99件・116.56 NPC秒（38,889.8 NPC秒、同3.00）。断面と重なった出現は1,888件中3件と935件中0件。
+- 利用者所見：PC（Release・Development）とQuest 3S（Release）の通常プレイで問題なし。例外0、作成した版は全て公開。
+
+**費用（通常プレイ、終了行と記録から）。**
+
+| | PC Release（Link） | Quest 3S Release |
+| --- | --- | --- |
+| 窓を置く作成のワーカー時間：平均／最大 | 16.5／21.2 ms（98回） | 45.2／52.4 ms（33回） |
+| その他の作成のワーカー時間：平均 | 1.83 ms | 4.58 ms |
+| ワーカー時間の合計がワーカー1本に占める割合 | 約1.0 % | 2.3 % |
+| Mainの収集：1作成あたり平均／1フレーム最大 | 0.160／1.179 ms | 0.383／7.674 ms |
+| 入力から公開まで：平均／最大 | 0.1／333.3 ms | 0.1／66.7 ms |
+| 計画周期が取った版の古さ：平均／最大 | 108／233 ms | 111／244 ms |
+
+PCのDevelopmentでは、公開の遅れは窓を置く作成で1フレーム、初回の作成（333～389 ms）を除き最大2フレームだった。地図ありの計画周期のワーカー処理全体は中央値108～118 ms（PC、Development）。Quest 3Sのプレイ（1,937秒、AppSWで90 Hzの半分）で、アプリのVrApi行（開始40秒を除く1,912行）はFPS中央値45、44が2行、44未満は0行だった。1秒単位の統計であり、個別フレームの引っかかりを否定するものではない。地図OFFとの同一条件の性能比較と、全体の性能判定は行っていない。
+
+**残る制約と未確認。**
+
+- 侵入は残る。再生で追った侵入の約85 %は、その瞬間を決めた計画周期（3.4～6.3秒前）の地図では0.45 m以上空いていた場所で、片が計画の確定済み部分の間に来たもの。確定済み部分の再検査は5区間中4区間で断面内の時間を減らしたが1区間で大きく増やしたため無効のままとした。
+- 窓（50 m四方）の外の片は地図になく、計画器からは見えない。窓のすぐ外の未収録帯で、断面と重なる出現が3件あった。窓の外でのNPCの侵入は観測していない。
+- 平面は1.7 mの1枚で、それより低い片は地図に入らない。低い片を通ることは受け入れた。
+- Quest 3SのMain収集の1フレーム最大7.674 msと公開の遅れの最大66.7 msは、どのフレーム・作成かを特定していない（Releaseに採取がないため）。原因未特定の最大値として残す。
+- 未調査：基準不整合（InvalidBaseline）で公開されなかった計画周期（2回のプレイで3件・5件）、終了直前に出た窓を置かない遅い作成、5秒以上の長い侵入、保存周期の間に出現して退役したNPCの位置（1,962秒のプレイで約2.51 NPC秒の欠測）。
+- 既定ONでの台本つきの街歩き（検査つき）は実行していない。Questでの採取つき（Development）プレイも行っていない。
 
 ## 21. 観測・トレース設計
 

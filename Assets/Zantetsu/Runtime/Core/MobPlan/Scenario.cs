@@ -92,8 +92,56 @@ namespace Zantetsu.Core.MobPlan
         public float FlowDirZ;
         public int PassCount;                 // waypoint switches (passes beside the player)
         public bool InPassRing;               // metrics: currently within the pass radius of the player
-        public float PlanGoalX => GoalBlocked ? StandoffX : GoalX;
-        public float PlanGoalZ => GoalBlocked ? StandoffZ : GoalZ;
+        public float PlanGoalX => GoalBlocked ? StandoffX : ReachValid ? ReachX : GoalX;
+        public float PlanGoalZ => GoalBlocked ? StandoffZ : ReachValid ? ReachZ : GoalZ;
+        /// <summary>The point belongs to the goal as it is now (a point set for an earlier revision of the goal is not used for anything).</summary>
+        public bool ReachValid => ReachActive && ReachGoalRevision == GoalRevision;
+        /// <summary>
+        /// Counts the goal-seeking actions: raised when a goal of another kind or a new goal is taken (the next goal, the far goal
+        /// after a pass), NOT when a pass waypoint follows the player (that is the same action with a moved point).
+        /// </summary>
+        public int GoalStage;
+        /// <summary>The stage the running no-point time belongs to.</summary>
+        public int ReachNoneStage = -1;
+
+        /// <summary>
+        /// The running time of "the sample finds no point for this goal": it starts at the first such cycle, is carried over a pass
+        /// waypoint's follow-up moves (same stage), and ends -- ReachNoneSince NaN -- when a point is found, the goal needs none, or
+        /// the stage changes. Apart from the per-goal count (ReachNoneRevision).
+        /// </summary>
+        public void ObserveNoPoint(bool noPoint, float now)
+        {
+            ReachNone = noPoint;
+            if (!noPoint) { ReachNoneSince = float.NaN; return; }
+            if (float.IsNaN(ReachNoneSince) || ReachNoneStage != GoalStage) { ReachNoneSince = now; ReachNoneStage = GoalStage; }
+        }
+
+        public float NoPointSeconds(float now) => float.IsNaN(ReachNoneSince) || ReachNoneStage != GoalStage ? 0f : now - ReachNoneSince;
+
+        /// <summary>
+        /// Arriving while led to a standoff: the goal's own condition comes first -- within `radius` of the goal itself counts as the
+        /// goal reached; else within `radius` of the standoff counts as a standoff arrival. Returns the distance the arrival test uses.
+        /// </summary>
+        public static float StandoffArrivalDistance(float goalDistance, float standoffDistance, float radius, out bool byGoalItself)
+        {
+            byGoalItself = goalDistance <= radius;
+            return byGoalItself ? goalDistance : standoffDistance;
+        }
+        // PROP-GOAL-REACH (PlannerConfig.propGoalReach): the goal point cannot be stood on for the prop fragments, but a point inside
+        // the goal's own reach can: the planner is led there; arriving is judged against the goal itself, as before. Part of a
+        // saved state since format 2 (with GoalStage and the no-point time): the next cycle's decision depends on them.
+        public bool ReachActive;
+        public float ReachX;
+        public float ReachZ;
+        public int ReachGoalRevision = -1;
+        public int ReachNoneRevision = -1;
+        /// <summary>The point's goal field had a path at the NPC's place when it was set (false: the nearest sampled point was taken without one).</summary>
+        public bool ReachVerified;
+        /// <summary>This cycle the goal needs a point and the sample found none; since when (simulation time) for this goal.</summary>
+        public bool ReachNone;
+        public float ReachNoneSince = float.NaN;
+        /// <summary>PlannerConfig.propGoalNoReachMode 1: the point is a standoff OUTSIDE the goal's reach; standing there counts as arriving (counted apart).</summary>
+        public bool ReachStandoff;
         public int PlannedGoalRevision;
         public float BestGoalDistance = float.PositiveInfinity;   // stuck detection: best distance seen for the current goal revision
         public float LastProgressTime;
@@ -108,6 +156,8 @@ namespace Zantetsu.Core.MobPlan
         public float MovingSeconds;
         public float LastGoalTime;
         public List<float> GoalTimes = new List<float>();
+        /// <summary>PLANNER-LOCAL-STAY: where the agent was at the simulation's last updates (time, x, z; some 8 s back), for the planner's local-stay window. Not part of a saved state.</summary>
+        public readonly List<float> RecentT = new List<float>(), RecentX = new List<float>(), RecentZ = new List<float>();
     }
 
     /// <summary>Builds enclosed maps and NPC scenarios deterministically from a seed.</summary>

@@ -16,7 +16,17 @@ namespace Zantetsu.Core.MobPlan
         public readonly float OriginX, OriginZ, CellSize;
         public readonly int Width, Height;
         public readonly bool[] Passable;
+        /// <summary>The step the waypoint search probes at (m) and the neighbourhood a point without a path reads (cells each way). 3 cells and 2 cells unless set (PlannerConfig.goalFieldMetricReach).</summary>
+        public float ProbeStepMeters;
+        public int NeighbourCells = 2;
         public double BuildMilliseconds { get; }
+
+        /// <summary>The two reaches as they are at a 0.5 m cell: 1.5 m and +-1 m, whatever this grid's cell.</summary>
+        public void UseMetricReach()
+        {
+            ProbeStepMeters = 1.5f;
+            NeighbourCells = Math.Max(1, (int)Math.Round(1f / CellSize));
+        }
 
         public FieldGrid(WalkableMap map, float requiredClearance, float cellSize)
         {
@@ -40,6 +50,18 @@ namespace Zantetsu.Core.MobPlan
                         Passable[cz * Width + cx] = map.ClearanceAt(OriginX + (cx + 0.5f) * CellSize, OriginZ + (cz + 0.5f) * CellSize) >= requiredClearance;
             }
 
+            BuildMilliseconds = watch.Elapsed.TotalMilliseconds;
+        }
+
+        /// <summary>PROP-OBSTACLE-1: the same grid with some cells closed besides (the prop fragments' map over the static one); the source is not changed.</summary>
+        public FieldGrid(FieldGrid source, IReadOnlyList<int> closed)
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            Map = source.Map; RequiredClearance = source.RequiredClearance;
+            OriginX = source.OriginX; OriginZ = source.OriginZ; CellSize = source.CellSize; Width = source.Width; Height = source.Height;
+            Passable = (bool[])source.Passable.Clone();
+            ProbeStepMeters = source.ProbeStepMeters; NeighbourCells = source.NeighbourCells;
+            for (var i = 0; i < closed.Count; i++) Passable[closed[i]] = false;
             BuildMilliseconds = watch.Elapsed.TotalMilliseconds;
         }
 
@@ -149,9 +171,10 @@ namespace Zantetsu.Core.MobPlan
             var d = distance[cz * grid.Width + cx];
             if (!float.IsPositiveInfinity(d)) return d;
             var best = float.PositiveInfinity;
-            for (var dz = -2; dz <= 2; dz++)
+            var reach = grid.NeighbourCells;
+            for (var dz = -reach; dz <= reach; dz++)
             {
-                for (var dx = -2; dx <= 2; dx++)
+                for (var dx = -reach; dx <= reach; dx++)
                 {
                     var nx = cx + dx; var nz = cz + dz;
                     if (!grid.InBounds(nx, nz)) continue;
@@ -161,6 +184,46 @@ namespace Zantetsu.Core.MobPlan
                     var pz = grid.OriginZ + (nz + 0.5f) * grid.CellSize - z;
                     nd += (float)Math.Sqrt(px * px + pz * pz);
                     if (nd < best) best = nd;
+                }
+            }
+
+            return best;
+        }
+
+        /// <summary>The centre of the grid cell holding a point.</summary>
+        public void CellCentre(float x, float z, out float cx, out float cz)
+        {
+            cx = grid.OriginX + (grid.CellX(x) + 0.5f) * grid.CellSize;
+            cz = grid.OriginZ + (grid.CellZ(z) + 0.5f) * grid.CellSize;
+        }
+
+        /// <summary>The path distance of the cell holding a point when that cell is passable in the field's grid and has a path; infinite otherwise (no neighbourhood is read, and a cell seeded about the goal without being passable does not count).</summary>
+        public float CellPath(float x, float z)
+        {
+            var cx = grid.CellX(x); var cz = grid.CellZ(z);
+            if (!grid.InBounds(cx, cz)) return float.PositiveInfinity;
+            var index = cz * grid.Width + cx;
+            return grid.Passable[index] ? distance[index] : float.PositiveInfinity;
+        }
+
+        /// <summary>Evaluation: the distance (m) from a point to the nearest cell centre that has a path, looking `reach` metres each way (infinite: none); and whether the point's own cell and the goal's cell are passable.</summary>
+        public float NearestPathMeters(float x, float z, float reach, out bool ownCellPassable, out bool goalCellPassable)
+        {
+            var cx = grid.CellX(x); var cz = grid.CellZ(z);
+            ownCellPassable = grid.InBounds(cx, cz) && grid.Passable[cz * grid.Width + cx];
+            var gx = grid.CellX(GoalX); var gz = grid.CellZ(GoalZ);
+            goalCellPassable = grid.InBounds(gx, gz) && grid.Passable[gz * grid.Width + gx];
+            var cells = (int)Math.Ceiling(reach / grid.CellSize);
+            var best = float.PositiveInfinity;
+            for (var dz = -cells; dz <= cells; dz++)
+            {
+                for (var dx = -cells; dx <= cells; dx++)
+                {
+                    var nx = cx + dx; var nz = cz + dz;
+                    if (!grid.InBounds(nx, nz) || float.IsPositiveInfinity(distance[nz * grid.Width + nx])) continue;
+                    var px = grid.OriginX + (nx + 0.5f) * grid.CellSize - x; var pz = grid.OriginZ + (nz + 0.5f) * grid.CellSize - z;
+                    var d = (float)Math.Sqrt(px * px + pz * pz);
+                    if (d < best) best = d;
                 }
             }
 
@@ -182,7 +245,7 @@ namespace Zantetsu.Core.MobPlan
             var bestX = 0f; var bestZ = 0f;
             var bestSlope = 0f;
             var here = DistanceAt(x, z);
-            var step = Math.Max(grid.CellSize * 3f, 0.3f);
+            var step = grid.ProbeStepMeters > 0f ? grid.ProbeStepMeters : Math.Max(grid.CellSize * 3f, 0.3f);
             for (var k = 0; k < 8; k++)
             {
                 var a = k * Math.PI / 4.0;
