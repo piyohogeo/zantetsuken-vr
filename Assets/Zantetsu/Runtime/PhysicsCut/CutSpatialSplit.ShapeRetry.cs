@@ -98,7 +98,8 @@ namespace Zantetsu.PhysicsCut
         {
             internal int frame;
             internal long at;
-            internal long retryTurn;   // _retryTurns then
+            internal bool retryOut;      // an attempt made again was out when the candidate was found
+            internal long retriesIssued;   // ShapeRetriesIssued then: one issued since is one out in the candidate's wait
         }
 
         private readonly Dictionary<LogicalFragmentId, IssuedNote> _issuedOf = new Dictionary<LogicalFragmentId, IssuedNote>();
@@ -110,7 +111,6 @@ namespace Zantetsu.PhysicsCut
         private readonly int[] _retryEnds = new int[(int)SpatialSplitEnd.Count];
         private readonly int[] _firstEnds = new int[(int)SpatialSplitEnd.Count];
         private int _notesSincePrune, _retriesOutNow;
-        private long _retryTurns;
 
         /// <summary>
         /// Of the fragments whose shape was replaced: issues that followed on a fragment the split had issued on before
@@ -131,8 +131,9 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// The waits from the scan that first found a candidate to its issue: of the candidates an attempt was made again
-        /// for after a replaced shape; of the others while an attempt made again was out in some turn of their wait; of
-        /// the others otherwise. And the turns in which candidates were held at the limit of attempts out, or of attempts
+        /// for after a replaced shape; of the others with an attempt made again out at some moment from their being found
+        /// to their issue (one out when they were found, or one issued before them -- in the same turn too); of the
+        /// others otherwise. And the turns in which candidates were held at the limit of attempts out, or of attempts
         /// waiting for the main thread, while an attempt made again was among those out.
         /// </summary>
         public SpatialSplitCandidateWaits RetryCandidateWaits { get; } = new SpatialSplitCandidateWaits();
@@ -254,17 +255,11 @@ namespace Zantetsu.PhysicsCut
         private void NoteFirstFound(LogicalFragmentId fragment)
         {
             if (_firstFound.ContainsKey(fragment)) return;
-            _firstFound.Add(fragment, new FirstFound { frame = Time.frameCount, at = Stopwatch.GetTimestamp(), retryTurn = _retryTurns });
+            _firstFound.Add(fragment, new FirstFound { frame = Time.frameCount, at = Stopwatch.GetTimestamp(), retryOut = _retriesOutNow > 0, retriesIssued = ShapeRetriesIssued });
         }
 
         // (from the scan, where a candidate found is one no more without an issue)
         private void ForgetFirstFound(LogicalFragmentId fragment) => _firstFound.Remove(fragment);
-
-        // (from the several attempts' turn, before it issues: a turn with an attempt made again out is counted)
-        private void NoteTurnForCandidateWaits()
-        {
-            if (_retriesOutNow > 0) _retryTurns++;
-        }
 
         // (from the several attempts' turn, where candidates are held at a limit)
         private void NoteLimitHold()
@@ -280,9 +275,62 @@ namespace Zantetsu.PhysicsCut
             _firstFound.Remove(fragment);
             int frames = Time.frameCount - first.frame;
             double seconds = (Stopwatch.GetTimestamp() - first.at) / (double)Stopwatch.Frequency;
+            // An attempt made again out at some moment of the wait was out when the candidate was found or was issued since
+            // (this candidate's own issue, not made again, is not among those). Told from the two moments and not from the
+            // turns between: a candidate found and issued in one turn has no turn between.
             if (_retryOut.TryGetValue(attempt, out SpatialSplitShapeRetry retry) && retry.issuedBefore > 0) RetryCandidateWaits.Add(frames, seconds);
-            else if (first.retryTurn != _retryTurns) OrdinaryWaitsBesideRetries.Add(frames, seconds);
+            else if (first.retryOut || first.retriesIssued != ShapeRetriesIssued) OrdinaryWaitsBesideRetries.Add(frames, seconds);
             else OrdinaryWaitsWithout.Add(frames, seconds);
+        }
+
+        /// <summary>
+        /// Tests: the diagnosis's notes in the order a turn makes them, on fragment numbers of the test's own, for one
+        /// candidate an attempt is made again for (issued and ended before, its shape replaced since) and one ordinary
+        /// candidate. <paramref name="order"/> 0: both found by one scan, the one made again issued first and the ordinary
+        /// one after it in the same turn. 1: the one made again is out when the ordinary one is found, and has ended by
+        /// the ordinary one's issue. 2: the ordinary one is found and issued before the one made again is found.
+        /// </summary>
+        internal void NoteCandidateWaitsForTests(LogicalFragmentId again, LogicalFragmentId ordinary, int order)
+        {
+            var before = new Attempt { fragment = again };
+            NoteIssueForRetry(before);
+            NoteEndForRetry(before, SpatialSplitEnd.NotFound);
+            NoteShapeReplacedForRetry(again);
+            var made = new Attempt { fragment = again };
+            var other = new Attempt { fragment = ordinary };
+            switch (order)
+            {
+                case 0:
+                    NoteFirstFound(again);
+                    NoteFirstFound(ordinary);
+                    NoteIssueForRetry(made);
+                    NoteCandidateIssued(again, made);
+                    NoteIssueForRetry(other);
+                    NoteCandidateIssued(ordinary, other);
+                    NoteEndForRetry(made, SpatialSplitEnd.NotFound);
+                    NoteEndForRetry(other, SpatialSplitEnd.NotFound);
+                    break;
+                case 1:
+                    NoteFirstFound(again);
+                    NoteIssueForRetry(made);
+                    NoteCandidateIssued(again, made);
+                    NoteFirstFound(ordinary);
+                    NoteEndForRetry(made, SpatialSplitEnd.NotFound);
+                    NoteIssueForRetry(other);
+                    NoteCandidateIssued(ordinary, other);
+                    NoteEndForRetry(other, SpatialSplitEnd.NotFound);
+                    break;
+                default:
+                    NoteFirstFound(ordinary);
+                    NoteIssueForRetry(other);
+                    NoteCandidateIssued(ordinary, other);
+                    NoteEndForRetry(other, SpatialSplitEnd.NotFound);
+                    NoteFirstFound(again);
+                    NoteIssueForRetry(made);
+                    NoteCandidateIssued(again, made);
+                    NoteEndForRetry(made, SpatialSplitEnd.NotFound);
+                    break;
+            }
         }
 
         private void PruneSometimes()
@@ -359,7 +407,7 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The waits of the candidates from the scan that found them to their issue, in one line (whether or not a shape was replaced).</summary>
         public string DescribeCandidateWaits()
         {
-            return "spatial split candidates, from first found to issue: made again after a replaced shape " + RetryCandidateWaits.Describe() + "; the others, an attempt made again out in a turn of their wait "
+            return "spatial split candidates, from first found to issue: made again after a replaced shape " + RetryCandidateWaits.Describe() + "; the others, an attempt made again out between their being found and their issue "
                 + OrdinaryWaitsBesideRetries.Describe() + "; the others otherwise " + OrdinaryWaitsWithout.Describe() + "; turns candidates were held at a limit of attempts: beside attempts made again "
                 + LimitHoldsBesideRetries + ", without " + LimitHoldsWithout;
         }

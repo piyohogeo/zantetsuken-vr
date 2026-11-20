@@ -660,7 +660,6 @@ namespace Zantetsu.PhysicsCut
                 return SpatialSplitNoIssue.SettingsPending;
             }
 
-            NoteTurnForCandidateWaits();
             if (_attempts.Count >= MaxAttempts)
             {
                 IssuesHeldByCount++;

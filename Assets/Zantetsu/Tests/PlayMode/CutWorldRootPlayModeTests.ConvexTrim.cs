@@ -554,5 +554,42 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(trim.Issued, Is.Zero);
             yield return EndWorld(root);
         }
+
+        /// <summary>
+        /// **The split's diagnosis tells an ordinary candidate that waited beside an attempt made again, in one turn too.**
+        /// The wait of a candidate is from the scan that found it to its issue; an attempt made again after a replaced
+        /// shape counts as beside it where it was out at some moment between the two. Found by one scan and issued one
+        /// after the other in the same turn, there is no turn between the two to count -- and the same where the attempt
+        /// made again has ended by the ordinary candidate's issue. An ordinary candidate issued before the one made again
+        /// is found had none beside it.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitDiagnosis_AnOrdinaryCandidateBesideAnAttemptMadeAgain_IsToldSo_WithinOneTurnToo()
+        {
+            CutWorldRoot root = NewPlacedHullWorld();
+            yield return null;
+            CutSpatialSplit split = root.SpatialSplit;
+
+            split.NoteCandidateWaitsForTests(new LogicalFragmentId(900001), new LogicalFragmentId(900002), 0);
+            Assert.That(split.RetryCandidateWaits.issued, Is.EqualTo(1), "the candidate made again is told as one. " + split.DescribeCandidateWaits());
+            Assert.That(split.OrdinaryWaitsBesideRetries.issued, Is.EqualTo(1), "issued after it in the same turn: beside it. " + split.DescribeCandidateWaits());
+            Assert.That(split.OrdinaryWaitsWithout.issued, Is.Zero);
+
+            split.NoteCandidateWaitsForTests(new LogicalFragmentId(900003), new LogicalFragmentId(900004), 1);
+            Assert.That(split.RetryCandidateWaits.issued, Is.EqualTo(2));
+            Assert.That(split.OrdinaryWaitsBesideRetries.issued, Is.EqualTo(2), "found while it was out, issued after it ended: beside it. " + split.DescribeCandidateWaits());
+            Assert.That(split.OrdinaryWaitsWithout.issued, Is.Zero);
+
+            split.NoteCandidateWaitsForTests(new LogicalFragmentId(900005), new LogicalFragmentId(900006), 2);
+            Assert.That(split.RetryCandidateWaits.issued, Is.EqualTo(3));
+            Assert.That(split.OrdinaryWaitsBesideRetries.issued, Is.EqualTo(2));
+            Assert.That(split.OrdinaryWaitsWithout.issued, Is.EqualTo(1), "issued before the one made again was found: none beside it. " + split.DescribeCandidateWaits());
+            Assert.That(split.ShapeRetriesIssued, Is.EqualTo(3));
+            Assert.That(split.ShapeRetriesEndedAs(SpatialSplitEnd.NotFound), Is.EqualTo(3));
+
+            split.PruneShapeRetries();
+            Assert.That(split.ShapeRetryFragmentsKept, Is.Zero, "nothing is kept of the numbers no owner has");
+            yield return EndWorld(root);
+        }
     }
 }
