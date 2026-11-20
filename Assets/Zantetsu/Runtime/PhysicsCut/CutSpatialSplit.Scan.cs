@@ -111,8 +111,8 @@ namespace Zantetsu.PhysicsCut
     //   - the search's generation is the mark epoch (_markEpoch: the settings' search, the graph stage's effective state); a light
     //     mark carries the epoch it was made under and is void under another;
     //   - the input's generation is kept by removal: a light mark is dropped where anything Input.Equals tells apart can have
-    //     moved for its fragment -- the owner (the registry's OwnerAdded / OwnerRetiring; an owner's shape is its own for life, so
-    //     the shape goes with the owner), a Provisional pair of the fragment (coming or ending), the geometry (the DAG's
+    //     moved for its fragment -- the owner (the registry's OwnerAdded / OwnerRetiring), the owner's shape (the
+    //     registry's OwnerShapeReplaced: the convex trim gives the same owner another shape), a Provisional pair of the fragment (coming or ending), the geometry (the DAG's
     //     GeometryChanged: registered, committed, handed on by a split, forgotten). The anchors of a live fragment do not change
     //     (they are given at its making and taken at its retirement, which retires the owner). And where the tables the mark was
     //     read from change for the fragment (a mark set or removed, a limit noted, a wait begun, taken or cancelled);

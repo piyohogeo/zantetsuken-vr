@@ -530,6 +530,9 @@ namespace Zantetsu.Sandbox
             // transition and for a short window after it; reads only, one log line a record; only when the Player
             // argument asks for it (a normal launch creates nothing).
             HeadHeightDiagnosis.InstallIfAsked();
+            // The collection of floating pieces (the convex trim's evaluation, 2026-11-20): the left X button saves the piece the
+            // line rests on with its convexes, pose and supports; only when asked for. It is the probe then, so it comes first.
+            FloatCollector.InstallIfAsked();
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // The face collection (FACE-PICK-1, development only): the left X button saves the drawn faces the line passes through; only when asked for.
             FaceCollector.InstallIfAsked();

@@ -972,6 +972,7 @@ namespace Zantetsu.PhysicsCut
 #if ZANTETSU_OBSERVE
             ProbeCandidatesAtTurn(in settings);   // SPLIT-CANDIDATES-1 (off without its launch argument): before anything else of the turn
 #endif
+            _quietFrame = Time.frameCount;   // a turn with the split on: what LeavesRoomForLowerPriority reads is of this frame
             if (MaxAttempts > 1)
             {
                 StepSeveral(in settings);   // SPLIT-CANDIDATES-2: several attempts out at once (the evaluation's switch; 1 = the control as before)
@@ -1538,6 +1539,7 @@ namespace Zantetsu.PhysicsCut
             owners.OwnerRetiring += OnOwnerChanged;
             owners.ProvisionalAdded += OnPairChanged;
             owners.ProvisionalEnding += OnPairChanged;
+            owners.OwnerShapeReplaced += OnShapeReplaced;
         }
 
         private void Unsubscribe()
@@ -1554,6 +1556,7 @@ namespace Zantetsu.PhysicsCut
             owners.OwnerRetiring -= OnOwnerChanged;
             owners.ProvisionalAdded -= OnPairChanged;
             owners.ProvisionalEnding -= OnPairChanged;
+            owners.OwnerShapeReplaced -= OnShapeReplaced;
         }
 
         private void OnOwnerChanged(LogicalFragmentId fragment, PhysicsFragmentOwner owner)
@@ -1567,6 +1570,45 @@ namespace Zantetsu.PhysicsCut
             _ownerChanges++;
             if (pair != null) InputChanged(pair.Source);
         }
+
+        // The same owner with another shape (the convex trim's publication, PhysicsOwnerRegistry.ReplaceShape): what was
+        // decided of the shape before -- a mark, a limit, a wait, a light mark -- is not of this one. The marks' tables
+        // compare the shape by reference and so stop matching by themselves; the light mark and the idle wait, which
+        // read neither, are told here.
+        private void OnShapeReplaced(LogicalFragmentId fragment, PhysicsFragmentOwner owner, PhysicsOwnerShape had)
+        {
+            _ownerChanges++;
+            ShapesReplaced++;
+            InputChanged(fragment);
+        }
+
+        /// <summary>Owners' shapes replaced under this split (the convex trim's publications): each voided what was decided of the shape before.</summary>
+        public long ShapesReplaced { get; private set; }
+
+        /// <summary>
+        /// Whether lower-priority work on the fragments (the convex trim) may be issued in this frame, after this split's
+        /// turn: the split is off, or its turn of this very frame ended with a whole scan that found nothing to issue --
+        /// no candidate found and not issued yet, no attempt out. A turn that issued nothing because it was held, because
+        /// the budget was short or because its scan was cut short says nothing of the kind, and neither does a frame
+        /// without a turn: the split comes first in all of those.
+        /// </summary>
+        public bool LeavesRoomForLowerPriority
+        {
+            get
+            {
+                if (!Settings.enabled || !Settings.IsValid) return !HasAttempt;
+                if (HasAttempt || _found.Count != 0 || _quietFrame != Time.frameCount) return false;
+                if (MaxAttempts > 1)
+                {
+                    return LastNoIssue == SpatialSplitNoIssue.Idle || LastNoIssue == SpatialSplitNoIssue.NoCandidate || LastNoIssue == SpatialSplitNoIssue.TooLargeAlone;
+                }
+
+                return _idle && _idleSignals.Equals(SignalsNow());
+            }
+        }
+
+        // The frame of the last turn that ran with the split on (LeavesRoomForLowerPriority reads it).
+        private int _quietFrame = int.MinValue;
 
         // ---- issuing --------------------------------------------------------------------------------------------------
 

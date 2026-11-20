@@ -114,8 +114,9 @@ namespace Zantetsu.PhysicsCut
         /// <see cref="FragmentHitReach"/>), or <see cref="FragmentHitReach.None"/> when that cannot be vouched for.
         /// <para>
         /// **Settled where the shape and its placement are settled, not while the owner moves**: when this owner is made
-        /// (its shape and its Root given together -- an owner's shape is never replaced; a different shape is a
-        /// different owner), when its Root is put under another parent (<see cref="FuseInto"/>), and whenever
+        /// (its shape and its Root given together), when its shape is replaced by the one way there is
+        /// (<see cref="PhysicsOwnerRegistry.ReplaceShape"/>: the convex trim, which gives the same body trimmed convexes),
+        /// when its Root is put under another parent (<see cref="FuseInto"/>), and whenever
         /// <see cref="RefreshHitReach"/> is called. A shape whose local box was written again since
         /// (<see cref="PhysicsOwnerShape.LocalBoundsVersion"/>) is noticed here and settled again before the value is
         /// given, so a box that changed never leaves an old reach in use. Moving or turning the Root changes nothing of
@@ -192,6 +193,19 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>What this owner is made of, and the next cut's input.</summary>
         public PhysicsOwnerShape Shape { get; private set; }
+
+        /// <summary>
+        /// Gives this owner another shape and hands back the one it had, which is the caller's to dispose. The registry's
+        /// <see cref="PhysicsOwnerRegistry.ReplaceShape"/> is the one caller: it has changed the colliders to the new
+        /// shape's meshes before this, and tells whoever keeps something of the old shape after it.
+        /// </summary>
+        internal PhysicsOwnerShape TakeShape(PhysicsOwnerShape shape)
+        {
+            PhysicsOwnerShape had = Shape;
+            Shape = shape ?? throw new ArgumentNullException(nameof(shape));
+            SettleHitReach();
+            return had;
+        }
 
         /// <summary>This owner holds an anchor, so it is fixed (DESIGN 7.1).</summary>
         public bool FixedByAnchors { get; }
@@ -874,6 +888,39 @@ namespace Zantetsu.PhysicsCut
 
             OwnerRetiring?.Invoke(fragment, owner);
             owner.Release();
+            return true;
+        }
+
+        /// <summary>
+        /// An owner's shape has been replaced by another one (<see cref="ReplaceShape"/>): the fragment, its owner -- with the
+        /// new shape already -- and the shape it had, not yet given up.
+        /// </summary>
+        internal event Action<LogicalFragmentId, PhysicsFragmentOwner, PhysicsOwnerShape> OwnerShapeReplaced;
+
+        /// <summary>
+        /// Gives the owner of <paramref name="fragment"/> the shape <paramref name="shape"/> in place of
+        /// <paramref name="had"/>: the same fragment, the same Root and body. **The one way an owner's shape changes**, and the
+        /// convex trim's alone (CutConvexTrim): its caller has given the owner's colliders the new shape's meshes before this,
+        /// so that what the solver touches and what a hit and the next cut read change in one Main stretch.
+        /// <para>
+        /// Whoever keeps something of the old shape is told (<see cref="OwnerShapeReplaced"/>) -- the additional split's marks
+        /// are about a shape -- and the old shape is given up after that: its bank and its mesh holds go back now, or when the
+        /// last work reading it has been collected. False, with nothing changed, where the fragment's owner is not there, has
+        /// left the scene, or is not made of <paramref name="had"/> any more.
+        /// </para>
+        /// </summary>
+        internal bool ReplaceShape(LogicalFragmentId fragment, PhysicsOwnerShape had, PhysicsOwnerShape shape)
+        {
+            if (shape == null) throw new ArgumentNullException(nameof(shape));
+            if (!_owners.TryGetValue(fragment, out PhysicsFragmentOwner owner) || owner.IsWithdrawn || owner.IsReleased
+                || owner.Shape == null || !ReferenceEquals(owner.Shape, had) || ReferenceEquals(had, shape))
+            {
+                return false;
+            }
+
+            PhysicsOwnerShape old = owner.TakeShape(shape);
+            OwnerShapeReplaced?.Invoke(fragment, owner, old);
+            old.Dispose();
             return true;
         }
 

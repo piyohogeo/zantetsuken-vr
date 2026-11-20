@@ -275,6 +275,11 @@ namespace Zantetsu.PhysicsCut
                 if (SpatialSplit.PairProtect) UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribePair(), this);
                 // The several-attempts control, the scan and the one-component pass (the defaults since 2026-11-13): in every build.
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeSeveral(), this);
+                // The convex trim's tallies, where it was on or ever took a turn (off by default: no line then).
+                if (ConvexTrim != null && (ConvexTrim.Settings.enabled || ConvexTrim.Turns > 0))
+                {
+                    UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + ConvexTrim.Describe(), this);
+                }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 // The timeline (GRAPH-CONNECT-14): a 5th line in development builds, and the attempts' rows where a file was named.
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeTimeline(), this);
@@ -363,6 +368,10 @@ namespace Zantetsu.PhysicsCut
                 // The additional split of an owner one plane separates (DESIGN 7.9.2): after the groups' turn, so that
                 // what they retired in this frame holds it, and before this frame's collection, which reflects it.
                 StepSpatialSplit();
+
+                // The convex trim (off by default): after the split's turn, which it gives way to, and before this
+                // frame's collection.
+                StepConvexTrim();
 
                 // The trial rest's turn: before this frame's step, with the steps that happened since its last turn.
                 StepRest();
@@ -749,6 +758,7 @@ namespace Zantetsu.PhysicsCut
             Lifetime = new CutFragmentLifetime(this, profile.PieceLifetime);
             MakeEmptyOwners(profile);
             MakeSpatialSplit(profile);
+            MakeConvexTrim();
             MakeRest(profile);
             MakeFusion(profile);
             MakeHulls(profile);
@@ -1058,6 +1068,7 @@ namespace Zantetsu.PhysicsCut
                 _colliderTemplateHolder = null;
             }
 
+            ReleaseConvexTrim();
             ReleaseSpatialSplit();
             // After the split, whose attempts held lineages until they were freed (NPC-BONE-SPLIT-1).
             NpcBones?.Dispose();
