@@ -1484,6 +1484,34 @@ namespace Zantetsu.PhysicsCut
             return text.ToString();
         }
 
+        /// <summary>The heads of a slow frame's line (<see cref="SlowFrameLine"/>).</summary>
+        public static string SlowFrameHeads
+        {
+            get
+            {
+                var text = new StringBuilder("frame\twholeMs\tstagesMs\tstages");
+                for (int k = 0; k < (int)ConvexTrimFramePart.Count; k++) text.Append('\t').Append((ConvexTrimFramePart)k).Append("Ms");
+                text.Append("\tremainingBeforeMs\tremainingAfterMs\tlaterStepMs\thold\theavyWork\tgcThisFrame\tgcDuringTurn\tframeDeltaMs\tcutsInFlight\tsplitHasAttempt\tsplitWaitingMain\tsplitFound"
+                    + "\tfragment\tconvexes\tmeshes\tindexCount\tblockBytes");
+                return text.ToString();
+            }
+        }
+
+        /// <summary>One slow frame's record as a tab-separated line (no line end).</summary>
+        public static string SlowFrameLine(ConvexTrimSlowFrame f)
+        {
+            CultureInfo inv = CultureInfo.InvariantCulture;
+            string Ms(double seconds) => (seconds * 1000.0).ToString("F3", inv);
+            var text = new StringBuilder(256);
+            text.Append(f.frame).Append('\t').Append(Ms(f.wholeSeconds)).Append('\t').Append(Ms(f.stagesSeconds)).Append('\t').Append(f.stages.ToString().Replace(", ", "+"));
+            for (int k = 0; k < (int)ConvexTrimFramePart.Count; k++) text.Append('\t').Append(Ms(f.partSeconds[k]));
+            text.Append('\t').Append(Ms(f.remainingBeforeSeconds)).Append('\t').Append(Ms(f.remainingAfterSeconds)).Append('\t').Append(Ms(f.laterStepSeconds)).Append('\t').Append(f.hold)
+                .Append('\t').Append((f.heavyWork ?? string.Empty).Replace('\t', ' ')).Append('\t').Append(f.gcThisFrame).Append('\t').Append(f.gcDuringTurn).Append('\t').Append(Ms(f.frameDeltaSeconds))
+                .Append('\t').Append(f.cutsInFlight).Append('\t').Append(f.splitHasAttempt ? 1 : 0).Append('\t').Append(f.splitWaitingMain).Append('\t').Append(f.splitFound)
+                .Append('\t').Append(f.fragment).Append('\t').Append(f.convexes).Append('\t').Append(f.meshes).Append('\t').Append(f.indexCount).Append('\t').Append(f.blockBytes);
+            return text.ToString();
+        }
+
         /// <summary>
         /// Writes the trim's line of tallies and the records it keeps now (a line an attempt, tab-separated) into
         /// <paramref name="folder"/> as trim-records.txt, over the file of an earlier call. The trim keeps the newest
@@ -1625,19 +1653,29 @@ namespace Zantetsu.PhysicsCut
     /// Every attempt of a world's trim, a line each, appended to trim-records.txt in a folder as the attempts end -- so that
     /// a long session's attempts are all there, past the <see cref="CutConvexTrim.RecordsKept"/> the trim itself keeps. Made
     /// with what the trim keeps at that moment (and a line that says so where older attempts were already dropped), then fed
-    /// by <see cref="CutConvexTrim.Recorded"/>. Lines are held until <see cref="LinesHeldMost"/> of them wait or
-    /// <see cref="Flush"/> is called; the trim's line of tallies goes to trim-tallies.txt (<see cref="WriteTallies"/>).
-    /// Main thread; a diagnosis's (the float collection), not the product's.
+    /// by <see cref="CutConvexTrim.Recorded"/>. **Nothing is written, nor a line made, as an attempt ends**: the records are
+    /// held as they are and written when <see cref="Flush"/> or <see cref="WriteTallies"/> is called (a press of the
+    /// collection, the application's end) -- a file's append on the main thread in the frame an attempt ended was the
+    /// trim's slowest frame of a session (2026-11-20: 40 of 66 frames of 0.5 ms or more, the longest 5.0 ms). Past
+    /// <see cref="HeldMost"/> records they are written all the same, so that a session's memory stays bounded.
+    /// The trim's line of tallies goes to trim-tallies.txt. Main thread; a diagnosis's (the float collection), not the product's.
     /// </summary>
     public sealed class ConvexTrimRecordLog : IDisposable
     {
-        public const int LinesHeldMost = 128;
+        public const int HeldMost = 65536;
 
         private readonly CutConvexTrim _trim;
+        private readonly CutSpatialSplit _split;
         private readonly string _folder;
         private readonly StringBuilder _held = new StringBuilder();
-        private int _heldLines;
+        private readonly StringBuilder _heldSlow = new StringBuilder();
+        private readonly List<ConvexTrimRecord> _heldRecords = new List<ConvexTrimRecord>();
+        private readonly List<ConvexTrimSlowFrame> _heldSlowFrames = new List<ConvexTrimSlowFrame>();
         private bool _disposed;
+
+        /// <summary>Slow frames written or waiting to be (trim-slow-frames.txt).</summary>
+        public long SlowLines { get; private set; }
+        public string SlowPath { get; }
 
         /// <summary>Attempts written or waiting to be; those the trim had dropped before the log was made; write failures.</summary>
         public long Lines { get; private set; }
@@ -1646,12 +1684,18 @@ namespace Zantetsu.PhysicsCut
         public string Path { get; }
         public CutConvexTrim Trim => _trim;
 
-        public ConvexTrimRecordLog(CutConvexTrim trim, string folder)
+        /// <param name="split">The world's additional split, for the table of the shapes the trim replaced (split-shape-retries.txt, written with the tallies); may be null.</param>
+        public ConvexTrimRecordLog(CutConvexTrim trim, string folder, CutSpatialSplit split = null)
         {
             _trim = trim ?? throw new ArgumentNullException(nameof(trim));
+            _split = split;
             _folder = folder;
             Directory.CreateDirectory(folder);
             Path = System.IO.Path.Combine(folder, "trim-records.txt");
+            SlowPath = System.IO.Path.Combine(folder, "trim-slow-frames.txt");
+            if (!File.Exists(SlowPath)) _heldSlow.AppendLine(ConvexTrimCaptureReplay.SlowFrameHeads);
+            foreach (ConvexTrimSlowFrame slow in trim.SlowFrameRecords) HoldSlow(slow);
+            trim.SlowFrame += OnSlowFrame;
             MissedBefore = trim.RecordsDropped;
             if (!File.Exists(Path)) _held.AppendLine(ConvexTrimCaptureReplay.TrimRecordHeads);
             _held.AppendLine("# a world's trim from frame " + Time.frameCount + (MissedBefore > 0 ? ": ITS OLDEST " + MissedBefore + " ATTEMPTS WERE NOT KEPT AND ARE NOT HERE" : ": every attempt follows"));
@@ -1663,25 +1707,48 @@ namespace Zantetsu.PhysicsCut
         private void OnRecorded(ConvexTrimRecord record)
         {
             Hold(record);
-            if (_heldLines >= LinesHeldMost) Flush();
+            if (_heldRecords.Count >= HeldMost) Flush();
+        }
+
+        private void OnSlowFrame(ConvexTrimSlowFrame slow)
+        {
+            HoldSlow(slow);
+            if (_heldSlowFrames.Count >= HeldMost) Flush();
+        }
+
+        // (a record is not changed once its attempt ended: it is kept as it is, and its line made when it is written)
+        private void HoldSlow(ConvexTrimSlowFrame slow)
+        {
+            _heldSlowFrames.Add(slow);
+            SlowLines++;
         }
 
         private void Hold(ConvexTrimRecord record)
         {
-            _held.AppendLine(ConvexTrimCaptureReplay.TrimRecordLine(record));
-            _heldLines++;
+            _heldRecords.Add(record);
             Lines++;
         }
 
         /// <summary>Appends what is held to the file. A failure keeps the lines for the next call and is counted.</summary>
         public void Flush()
         {
-            if (_held.Length == 0) return;
+            foreach (ConvexTrimRecord record in _heldRecords) _held.AppendLine(ConvexTrimCaptureReplay.TrimRecordLine(record));
+            _heldRecords.Clear();
+            foreach (ConvexTrimSlowFrame slow in _heldSlowFrames) _heldSlow.AppendLine(ConvexTrimCaptureReplay.SlowFrameLine(slow));
+            _heldSlowFrames.Clear();
             try
             {
-                File.AppendAllText(Path, _held.ToString());
-                _held.Clear();
-                _heldLines = 0;
+                if (_held.Length != 0)
+                {
+                    File.AppendAllText(Path, _held.ToString());
+                    _held.Clear();
+                }
+
+                if (_heldSlow.Length != 0)
+                {
+                    File.AppendAllText(SlowPath, _heldSlow.ToString());
+                    _heldSlow.Clear();
+                }
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
@@ -1697,7 +1764,15 @@ namespace Zantetsu.PhysicsCut
             {
                 File.WriteAllText(System.IO.Path.Combine(_folder, "trim-tallies.txt"), "frame " + Time.frameCount + ": attempts in trim-records.txt " + Lines
                     + (MissedBefore > 0 ? " (" + MissedBefore + " older ones missing)" : string.Empty) + (Failures > 0 ? ", write failures " + Failures : string.Empty)
-                    + Environment.NewLine + _trim.Describe() + Environment.NewLine);
+                    + "; slow frames in trim-slow-frames.txt " + SlowLines + Environment.NewLine + _trim.Describe() + Environment.NewLine
+                    + (_split != null ? _split.DescribeShapeRetries() + Environment.NewLine + _split.DescribeCandidateWaits() + Environment.NewLine : string.Empty));
+                if (_split != null)
+                {
+                    var retries = new StringBuilder();
+                    retries.AppendLine(CutSpatialSplit.ShapeRetryHeads);
+                    foreach (SpatialSplitShapeRetry retry in _split.ShapeRetries) retries.AppendLine(CutSpatialSplit.ShapeRetryLine(retry));
+                    File.WriteAllText(System.IO.Path.Combine(_folder, "split-shape-retries.txt"), retries.ToString());
+                }
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
@@ -1710,6 +1785,7 @@ namespace Zantetsu.PhysicsCut
             if (_disposed) return;
             _disposed = true;
             _trim.Recorded -= OnRecorded;
+            _trim.SlowFrame -= OnSlowFrame;
             Flush();
         }
     }

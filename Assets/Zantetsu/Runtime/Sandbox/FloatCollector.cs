@@ -212,7 +212,7 @@ namespace Zantetsu.Sandbox
             if (trim == null || _folder == null) return;
             try
             {
-                _log = new ConvexTrimRecordLog(trim, _folder);
+                _log = new ConvexTrimRecordLog(trim, _folder, World.SpatialSplit);
                 Debug.Log(Prefix + "the trim's attempts go to " + _log.Path + " as they end" + (_log.MissedBefore > 0 ? " (" + _log.MissedBefore + " EARLIER ONES WERE NOT KEPT)" : ""));
             }
             catch (Exception e)

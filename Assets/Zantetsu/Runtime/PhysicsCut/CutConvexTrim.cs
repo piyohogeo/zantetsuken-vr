@@ -47,6 +47,9 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The most bytes one attempt's working block may take; a fragment that needs more is passed over.</summary>
         public int maxBlockBytes;
 
+        /// <summary>Seconds: a frame in which the trim's whole turn took this or more is recorded with what it held (<see cref="ConvexTrimSlowFrame"/>). A reading only.</summary>
+        public double slowFrameSeconds;
+
         public static CutConvexTrimSettings Default => new CutConvexTrimSettings
         {
             enabled = false,
@@ -63,6 +66,7 @@ namespace Zantetsu.PhysicsCut
             seedHullCheckSeconds = 0.0002,
             seedPublishSeconds = 0.0015,
             maxBlockBytes = 8 << 20,
+            slowFrameSeconds = 0.0005,
         };
 
         public bool IsValid => minSizeMeters > 0f && minOverhangMeters > 0f && minKeptVolume >= 0f && minKeptVolumeRatio >= 0f && minKeptVolumeRatio < 1f
@@ -186,8 +190,15 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Worker: from the work's offer to the queue to its beginning on a worker (the search's and the bake's; the pool is the additional split's too).</summary>
         WorkerWait,
 
-        /// <summary>Main: everything of the trim in one frame -- looks, an issue, the steps of an attempt -- a sample a frame that had any.</summary>
+        /// <summary>
+        /// Main: the trim's whole turn of a frame in which it did work -- a look, an issue, a step of an attempt -- by the
+        /// clock from the turn's beginning to its end (the holds it asked and everything between the measured stages are in
+        /// it). A sample a frame that had work; frames without are <see cref="MainIdleFrame"/>.
+        /// </summary>
         MainFrame,
+
+        /// <summary>Main: the trim's whole turn of a frame in which it did no work (it was held, or had nothing to look at).</summary>
+        MainIdleFrame,
         Count,
     }
 
@@ -202,12 +213,20 @@ namespace Zantetsu.PhysicsCut
         public double TotalSeconds { get; private set; }
         public double MaxSeconds { get; private set; }
 
+        /// <summary>Of every sample (not only those kept for the median): those of 0.5 ms or more, of 1 ms or more, of 2 ms or more.</summary>
+        public int OverHalfMs { get; private set; }
+        public int OverOneMs { get; private set; }
+        public int OverTwoMs { get; private set; }
+
         internal void Add(double seconds)
         {
             if (!(seconds >= 0.0) || double.IsInfinity(seconds)) return;
             Count++;
             TotalSeconds += seconds;
             if (seconds > MaxSeconds) MaxSeconds = seconds;
+            if (seconds >= 0.0005) OverHalfMs++;
+            if (seconds >= 0.001) OverOneMs++;
+            if (seconds >= 0.002) OverTwoMs++;
             if (_samples.Count < Most) _samples.Add(seconds);
             _sorted = null;
         }
@@ -228,6 +247,59 @@ namespace Zantetsu.PhysicsCut
                 return (n & 1) == 1 ? _sorted[n / 2] : 0.5 * (_sorted[(n / 2) - 1] + _sorted[n / 2]);
             }
         }
+    }
+
+    /// <summary>The parts of the trim's Main work a slow frame's time is told by.</summary>
+    public enum ConvexTrimFramePart
+    {
+        Look,
+        IssueLease,
+        IssueSetUp,
+        IssueEnqueue,
+        Collect,
+        Mesh,
+        HullCheck,
+        PrepareColliders,
+        PrepareShape,
+        SwitchColliders,
+        SwitchShape,
+        SwitchRest,
+
+        /// <summary>An attempt's end: its record and marks; what listens to the record (a diagnosis's log); giving back what the attempt held.</summary>
+        EndRecord,
+        EndListeners,
+        EndFree,
+        Count,
+    }
+
+    /// <summary>
+    /// A frame in which the trim's whole turn took <see cref="CutConvexTrimSettings.slowFrameSeconds"/> or more: which
+    /// frame, the whole turn by the clock and the sum of its measured stages, which stages and the time of each part,
+    /// what was left of the frame's Main budget before and after, what else the frame held (heavy work noted in it, a
+    /// garbage collection, cuts in flight, the additional split's attempts) and what the attempt was.
+    /// </summary>
+    public sealed class ConvexTrimSlowFrame
+    {
+        public int frame;
+        public double wholeSeconds, stagesSeconds;
+        public CutConvexTrim.FrameStages stages;
+        public double[] partSeconds;
+        public double remainingBeforeSeconds, remainingAfterSeconds, laterStepSeconds;
+
+        /// <summary>The frame's hold as the world tells it after the turn ("None", "HeavyWork", "GarbageCollection", "CutInFlight"), and the heavy work it names.</summary>
+        public string hold, heavyWork;
+
+        /// <summary>Garbage collections completed in the frame as the world counts them, and generation-0 collections begun during the turn itself.</summary>
+        public int gcThisFrame, gcDuringTurn;
+
+        /// <summary>The frame's own length as the engine gives it (the time since the frame before).</summary>
+        public float frameDeltaSeconds;
+        public int cutsInFlight;
+        public bool splitHasAttempt;
+        public int splitWaitingMain, splitFound;
+
+        /// <summary>The attempt the turn worked on (0: none, looks alone): its fragment, convexes, trimmed meshes, the mesh's indices, the working block's bytes.</summary>
+        public int fragment, convexes, meshes, indexCount, blockBytes;
     }
 
     /// <summary>One trim attempt as it ended: what it looked at, what it changed, what it cost.</summary>
@@ -444,11 +516,68 @@ namespace Zantetsu.PhysicsCut
 
         private double _frameMainSeconds;
         private FrameStages _frameStages;
+        private readonly double[] _frameParts = new double[(int)ConvexTrimFramePart.Count];
+        private int _frameFragment, _frameConvexes, _frameMeshes, _frameIndexCount, _frameBlockBytes;
+        private readonly List<ConvexTrimSlowFrame> _slowFrames = new List<ConvexTrimSlowFrame>();
 
-        private void NoteMain(FrameStages stage, double seconds)
+        /// <summary>Slow frames kept (the newest), and how many there were in all.</summary>
+        public const int SlowFramesKept = 1024;
+        public long SlowFrames { get; private set; }
+        public IReadOnlyList<ConvexTrimSlowFrame> SlowFrameRecords => _slowFrames;
+
+        /// <summary>Raised on the main thread with each slow frame's record (<see cref="ConvexTrimRecordLog"/> keeps them all).</summary>
+        public event Action<ConvexTrimSlowFrame> SlowFrame;
+
+        // The seconds of the end of an attempt inside the step being timed: told as the parts of the end, and so taken out
+        // of the part of the step (a step that ends its attempt -- the numbers taken back with nothing to trim, a mesh
+        // that fails, a hull refused -- would tell them twice otherwise).
+        private double _stepEndSeconds;
+
+        private void NoteMain(FrameStages stage, double seconds, double endSeconds = 0.0)
         {
             _frameMainSeconds += seconds;
             _frameStages |= stage;
+            double own = Math.Max(0.0, seconds - endSeconds);
+            switch (stage)
+            {
+                case FrameStages.Look: _frameParts[(int)ConvexTrimFramePart.Look] += own; break;
+                case FrameStages.Collect: _frameParts[(int)ConvexTrimFramePart.Collect] += own; break;
+                case FrameStages.Mesh: _frameParts[(int)ConvexTrimFramePart.Mesh] += own; break;
+                case FrameStages.HullCheck: _frameParts[(int)ConvexTrimFramePart.HullCheck] += own; break;
+            }
+        }
+
+        private void NotePart(ConvexTrimFramePart part, long from, long to)
+        {
+            if (to > from) _frameParts[(int)part] += (to - from) / (double)Stopwatch.Frequency;
+        }
+
+        private void NoteFrameAttempt(Attempt attempt)
+        {
+            _frameFragment = attempt.fragment.value;
+            _frameConvexes = attempt.convexCount;
+            _frameMeshes = attempt.meshCount;
+            _frameIndexCount = attempt.indexCount;
+            _frameBlockBytes = attempt.block.IsCreated ? attempt.block.Length : 0;
+        }
+
+        private void NoteSlowFrame(double whole, double remainingBefore, int gcDuring)
+        {
+            CutFrameHold hold = _world.FrameEventsHold(out string work);
+            CutSpatialSplit split = _world.SpatialSplit;
+            var slow = new ConvexTrimSlowFrame
+            {
+                frame = Time.frameCount, wholeSeconds = whole, stagesSeconds = _frameMainSeconds, stages = _frameStages, partSeconds = (double[])_frameParts.Clone(),
+                remainingBeforeSeconds = remainingBefore, remainingAfterSeconds = RemainingMainSeconds(), laterStepSeconds = Later(),
+                hold = hold.ToString(), heavyWork = work ?? string.Empty, gcThisFrame = CutPhysicsStep.GcCollectionsThisFrame, gcDuringTurn = gcDuring,
+                frameDeltaSeconds = Time.unscaledDeltaTime, cutsInFlight = _world.Driver != null ? _world.Driver.Transactions.Count : 0,
+                splitHasAttempt = split != null && split.HasAttempt, splitWaitingMain = split != null ? split.AttemptsWaitingMain : 0, splitFound = split != null ? split.FoundWaiting : 0,
+                fragment = _frameFragment, convexes = _frameConvexes, meshes = _frameMeshes, indexCount = _frameIndexCount, blockBytes = _frameBlockBytes,
+            };
+            SlowFrames++;
+            if (_slowFrames.Count >= SlowFramesKept) _slowFrames.RemoveAt(0);
+            _slowFrames.Add(slow);
+            SlowFrame?.Invoke(slow);
         }
 
         /// <summary>The newest record of an attempt on the fragment, if one is kept.</summary>
@@ -702,14 +831,29 @@ namespace Zantetsu.PhysicsCut
         /// <summary>One turn, in the world's LateUpdate after the additional split's and before the frame's collection.</summary>
         public void Step()
         {
+            long begin = Stopwatch.GetTimestamp();
             _frameMainSeconds = 0.0;
             _frameStages = FrameStages.None;
+            Array.Clear(_frameParts, 0, _frameParts.Length);
+            _frameFragment = _frameConvexes = _frameMeshes = _frameIndexCount = _frameBlockBytes = 0;
+            int gcBefore = GC.CollectionCount(0);
+            double remainingBefore = RemainingMainSeconds();
             StepTurn();
-            if (_frameStages == FrameStages.None) return;
-            _costs[(int)ConvexTrimCostKind.MainFrame].Add(_frameMainSeconds);
-            if (_frameMainSeconds <= MostFrameMainSeconds) return;
-            MostFrameMainSeconds = _frameMainSeconds;
-            MostFrameStages = _frameStages;
+            double whole = Since(begin);
+            if (_frameStages == FrameStages.None)
+            {
+                _costs[(int)ConvexTrimCostKind.MainIdleFrame].Add(whole);
+                return;
+            }
+
+            _costs[(int)ConvexTrimCostKind.MainFrame].Add(whole);
+            if (whole > MostFrameMainSeconds)
+            {
+                MostFrameMainSeconds = whole;
+                MostFrameStages = _frameStages;
+            }
+
+            if (whole >= Settings.slowFrameSeconds) NoteSlowFrame(whole, remainingBefore, GC.CollectionCount(0) - gcBefore);
         }
 
         private void StepTurn()
@@ -850,6 +994,8 @@ namespace Zantetsu.PhysicsCut
                 attempt.budgetHolds = 0;
                 if (!StillTheInput(attempt, in settings)) return;
                 long begin = Stopwatch.GetTimestamp();
+                NoteFrameAttempt(attempt);
+                _stepEndSeconds = 0.0;
                 bool goOn;
                 FrameStages stage = attempt.main == MainStage.Numbers ? FrameStages.Collect : attempt.main == MainStage.Meshes ? FrameStages.Mesh
                     : attempt.main == MainStage.HullCheck ? FrameStages.HullCheck : attempt.main == MainStage.Prepare ? FrameStages.Prepare : FrameStages.Switch;
@@ -875,7 +1021,7 @@ namespace Zantetsu.PhysicsCut
 
                 double step = Since(begin);
                 if (step > MostMainStepSeconds) MostMainStepSeconds = step;
-                NoteMain(stage, step);
+                NoteMain(stage, step, _stepEndSeconds);
                 if (!goOn) return;   // (otherwise the next step is asked of what is left of this frame)
             }
         }
@@ -914,6 +1060,7 @@ namespace Zantetsu.PhysicsCut
                     return false;
                 }
 
+                long leased = Stopwatch.GetTimestamp();
                 int convexCount = shape.ConvexCount;
                 var ranges = new ConvexBrepRange[convexCount];
                 for (int c = 0; c < convexCount; c++) ranges[c] = shape.Convex(c);
@@ -974,6 +1121,10 @@ namespace Zantetsu.PhysicsCut
                 attempt.offered = true;
                 _attempt = attempt;
                 Issued++;
+                NotePart(ConvexTrimFramePart.IssueLease, begin, leased);
+                NotePart(ConvexTrimFramePart.IssueSetUp, leased, attempt.offeredAt);
+                NotePart(ConvexTrimFramePart.IssueEnqueue, attempt.offeredAt, Stopwatch.GetTimestamp());
+                NoteFrameAttempt(attempt);
             }
 
             double seconds = Since(begin);
@@ -1198,6 +1349,7 @@ namespace Zantetsu.PhysicsCut
         private bool Prepare(Attempt attempt)
         {
             long begin = Stopwatch.GetTimestamp();
+            long found = begin;
             string note = null;
             using (s_publish.Auto())
             {
@@ -1230,6 +1382,7 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 _colliderScratch.Clear();
+                found = Stopwatch.GetTimestamp();
                 if (note == null)
                 {
                     var trimmed = new BrepBuffer[count];
@@ -1268,6 +1421,8 @@ namespace Zantetsu.PhysicsCut
             }
 
             double seconds = Since(begin);
+            NotePart(ConvexTrimFramePart.PrepareColliders, begin, found);
+            NotePart(ConvexTrimFramePart.PrepareShape, found, Stopwatch.GetTimestamp());
             attempt.publishSeconds += seconds;
             if (note != null)
             {
@@ -1286,6 +1441,7 @@ namespace Zantetsu.PhysicsCut
         private void Commit(Attempt attempt)
         {
             long begin = Stopwatch.GetTimestamp();
+            long collidersAt = begin, shapeAt = begin;
             ConvexTrimEnd end = ConvexTrimEnd.Published;
             string note = null;
             PhysicsOwnerShape made = attempt.prepared;
@@ -1320,7 +1476,9 @@ namespace Zantetsu.PhysicsCut
                             changed = c + 1;
                         }
 
+                        collidersAt = Stopwatch.GetTimestamp();
                         switched = _world.Owners.ReplaceShape(attempt.fragment, shape, made);
+                        shapeAt = Stopwatch.GetTimestamp();
                         if (!switched)
                         {
                             end = ConvexTrimEnd.Stale;
@@ -1361,6 +1519,9 @@ namespace Zantetsu.PhysicsCut
             }
 
             double seconds = Since(begin);
+            NotePart(ConvexTrimFramePart.SwitchColliders, begin, collidersAt);
+            NotePart(ConvexTrimFramePart.SwitchShape, collidersAt, shapeAt);
+            NotePart(ConvexTrimFramePart.SwitchRest, Math.Max(shapeAt, collidersAt), Stopwatch.GetTimestamp());
             attempt.publishSeconds += seconds;
             _costs[(int)ConvexTrimCostKind.Publish].Add(attempt.publishSeconds);
             if (end == ConvexTrimEnd.Published)
@@ -1383,7 +1544,13 @@ namespace Zantetsu.PhysicsCut
             int frames = Math.Max(0, Time.frameCount - attempt.issuedFrame);
             FramesIssueToEnd += frames;
             if (frames > MostFramesIssueToEnd) MostFramesIssueToEnd = frames;
-            Record(attempt, end, note);
+            long endBegan = Stopwatch.GetTimestamp();
+            ConvexTrimRecord record = Record(attempt, end, note);
+            long recorded = Stopwatch.GetTimestamp();
+            Recorded?.Invoke(record);
+            long heard = Stopwatch.GetTimestamp();
+            NotePart(ConvexTrimFramePart.EndRecord, endBegan, recorded);
+            NotePart(ConvexTrimFramePart.EndListeners, recorded, heard);
             if (end == ConvexTrimEnd.Published)
             {
                 Published++;
@@ -1403,10 +1570,15 @@ namespace Zantetsu.PhysicsCut
             }
 
             if (lookAgain) Enqueue(attempt.fragment, Time.frameCount + RetryFrames);
+            long freeing = Stopwatch.GetTimestamp();
+            NotePart(ConvexTrimFramePart.EndRecord, heard, freeing);
             attempt.Free(_world.Storage);
+            long ended = Stopwatch.GetTimestamp();
+            NotePart(ConvexTrimFramePart.EndFree, freeing, ended);
+            _stepEndSeconds += (ended - endBegan) / (double)Stopwatch.Frequency;
         }
 
-        private void Record(Attempt attempt, ConvexTrimEnd end, string note)
+        private ConvexTrimRecord Record(Attempt attempt, ConvexTrimEnd end, string note)
         {
             var record = new ConvexTrimRecord
             {
@@ -1454,7 +1626,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             _records.Add(record);
-            Recorded?.Invoke(record);
+            return record;
         }
 
         /// <summary>Gives back an outstanding attempt, for the world's end. Work still on a worker is given back when it is collected.</summary>
@@ -1517,7 +1689,10 @@ namespace Zantetsu.PhysicsCut
                 .Append("; Main: ").Append(DescribeCost("look", ConvexTrimCostKind.Examine)).Append(", ").Append(DescribeCost("issue", ConvexTrimCostKind.Issue))
                 .Append(", ").Append(DescribeCost("collect", ConvexTrimCostKind.Collect)).Append(", ").Append(DescribeCost("meshes", ConvexTrimCostKind.Meshes))
                 .Append(", ").Append(DescribeCost("hull check", ConvexTrimCostKind.HullCheck)).Append(", ").Append(DescribeCost("publish", ConvexTrimCostKind.Publish))
-                .Append("; ").Append(DescribeCost("a frame's Main work in all", ConvexTrimCostKind.MainFrame)).Append(", the most in a frame of ").Append(MostFrameStages)
+                .Append("; ").Append(DescribeCost("the whole turn of a frame with work", ConvexTrimCostKind.MainFrame)).Append(", the most in a frame of ").Append(MostFrameStages)
+                .Append(", of 0.5 ms or more ").Append(_costs[(int)ConvexTrimCostKind.MainFrame].OverHalfMs).Append(", 1 ms or more ").Append(_costs[(int)ConvexTrimCostKind.MainFrame].OverOneMs)
+                .Append(", 2 ms or more ").Append(_costs[(int)ConvexTrimCostKind.MainFrame].OverTwoMs).Append(" (medians are of the first 4096 samples; slow frames recorded ").Append(SlowFrames)
+                .Append("); ").Append(DescribeCost("the whole turn of a frame without", ConvexTrimCostKind.MainIdleFrame))
                 .Append("; ").Append(DescribeCost("a work's wait for a worker", ConvexTrimCostKind.WorkerWait))
                 .Append("; waiting ").Append(_pending.Count).Append(", marks ").Append(_marks.Count);
             return text.ToString();

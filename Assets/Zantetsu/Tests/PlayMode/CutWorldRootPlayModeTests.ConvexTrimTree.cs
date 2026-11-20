@@ -26,6 +26,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         /// <summary>The environment variable that names the evaluation's output folder (absolute); without it the evaluation's two cases are ignored.</summary>
         internal const string TrimEvalVariable = "ZANTETSU_CONVEX_TRIM_EVAL";
 
+        /// <summary>"0": the evaluation makes its cuts and lays no piece down (the poses are skipped).</summary>
+        internal const string TrimEvalPosesVariable = "ZANTETSU_CONVEX_TRIM_EVAL_POSES";
+
         private static void SplitOff(CutWorldRoot root)
         {
             CutSpatialSplitSettings off = root.SpatialSplit.Settings;
@@ -191,7 +194,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         private sealed class TrimEvalFile
         {
             public bool trimOn;
-            public string input, trim, split, splitSeveral, splitTimeline;
+            public string input, trim, split, splitSeveral, splitTimeline, splitShapeRetries, splitCandidateWaits;
+            public int splitIssued, slowFrames;
+            public List<string> shapeRetryLines = new List<string>(), slowFrameLines = new List<string>();
             public float minSize, minOverhang;
             public List<TrimEvalCost> costs = new List<TrimEvalCost>();
             public List<TrimEvalCase> cases = new List<TrimEvalCase>();
@@ -436,7 +441,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 }
 
                 TrimEvalCase offCase = off?.cases.FirstOrDefault(c => c.name == result.name);
-                foreach ((string poseName, Quaternion turn) in TrimEvalPoses())
+                // (TrimEvalPosesVariable = 0: the cuts alone, for the split's and the trim's own tallies -- seconds instead of the poses' many minutes)
+                bool withPoses = Environment.GetEnvironmentVariable(TrimEvalPosesVariable) != "0";
+                foreach ((string poseName, Quaternion turn) in withPoses ? TrimEvalPoses() : new (string, Quaternion)[0])
                 {
                     for (int p = 0; p < free.Count; p++)
                     {
@@ -542,6 +549,22 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             file.split = split.Describe(false);
             file.splitSeveral = split.DescribeSeveral();
             file.splitTimeline = split.DescribeTimeline();
+            file.splitShapeRetries = split.DescribeShapeRetries();
+            file.splitIssued = split.Issued;
+            foreach (SpatialSplitShapeRetry retry in split.ShapeRetries) file.shapeRetryLines.Add(CutSpatialSplit.ShapeRetryLine(retry));
+            if (trim != null)
+            {
+                file.slowFrames = (int)trim.SlowFrames;
+                foreach (ConvexTrimSlowFrame slow in trim.SlowFrameRecords) file.slowFrameLines.Add(ConvexTrimCaptureReplay.SlowFrameLine(slow));
+            }
+
+            file.splitCandidateWaits = split.DescribeCandidateWaits();
+            TestContext.Out.WriteLine("the split issued " + split.Issued + "; " + file.splitShapeRetries);
+            TestContext.Out.WriteLine(file.splitCandidateWaits);
+            split.PruneShapeRetries();
+            var owned = new List<LogicalFragmentId>();
+            root.Owners.CopyFragmentsTo(owned);
+            Assert.That(split.ShapeRetryFragmentsKept, Is.LessThanOrEqualTo(3 * owned.Count), "the diagnosis keeps nothing of fragments that have no owner");
             File.WriteAllText(TrimEvalPath(folder, trimOn), JsonUtility.ToJson(file, true));
             TestContext.Out.WriteLine("written: " + TrimEvalPath(folder, trimOn));
             TestContext.Out.WriteLine(file.trim);

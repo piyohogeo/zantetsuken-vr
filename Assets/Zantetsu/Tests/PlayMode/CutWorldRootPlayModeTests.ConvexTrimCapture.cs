@@ -215,7 +215,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             bool room = false;
             trim.SplitLeavesRoom = () => room;
             string logFolder = Path.Combine(Application.temporaryCachePath, "convex-trim-log-" + Guid.NewGuid().ToString("N"));
-            var log = new ConvexTrimRecordLog(trim, logFolder);
+            CutConvexTrimSettings every = trim.Settings;
+            every.slowFrameSeconds = 0.0;   // every frame with work is recorded as a slow one
+            trim.Settings = every;
+            var log = new ConvexTrimRecordLog(trim, logFolder, root.SpatialSplit);
             for (int i = 0; i < 5; i++) yield return null;
             ConvexTrimCapture waiting = ConvexTrimCapture.Take(root, sides[1], "the trim on, no turn yet", 0.5f, out refusal);
             Assert.That(waiting.trimEnabled, Is.True);
@@ -262,6 +265,27 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(logged.Length, Is.EqualTo(2 + 2));
                 Assert.That(logged.Skip(2).Select(l => l.Split('\t')[2]), Is.All.EqualTo("Published"));
                 Assert.That(File.ReadAllText(Path.Combine(logFolder, "trim-tallies.txt")), Does.Contain("attempts in trim-records.txt 2").And.Contain("published 2"));
+
+                // and every frame the trim worked in, with what it held
+                Assert.That(trim.SlowFrames, Is.EqualTo(trim.Cost(ConvexTrimCostKind.MainFrame).Count).And.GreaterThan(0));
+                Assert.That(log.SlowLines, Is.EqualTo(trim.SlowFrames));
+                foreach (ConvexTrimSlowFrame slow in trim.SlowFrameRecords)
+                {
+                    Assert.That(slow.stages, Is.Not.EqualTo(CutConvexTrim.FrameStages.None));
+                    Assert.That(slow.wholeSeconds, Is.GreaterThanOrEqualTo(slow.stagesSeconds), "the whole turn holds its stages");
+                    Assert.That(slow.partSeconds.Sum(), Is.LessThanOrEqualTo(slow.wholeSeconds + 1e-6));
+                    Assert.That(slow.hold, Is.Not.Null.And.Not.Empty);
+                }
+
+                Assert.That(trim.SlowFrameRecords.Any(f => (f.stages & CutConvexTrim.FrameStages.Issue) != 0 && f.fragment == sides[1].value && f.blockBytes > 0
+                    && f.partSeconds[(int)ConvexTrimFramePart.IssueSetUp] > 0.0), Is.True, "the issue's frame names its fragment and tells its parts");
+                Assert.That(trim.SlowFrameRecords.Any(f => (f.stages & CutConvexTrim.FrameStages.Switch) != 0 && f.partSeconds[(int)ConvexTrimFramePart.SwitchShape] > 0.0), Is.True);
+                string[] slowLines = File.ReadAllLines(log.SlowPath);
+                Assert.That(slowLines[0], Is.EqualTo(ConvexTrimCaptureReplay.SlowFrameHeads));
+                Assert.That(slowLines.Length, Is.EqualTo(1 + (int)trim.SlowFrames));
+                Assert.That(slowLines[1].Split('	').Length, Is.EqualTo(slowLines[0].Split('	').Length));
+                Assert.That(File.ReadAllLines(Path.Combine(logFolder, "split-shape-retries.txt"))[0], Is.EqualTo(CutSpatialSplit.ShapeRetryHeads));
+                Assert.That(root.SpatialSplit.ShapesReplaced, Is.EqualTo(2), "the split was told of both publications");
                 log.Dispose();
                 var later = new ConvexTrimRecordLog(trim, logFolder);   // a log made later takes what the trim still keeps, after the first's lines
                 later.Dispose();

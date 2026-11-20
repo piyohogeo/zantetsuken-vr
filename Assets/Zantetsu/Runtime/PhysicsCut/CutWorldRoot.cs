@@ -275,10 +275,12 @@ namespace Zantetsu.PhysicsCut
                 if (SpatialSplit.PairProtect) UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribePair(), this);
                 // The several-attempts control, the scan and the one-component pass (the defaults since 2026-11-13): in every build.
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeSeveral(), this);
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeCandidateWaits(), this);
                 // The convex trim's tallies, where it was on or ever took a turn (off by default: no line then).
                 if (ConvexTrim != null && (ConvexTrim.Settings.enabled || ConvexTrim.Turns > 0))
                 {
                     UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + ConvexTrim.Describe(), this);
+                    if (SpatialSplit != null && SpatialSplit.ShapesReplaced > 0) UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeShapeRetries(), this);
                 }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 // The timeline (GRAPH-CONNECT-14): a 5th line in development builds, and the attempts' rows where a file was named.

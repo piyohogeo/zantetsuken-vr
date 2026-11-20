@@ -1579,6 +1579,7 @@ namespace Zantetsu.PhysicsCut
         {
             _ownerChanges++;
             ShapesReplaced++;
+            NoteShapeReplacedForRetry(fragment);
             InputChanged(fragment);
         }
 
@@ -1802,6 +1803,7 @@ namespace Zantetsu.PhysicsCut
                 attempt.enqueuedAt = enqueuedAt;
                 _attempt = attempt;
                 Issued++;
+                NoteIssueForRetry(attempt);   // which attempts follow a replaced shape (the convex trim's publication)
                 NotePairIssued(attempt);   // NPC-PAIR-LIVE-1: counted once the queue took it (a refused issue is not one)
 #if ZANTETSU_OBSERVE
                 NoteIssueForProbe(attempt);   // SPLIT-CANDIDATES-2: the wait since the fragment was first seen a candidate (the probe's; off without it)
@@ -2423,6 +2425,7 @@ namespace Zantetsu.PhysicsCut
 #endif
             _ends[(int)end]++;
             LastEnd = end;
+            NoteEndForRetry(attempt, end);
             CountGraph(attempt);
             CountBone(attempt);
             if (mark)

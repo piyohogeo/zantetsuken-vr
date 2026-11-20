@@ -543,6 +543,7 @@ namespace Zantetsu.PhysicsCut
             {
                 _foundAt[fragment] = _found.Count;
                 _found.Add(found);
+                NoteFirstFound(fragment);   // (a diagnosis: the wait of the candidate for its issue is told from here)
             }
         }
 
@@ -553,6 +554,7 @@ namespace Zantetsu.PhysicsCut
             for (int i = 0; i < _found.Count; i++)
             {
                 if (_found[i].scan == serial) _found[kept++] = _found[i];
+                else ForgetFirstFound(_found[i].fragment);
             }
 
             if (kept == _found.Count) return;
@@ -562,6 +564,7 @@ namespace Zantetsu.PhysicsCut
 
         private void RemoveFoundAt(int index)
         {
+            ForgetFirstFound(_found[index].fragment);   // (the wait of an issued one was told before this)
             _found.RemoveAt(index);
             RebuildFoundAt();
         }
@@ -576,6 +579,7 @@ namespace Zantetsu.PhysicsCut
         {
             _found.Clear();
             _foundAt.Clear();
+            _firstFound.Clear();
         }
 
         /// <summary>
@@ -656,15 +660,18 @@ namespace Zantetsu.PhysicsCut
                 return SpatialSplitNoIssue.SettingsPending;
             }
 
+            NoteTurnForCandidateWaits();
             if (_attempts.Count >= MaxAttempts)
             {
                 IssuesHeldByCount++;
+                if (_found.Count != 0) NoteLimitHold();
                 return SpatialSplitNoIssue.CountLimit;
             }
 
             if (AttemptsWaitingMain >= MaxWaitingMain)
             {
                 IssuesHeldByWaitingMain++;
+                if (_found.Count != 0) NoteLimitHold();
                 return SpatialSplitNoIssue.WaitingMainLimit;
             }
 
@@ -709,8 +716,8 @@ namespace Zantetsu.PhysicsCut
             {
                 while (index < _found.Count)
                 {
-                    if (_attempts.Count >= MaxAttempts) { IssuesHeldByCount++; reason = SpatialSplitNoIssue.CountLimit; break; }
-                    if (AttemptsWaitingMain >= MaxWaitingMain) { IssuesHeldByWaitingMain++; reason = SpatialSplitNoIssue.WaitingMainLimit; break; }
+                    if (_attempts.Count >= MaxAttempts) { IssuesHeldByCount++; NoteLimitHold(); reason = SpatialSplitNoIssue.CountLimit; break; }
+                    if (AttemptsWaitingMain >= MaxWaitingMain) { IssuesHeldByWaitingMain++; NoteLimitHold(); reason = SpatialSplitNoIssue.WaitingMainLimit; break; }
                     if (issued > 0 && RemainingMainSeconds() < settings.reserveSeconds + later + (2.0 * ExpectedIssueSeconds))
                     {
                         // The budget is used up: the candidates left keep their places for the next turn.
@@ -742,6 +749,7 @@ namespace Zantetsu.PhysicsCut
                     if (Issued != before)
                     {
                         if (IsOut(_attempt.fragment)) DuplicateIssues++;   // never: a fragment with an attempt out is left aside by the scan (counted to be seen)
+                        NoteCandidateIssued(candidate.fragment, _attempt);
                         _attempts.Add(_attempt);
                         _attempt = null;
                         _attemptChanges++;
