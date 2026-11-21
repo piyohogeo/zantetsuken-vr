@@ -219,6 +219,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             every.slowFrameSeconds = 0.0;   // every frame with work is recorded as a slow one
             trim.Settings = every;
             var log = new ConvexTrimRecordLog(trim, logFolder, root.SpatialSplit);
+            FrameTimeReader frameTimes = Track(new GameObject("Frame Times")).AddComponent<FrameTimeReader>();
             for (int i = 0; i < 5; i++) yield return null;
             ConvexTrimCapture waiting = ConvexTrimCapture.Take(root, sides[1], "the trim on, no turn yet", 0.5f, out refusal);
             Assert.That(waiting.trimEnabled, Is.True);
@@ -280,10 +281,38 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(trim.SlowFrameRecords.Any(f => (f.stages & CutConvexTrim.FrameStages.Issue) != 0 && f.fragment == sides[1].value && f.blockBytes > 0
                     && f.partSeconds[(int)ConvexTrimFramePart.IssueSetUp] > 0.0), Is.True, "the issue's frame names its fragment and tells its parts");
                 Assert.That(trim.SlowFrameRecords.Any(f => (f.stages & CutConvexTrim.FrameStages.Switch) != 0 && f.partSeconds[(int)ConvexTrimFramePart.SwitchShape] > 0.0), Is.True);
+
+                // what the stages do not hold is told too: the asking whether a step may go on, the look at the input before it
+                Assert.That(trim.SlowFrameRecords.Any(f => (f.stages & CutConvexTrim.FrameStages.Collect) != 0 && f.partSeconds[(int)ConvexTrimFramePart.HoldCheck] > 0.0
+                    && f.partSeconds[(int)ConvexTrimFramePart.InputCheck] > 0.0), Is.True, "a frame with a step tells its hold check and its look at the input");
+                Assert.That(trim.SlowFrameRecords.Any(f => (f.stages & CutConvexTrim.FrameStages.Look) != 0 && f.partSeconds[(int)ConvexTrimFramePart.HoldCheck] > 0.0), Is.True);
+
+                // and the frame's own length, known in the frame after it (frames have gone by since the last of them): the
+                // record of frame N holds the engine's frame time as frame N + 1 read it, and what frame N itself read --
+                // the length of the frame before -- apart from it
+                foreach (ConvexTrimSlowFrame slow in trim.SlowFrameRecords)
+                {
+                    Assert.That(frameTimes.seen.TryGetValue(slow.frame, out float readInIt), Is.True, "frame " + slow.frame + " was seen");
+                    Assert.That(frameTimes.seen.TryGetValue(slow.frame + 1, out float readInTheNext), Is.True, "and the frame after frame " + slow.frame);
+                    Assert.That(slow.frameDeltaSeconds, Is.EqualTo(readInIt), "what frame " + slow.frame + " itself read is the frame before's length");
+                    Assert.That(slow.frameOwnSeconds, Is.EqualTo(readInTheNext), "frame " + slow.frame + "'s own length is the frame time frame " + (slow.frame + 1) + " read");
+                    Assert.That(slow.toNextTurnSeconds, Is.GreaterThan(slow.wholeSeconds), "from its turn's beginning to the next frame's turn's");
+                }
+
+                Assert.That(trim.SlowFrameRecords.Any(f => f.frameOwnSeconds != f.frameDeltaSeconds), Is.True, "the two frame times are told apart by this run's frames");
                 string[] slowLines = File.ReadAllLines(log.SlowPath);
                 Assert.That(slowLines[0], Is.EqualTo(ConvexTrimCaptureReplay.SlowFrameHeads));
                 Assert.That(slowLines.Length, Is.EqualTo(1 + (int)trim.SlowFrames));
                 Assert.That(slowLines[1].Split('	').Length, Is.EqualTo(slowLines[0].Split('	').Length));
+                int ownAt = Array.IndexOf(slowLines[0].Split('	'), "frameOwnMs");
+                Assert.That(ownAt, Is.GreaterThan(0));
+                for (int l = 1; l < slowLines.Length; l++)
+                {
+                    string[] cells = slowLines[l].Split('	');
+                    ConvexTrimSlowFrame of = trim.SlowFrameRecords.Single(f => f.frame == int.Parse(cells[0]));
+                    Assert.That(cells[ownAt], Is.EqualTo((of.frameOwnSeconds * 1000.0).ToString("F3", System.Globalization.CultureInfo.InvariantCulture)),
+                        "the line of frame " + of.frame + " carries that frame's own length");
+                }
                 Assert.That(File.ReadAllLines(Path.Combine(logFolder, "split-shape-retries.txt"))[0], Is.EqualTo(CutSpatialSplit.ShapeRetryHeads));
                 Assert.That(root.SpatialSplit.ShapesReplaced, Is.EqualTo(2), "the split was told of both publications");
                 log.Dispose();
@@ -362,6 +391,14 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             File.WriteAllText(Path.Combine(folder, "replay.txt"), text);
             File.WriteAllText(Path.Combine(folder, "replay.json"), "[" + string.Join(",\n", all) + "]");
             TestContext.Out.WriteLine(text);
+        }
+
+        /// <summary>The engine's frame time as each frame reads it, by the frame's number.</summary>
+        private sealed class FrameTimeReader : MonoBehaviour
+        {
+            internal readonly Dictionary<int, float> seen = new Dictionary<int, float>();
+
+            private void Update() => seen[Time.frameCount] = Time.unscaledDeltaTime;
         }
     }
 }

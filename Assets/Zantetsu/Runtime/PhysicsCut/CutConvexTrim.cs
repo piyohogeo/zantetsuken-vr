@@ -269,6 +269,15 @@ namespace Zantetsu.PhysicsCut
         EndRecord,
         EndListeners,
         EndFree,
+
+        /// <summary>
+        /// Outside the stages (so not in a slow frame's sum of stages): asking whether the turn, the scan or the step may
+        /// go on -- the split's turn, the frame's events, what is left of the budget (before the first look, before each
+        /// look after it, before each step of an attempt); and looking at the attempt's input again before a step, to see
+        /// that it is the one the attempt was issued on (less an end that look brought).
+        /// </summary>
+        HoldCheck,
+        InputCheck,
         Count,
     }
 
@@ -292,8 +301,16 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Garbage collections completed in the frame as the world counts them, and generation-0 collections begun during the turn itself.</summary>
         public int gcThisFrame, gcDuringTurn;
 
-        /// <summary>The frame's own length as the engine gives it (the time since the frame before).</summary>
+        /// <summary>The engine's frame time as read in the slow frame: the length of the frame BEFORE it, not its own.</summary>
         public float frameDeltaSeconds;
+
+        /// <summary>
+        /// The slow frame's own length, known in the frame after it and filled in there: the engine's frame time read in
+        /// the next frame, and the clock from this turn's beginning to the next frame's turn's. Below 0: not known (no
+        /// turn in the very next frame, or the record was written before it).
+        /// </summary>
+        public float frameOwnSeconds = -1f;
+        public double toNextTurnSeconds = -1.0;
         public int cutsInFlight;
         public bool splitHasAttempt;
         public int splitWaitingMain, splitFound;
@@ -561,7 +578,11 @@ namespace Zantetsu.PhysicsCut
             _frameBlockBytes = attempt.block.IsCreated ? attempt.block.Length : 0;
         }
 
-        private void NoteSlowFrame(double whole, double remainingBefore, int gcDuring)
+        // The slow frame of the frame before, waiting for its own length (known in this frame), and its turn's beginning.
+        private ConvexTrimSlowFrame _slowWaiting;
+        private long _slowWaitingBegan;
+
+        private void NoteSlowFrame(long began, double whole, double remainingBefore, int gcDuring)
         {
             CutFrameHold hold = _world.FrameEventsHold(out string work);
             CutSpatialSplit split = _world.SpatialSplit;
@@ -577,6 +598,8 @@ namespace Zantetsu.PhysicsCut
             SlowFrames++;
             if (_slowFrames.Count >= SlowFramesKept) _slowFrames.RemoveAt(0);
             _slowFrames.Add(slow);
+            _slowWaiting = slow;
+            _slowWaitingBegan = began;
             SlowFrame?.Invoke(slow);
         }
 
@@ -832,6 +855,18 @@ namespace Zantetsu.PhysicsCut
         public void Step()
         {
             long begin = Stopwatch.GetTimestamp();
+            if (_slowWaiting != null)
+            {
+                // The frame before was a slow one: its own length is known now (the engine's frame time of this frame).
+                if (Time.frameCount == _slowWaiting.frame + 1)
+                {
+                    _slowWaiting.frameOwnSeconds = Time.unscaledDeltaTime;
+                    _slowWaiting.toNextTurnSeconds = (begin - _slowWaitingBegan) / (double)Stopwatch.Frequency;
+                }
+
+                _slowWaiting = null;
+            }
+
             _frameMainSeconds = 0.0;
             _frameStages = FrameStages.None;
             Array.Clear(_frameParts, 0, _frameParts.Length);
@@ -853,7 +888,7 @@ namespace Zantetsu.PhysicsCut
                 MostFrameStages = _frameStages;
             }
 
-            if (whole >= Settings.slowFrameSeconds) NoteSlowFrame(whole, remainingBefore, GC.CollectionCount(0) - gcBefore);
+            if (whole >= Settings.slowFrameSeconds) NoteSlowFrame(begin, whole, remainingBefore, GC.CollectionCount(0) - gcBefore);
         }
 
         private void StepTurn()
@@ -873,6 +908,7 @@ namespace Zantetsu.PhysicsCut
 
             Turns++;
             // The additional split first: nothing is issued unless its turn of this frame ended with nothing to do.
+            long holdBegan = Stopwatch.GetTimestamp();
             if (SplitLeavesRoom != null && !SplitLeavesRoom())
             {
                 _holds[(int)ConvexTrimHold.SplitFirst]++;
@@ -880,6 +916,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             ConvexTrimHold hold = Hold(in settings, ExpectedExamineSeconds + ExpectedIssueSeconds);
+            NotePart(ConvexTrimFramePart.HoldCheck, holdBegan, Stopwatch.GetTimestamp());
             if (hold != ConvexTrimHold.None)
             {
                 _holds[(int)hold]++;
@@ -890,10 +927,17 @@ namespace Zantetsu.PhysicsCut
             int left = _pending.Count, looked = 0;
             while (left-- > 0 && looked < settings.examinePerFrame)
             {
-                if (looked > 0 && RemainingMainSeconds() < settings.reserveSeconds + Later() + (2.0 * (ExpectedExamineSeconds + ExpectedIssueSeconds)))
+                if (looked > 0)
                 {
-                    ScansCutShort++;
-                    break;
+                    // Whether the scan may go on is asked of the budget too: a part of the hold check, as the asking above.
+                    long asked = Stopwatch.GetTimestamp();
+                    bool budgetShort = RemainingMainSeconds() < settings.reserveSeconds + Later() + (2.0 * (ExpectedExamineSeconds + ExpectedIssueSeconds));
+                    NotePart(ConvexTrimFramePart.HoldCheck, asked, Stopwatch.GetTimestamp());
+                    if (budgetShort)
+                    {
+                        ScansCutShort++;
+                        break;
+                    }
                 }
 
                 Pending pending = _pending.Dequeue();
@@ -979,12 +1023,16 @@ namespace Zantetsu.PhysicsCut
             // however many frames that takes: nothing is let through a budget that is short.
             while (_attempt == attempt && attempt.collected)
             {
+                // (the hold check is timed from before the step's expected seconds are worked out: they are asked for it)
+                long holdBegan = Stopwatch.GetTimestamp();
                 double expected = attempt.main == MainStage.Numbers ? ExpectedCollectSeconds
                     : attempt.main == MainStage.Meshes ? ExpectedMeshSeconds
                     : attempt.main == MainStage.HullCheck ? ExpectedHullCheckSeconds
                     : attempt.main == MainStage.Prepare ? ExpectedPrepareSeconds
                     : ExpectedPublishSeconds;
                 ConvexTrimHold hold = SplitWaitsForMain != null && SplitWaitsForMain() ? ConvexTrimHold.SplitFirst : Hold(in settings, expected);
+                long held = Stopwatch.GetTimestamp();
+                NotePart(ConvexTrimFramePart.HoldCheck, holdBegan, held);
                 if (hold != ConvexTrimHold.None)
                 {
                     NoteHold(attempt, hold);
@@ -992,8 +1040,12 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 attempt.budgetHolds = 0;
-                if (!StillTheInput(attempt, in settings)) return;
+                _stepEndSeconds = 0.0;
+                bool same = StillTheInput(attempt, in settings);
                 long begin = Stopwatch.GetTimestamp();
+                // (an end the look brought -- the input moved on -- is told as the parts of the end, not here)
+                _frameParts[(int)ConvexTrimFramePart.InputCheck] += Math.Max(0.0, ((begin - held) / (double)Stopwatch.Frequency) - _stepEndSeconds);
+                if (!same) return;
                 NoteFrameAttempt(attempt);
                 _stepEndSeconds = 0.0;
                 bool goOn;

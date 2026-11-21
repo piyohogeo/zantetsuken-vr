@@ -1492,7 +1492,7 @@ namespace Zantetsu.PhysicsCut
                 var text = new StringBuilder("frame\twholeMs\tstagesMs\tstages");
                 for (int k = 0; k < (int)ConvexTrimFramePart.Count; k++) text.Append('\t').Append((ConvexTrimFramePart)k).Append("Ms");
                 text.Append("\tremainingBeforeMs\tremainingAfterMs\tlaterStepMs\thold\theavyWork\tgcThisFrame\tgcDuringTurn\tframeDeltaMs\tcutsInFlight\tsplitHasAttempt\tsplitWaitingMain\tsplitFound"
-                    + "\tfragment\tconvexes\tmeshes\tindexCount\tblockBytes");
+                    + "\tfragment\tconvexes\tmeshes\tindexCount\tblockBytes\tframeOwnMs\ttoNextTurnMs");
                 return text.ToString();
             }
         }
@@ -1508,7 +1508,8 @@ namespace Zantetsu.PhysicsCut
             text.Append('\t').Append(Ms(f.remainingBeforeSeconds)).Append('\t').Append(Ms(f.remainingAfterSeconds)).Append('\t').Append(Ms(f.laterStepSeconds)).Append('\t').Append(f.hold)
                 .Append('\t').Append((f.heavyWork ?? string.Empty).Replace('\t', ' ')).Append('\t').Append(f.gcThisFrame).Append('\t').Append(f.gcDuringTurn).Append('\t').Append(Ms(f.frameDeltaSeconds))
                 .Append('\t').Append(f.cutsInFlight).Append('\t').Append(f.splitHasAttempt ? 1 : 0).Append('\t').Append(f.splitWaitingMain).Append('\t').Append(f.splitFound)
-                .Append('\t').Append(f.fragment).Append('\t').Append(f.convexes).Append('\t').Append(f.meshes).Append('\t').Append(f.indexCount).Append('\t').Append(f.blockBytes);
+                .Append('\t').Append(f.fragment).Append('\t').Append(f.convexes).Append('\t').Append(f.meshes).Append('\t').Append(f.indexCount).Append('\t').Append(f.blockBytes)
+                .Append('\t').Append(f.frameOwnSeconds >= 0f ? Ms(f.frameOwnSeconds) : "-").Append('\t').Append(f.toNextTurnSeconds >= 0.0 ? Ms(f.toNextTurnSeconds) : "-");   // "-": not known
             return text.ToString();
         }
 
