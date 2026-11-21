@@ -41,8 +41,22 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             Assert.That(root.EnableConvexTrim("a test"), Is.True);
             CutConvexTrim trim = root.ConvexTrim;
+            Assert.That(trim.Settings.enabled, Is.True);
             trim.RemainingMainSeconds = () => 1.0;
             trim.LaterStepSeconds = () => 0.0;
+            return trim;
+        }
+
+        /// <summary>
+        /// The trim of this world switched off by its own saying -- a case's preparation, or a comparison's control: the
+        /// trim is on by default (D-265), so "off" is never what a world merely happens to have. Nothing was issued so far.
+        /// </summary>
+        private static CutConvexTrim TrimOff(CutWorldRoot root)
+        {
+            Assert.That(root.DisableConvexTrim("a test"), Is.True);
+            CutConvexTrim trim = root.ConvexTrim;
+            Assert.That(trim.Settings.enabled, Is.False, "the trim is off in effect");
+            Assert.That(trim.Issued, Is.Zero, "and it had issued nothing before it was switched off");
             return trim;
         }
 
@@ -198,6 +212,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             CutWorldRoot root = NewWorld(out Shader _);
             yield return null;
+            TrimOff(root);   // the preparation is made with the trim off, by saying so; the case switches it on where it means to
             AddTrimFloor();
             SplitOpen(root);
             // The convex's underside 0.05 above the floor; the anchor on the side of larger x.
@@ -289,6 +304,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             CutWorldRoot root = NewWorld(out Shader _);
             yield return null;
+            TrimOff(root);   // the preparation is made with the trim off, by saying so; the case switches it on where it means to
             SplitOpen(root);
             LogicalFragmentId bar = AddBarOnAFatConvex(root, Vector3.zero);
             var sides = new LogicalFragmentId[2];
@@ -333,6 +349,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             CutWorldRoot root = NewWorld(out Shader _);
             yield return null;
+            TrimOff(root);   // the preparation is made with the trim off, by saying so; the case switches it on where it means to
             SplitOpen(root);
             LogicalFragmentId bar = AddBarOnAFatConvex(root, Vector3.zero);
             var sides = new LogicalFragmentId[2];
@@ -381,6 +398,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             CutWorldRoot root = NewWorld(out Shader _);
             yield return null;
+            TrimOff(root);   // the preparation is made with the trim off, by saying so; the case switches it on where it means to
             SplitOpen(root);
             LogicalFragmentId bar = AddBarOnAFatConvex(root, Vector3.zero);
             root.Lifetime.MarkPropLineage(bar);
@@ -448,6 +466,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             CutWorldRoot root = NewWorld(out Shader _);
             yield return null;
+            TrimOff(root);   // the preparation is made with the trim off, by saying so; the case switches it on where it means to
             SplitOpen(root);
             LogicalFragmentId bar = AddBarOnAFatConvex(root, Vector3.zero);
             var sides = new LogicalFragmentId[2];
@@ -503,6 +522,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             CutWorldRoot root = NewWorld(out Shader _);
             yield return null;
+            TrimOff(root);   // the preparation is made with the trim off, by saying so; the case switches it on where it means to
             double[] remaining = { 0.0 };
             CutSpatialSplit split = SplitClosed(root, remaining);
             LogicalFragmentId body = AddBodyWithAHand(root, new Vector3(0f, 3f, 0f));
@@ -533,6 +553,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             CutWorldRoot root = NewWorld(out Shader _);
             yield return null;
+            TrimOff(root);   // the preparation is made with the trim off, by saying so; the case switches it on where it means to
             SplitOpen(root);
             // 2 x 0.16 x 0.16 drawn; the convex 2 x 0.18 x 0.16: one extent above 0.2, whatever it is cut to along x.
             LogicalFragmentId bar = AddBarOnAFatConvex(root, Vector3.zero, null, new float3(1f, 0.08f, 0.08f), 0.02f);
@@ -589,6 +610,155 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
             split.PruneShapeRetries();
             Assert.That(split.ShapeRetryFragmentsKept, Is.Zero, "nothing is kept of the numbers no owner has");
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **The launch's switch: on without an argument, on by its own argument, off by the off argument -- alone, and
+        /// beside the on argument in either order.** The two lengths' arguments stand with each, and the line a launch
+        /// writes says what is in effect and what asked for it.
+        /// </summary>
+        [Test]
+        public void ConvexTrimLaunch_IsOnWithoutAnArgument_OnByItsArgument_AndOffByTheOffArgument_AloneOrBesideItInEitherOrder()
+        {
+            const string On = CutWorldRoot.ConvexTrimArgument, Off = CutWorldRoot.ConvexTrimOffArgument;
+            Assert.That(CutConvexTrimSettings.Default.enabled, Is.True, "the default is on");
+            Assert.That(CutConvexTrimSettings.Default.minSizeMeters, Is.EqualTo(0.2f));
+            Assert.That(CutConvexTrimSettings.Default.minOverhangMeters, Is.EqualTo(0.1f));
+
+            foreach (string[] none in new[] { null, new string[0], new[] { "Player.exe", "-logFile", "x.log" } })
+            {
+                CutConvexTrimSettings byDefault = CutWorldRoot.ReadConvexTrim(none, out string asked, out string refusal);
+                Assert.That(byDefault.enabled, Is.True, "no argument: on");
+                Assert.That(asked, Does.StartWith("on -- the default").And.Contain(Off));
+                Assert.That(refusal, Is.Null);
+                Assert.That(byDefault.minSizeMeters, Is.EqualTo(0.2f));
+                Assert.That(byDefault.minOverhangMeters, Is.EqualTo(0.1f));
+                Assert.That(CutWorldRoot.DescribeConvexTrim(asked, in byDefault), Does.StartWith("CONVEX TRIM: on -- the default").And.Contain("above 0.2 m").And.Contain("reaches 0.1 m").And.Contain("26 directions"));
+            }
+
+            CutConvexTrimSettings named = CutWorldRoot.ReadConvexTrim(new[] { "Player.exe", On }, out string namedAsked, out string namedRefusal);
+            Assert.That(named.enabled, Is.True, "the on argument: on, as before");
+            Assert.That(namedAsked, Is.EqualTo("on, asked for by " + On));
+            Assert.That(namedRefusal, Is.Null);
+
+            CutConvexTrimSettings off = CutWorldRoot.ReadConvexTrim(new[] { "Player.exe", Off }, out string offAsked, out string offRefusal);
+            Assert.That(off.enabled, Is.False, "the off argument alone: off");
+            Assert.That(offAsked, Is.EqualTo("off, asked for by " + Off));
+            Assert.That(offRefusal, Is.Null);
+            Assert.That(CutWorldRoot.DescribeConvexTrim(offAsked, in off), Does.StartWith("CONVEX TRIM: off, asked for by " + Off));
+
+            foreach (string[] both in new[] { new[] { "Player.exe", On, Off }, new[] { "Player.exe", Off, On }, new[] { Off, "-other", On, "-logFile", "x.log" } })
+            {
+                CutConvexTrimSettings beside = CutWorldRoot.ReadConvexTrim(both, out string besideAsked, out string besideRefusal);
+                Assert.That(beside.enabled, Is.False, "off wins beside the on argument, whichever comes first: " + string.Join(" ", both));
+                Assert.That(besideAsked, Does.StartWith("off, asked for by " + Off).And.Contain("off wins"));
+                Assert.That(besideRefusal, Is.Null);
+            }
+
+            // the two lengths' arguments stand, with the default, with the on argument and with the off argument
+            foreach (string[] lead in new[] { new string[0], new[] { On }, new[] { Off } })
+            {
+                string[] arguments = lead.Concat(new[] { CutWorldRoot.ConvexTrimSizeArgument, "0.3", CutWorldRoot.ConvexTrimOverhangArgument, "0.05" }).ToArray();
+                CutConvexTrimSettings lengths = CutWorldRoot.ReadConvexTrim(arguments, out string _, out string lengthsRefusal);
+                Assert.That(lengths.enabled, Is.EqualTo(lead.Length == 0 || lead[0] == On));
+                Assert.That(lengths.minSizeMeters, Is.EqualTo(0.3f));
+                Assert.That(lengths.minOverhangMeters, Is.EqualTo(0.05f));
+                Assert.That(lengthsRefusal, Is.Null);
+            }
+
+            CutConvexTrimSettings bad = CutWorldRoot.ReadConvexTrim(new[] { CutWorldRoot.ConvexTrimOverhangArgument, "wide" }, out string _, out string badRefusal);
+            Assert.That(bad.enabled, Is.True);
+            Assert.That(bad.minOverhangMeters, Is.EqualTo(0.1f), "a length that cannot be read leaves the default");
+            Assert.That(badRefusal, Does.Contain(CutWorldRoot.ConvexTrimOverhangArgument));
+        }
+
+        /// <summary>
+        /// **A world made by a launch that names no switch has the trim on, says so in its line, and trims.** Nobody
+        /// switches it on here: the bar's two sides are trimmed by the default alone.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator ConvexTrimLaunch_AWorldMadeWithoutAnArgument_SaysTheTrimIsOn_AndTrims_WithNobodySwitchingItOn()
+        {
+            string[] launch = Environment.GetCommandLineArgs();
+            Assume.That(Array.IndexOf(launch, CutWorldRoot.ConvexTrimArgument) < 0 && Array.IndexOf(launch, CutWorldRoot.ConvexTrimOffArgument) < 0
+                && Array.IndexOf(launch, CutWorldRoot.ConvexTrimSizeArgument) < 0 && Array.IndexOf(launch, CutWorldRoot.ConvexTrimOverhangArgument) < 0,
+                "this run's own launch names no switch of the trim");
+            LogAssert.Expect(LogType.Log, new System.Text.RegularExpressions.Regex("^CONVEX TRIM: on -- the default; " + CutWorldRoot.ConvexTrimOffArgument + " turns it off; .*above 0\\.2 m .*reaches 0\\.1 m "));
+            CutWorldRoot root = NewWorld(out Shader _);
+            yield return null;
+            CutConvexTrim trim = root.ConvexTrim;
+            Assert.That(trim.Settings.enabled, Is.True, "on in effect, by the default");
+            Assert.That(trim.Settings.minSizeMeters, Is.EqualTo(0.2f));
+            Assert.That(trim.Settings.minOverhangMeters, Is.EqualTo(0.1f));
+            trim.RemainingMainSeconds = () => 1.0;   // (the frame budget open, as the cases' own trims have it; the switch is not touched)
+            trim.LaterStepSeconds = () => 0.0;
+            SplitOpen(root);
+            LogicalFragmentId bar = AddBarOnAFatConvex(root, Vector3.zero);
+            var sides = new LogicalFragmentId[2];
+            yield return CutTheBarAcross(root, bar, 0.6f, sides);
+            yield return Until(() => trim.Published == 2 && trim.IsIdle, "both sides were trimmed by the default alone. " + trim.Describe());
+            Assert.That(trim.EndedAs(ConvexTrimEnd.Failed) + trim.EndedAs(ConvexTrimEnd.CookFailed), Is.Zero);
+            Assert.That(root.SpatialSplit.ShapesReplaced, Is.EqualTo(2), "the split was told of both publications");
+
+            // The tallies a world writes at its end, in lines a device's log holds whole: every part of the one line, in
+            // order, none cut, the world's own head before each within the log's 1,023 characters.
+            string whole = trim.Describe();
+            string[] lines = trim.DescribeLines();
+            Assert.That(whole.Length, Is.GreaterThan(1023), "the one line is longer than a device's log holds");
+            Assert.That(lines.Length, Is.GreaterThan(1));
+            Assert.That(lines[0], Does.StartWith("convex trim (on; size 0.2 m, overhang 0.1 m): ").And.Contain("published 2"));
+            var parts = new List<string>();
+            for (int k = 0; k < lines.Length; k++)
+            {
+                Assert.That(("CUT WORLD " + root.name + " at its end: " + lines[k]).Length, Is.LessThanOrEqualTo(1023), "line " + (k + 1) + " with the world's head");
+                Assert.That(lines[k].Length, Is.LessThanOrEqualTo(CutConvexTrim.DescribeLineMost));
+                string head = "convex trim (" + (k + 1) + " of " + lines.Length + "): ";
+                if (k > 0) Assert.That(lines[k], Does.StartWith(head));
+                parts.AddRange((k > 0 ? lines[k].Substring(head.Length) : lines[k]).Split(new[] { "; " }, StringSplitOptions.None));
+            }
+
+            Assert.That(string.Join("; ", parts), Is.EqualTo(whole), "nothing of the tallies is left out, added or moved");
+            Assert.That(lines[lines.Length - 1], Does.EndWith(whole.Substring(whole.Length - 20)), "the last line ends as the tallies do");
+            Assert.That(lines.Any(l => l.Contains("CookFailed 0")) && lines.Any(l => l.Contains("of 0.5 ms or more")) && lines.Any(l => l.Contains("marks ")), Is.True,
+                "the failures, the slow turns and the end of the tallies are each in a line");
+
+            // and the world writes them so at its end: one log line a line
+            LogAssert.Expect(LogType.Log, new System.Text.RegularExpressions.Regex(@"^CUT WORLD .* at its end: convex trim \(on; size 0\.2 m, overhang 0\.1 m\): "));
+            for (int k = 1; k < lines.Length; k++)
+            {
+                LogAssert.Expect(LogType.Log, new System.Text.RegularExpressions.Regex(@"^CUT WORLD .* at its end: convex trim \(" + (k + 1) + " of " + lines.Length + @"\): "));
+            }
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **Switched off, the trim looks at nothing and issues nothing, and says so.** The same bar as the case above,
+        /// in a world whose trim was switched off before the cut: its sides keep the shapes the cut gave them.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator ConvexTrimLaunch_SwitchedOff_TheWorldSaysSo_AndNothingIsTrimmed()
+        {
+            CutWorldRoot root = NewWorld(out Shader _);
+            yield return null;
+            LogAssert.Expect(LogType.Log, new System.Text.RegularExpressions.Regex("^CONVEX TRIM: off, asked for by a test; "));
+            CutConvexTrim trim = TrimOff(root);
+            trim.RemainingMainSeconds = () => 1.0;
+            trim.LaterStepSeconds = () => 0.0;
+            SplitOpen(root);
+            LogicalFragmentId bar = AddBarOnAFatConvex(root, Vector3.zero);
+            var sides = new LogicalFragmentId[2];
+            yield return CutTheBarAcross(root, bar, 0.6f, sides);
+            Assert.That(root.Owners.TryGet(sides[0], out PhysicsFragmentOwner a), Is.True);
+            Assert.That(root.Owners.TryGet(sides[1], out PhysicsFragmentOwner b), Is.True);
+            PhysicsOwnerShape shapeA = a.Shape, shapeB = b.Shape;
+            for (int f = 0; f < 60; f++) yield return null;
+            Assert.That(trim.Settings.enabled, Is.False);
+            Assert.That(trim.Issued, Is.Zero, "nothing was issued. " + trim.Describe());
+            Assert.That(trim.Examined, Is.Zero, "nothing was looked at");
+            Assert.That(root.SpatialSplit.ShapesReplaced, Is.Zero);
+            Assert.That(a.Shape, Is.SameAs(shapeA));
+            Assert.That(b.Shape, Is.SameAs(shapeB));
             yield return EndWorld(root);
         }
     }

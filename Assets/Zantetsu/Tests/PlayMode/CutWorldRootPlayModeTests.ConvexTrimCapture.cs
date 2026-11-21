@@ -31,6 +31,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         // convex's underside: half a metre of air under what is drawn of it.
         private IEnumerator ABarAsleepOnItsExcessConvex(CutWorldRoot root, LogicalFragmentId[] sides)
         {
+            // The trim is on by default (D-265): the floating bar is what the trim would take away, so this preparation
+            // switches it off by saying so, before the bar is made. A case that wants the trim switches it on afterwards.
+            CutConvexTrim trim = TrimOff(root);
             SplitOpen(root);
             var at = new Vector3(0f, TrimFloorTop + 0.05f + k_barHalf.y + BarExcessBelow, 0f);
             LogicalFragmentId bar = AddBarOnAFatConvex(root, at, new[] { new float3(0.8f, 0f, 0f) });
@@ -41,6 +44,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             free.Body.useGravity = true;
             free.Body.WakeUp();
             yield return Until(() => free.Body.IsSleeping() && LowestConvexY(free) < TrimFloorTop + 0.03f, "the free side rests on the floor and sleeps");
+            Assert.That(trim.Settings.enabled, Is.False, "the bar was prepared with the trim off");
+            Assert.That(trim.Issued, Is.Zero, "and nothing of it was trimmed");
         }
 
         [UnityTest]
@@ -208,7 +213,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             ConvexTrimCapture off = ConvexTrimCapture.Take(root, sides[1], "the trim off", 0.5f, out string refusal);
             Assert.That(off, Is.Not.Null, refusal);
             Assert.That(off.trimEnabled, Is.False);
-            Assert.That(off.trimState, Is.EqualTo(nameof(ConvexTrimPass.Candidate)));
+            // Switched off after the world's first frames, the trim still listens: the fragment waits for a look that does not
+            // come while it is off. (A launch with the off argument never listens, and a capture then says what a look would.)
+            Assert.That(off.trimState, Is.EqualTo("Queued"));
             Assert.That(off.trimHasRecord, Is.False);
 
             CutConvexTrim trim = TrimOn(root);

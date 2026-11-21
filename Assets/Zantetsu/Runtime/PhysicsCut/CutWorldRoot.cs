@@ -276,10 +276,11 @@ namespace Zantetsu.PhysicsCut
                 // The several-attempts control, the scan and the one-component pass (the defaults since 2026-11-13): in every build.
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeSeveral(), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeCandidateWaits(), this);
-                // The convex trim's tallies, where it was on or ever took a turn (off by default: no line then).
+                // The convex trim's tallies, where it was on or ever took a turn (switched off from its start: no line).
                 if (ConvexTrim != null && (ConvexTrim.Settings.enabled || ConvexTrim.Turns > 0))
                 {
-                    UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + ConvexTrim.Describe(), this);
+                    // In lines a device's log holds whole (it cuts a line off at 1,023 characters): the trim's tallies are longer.
+                    foreach (string line in ConvexTrim.DescribeLines()) UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + line, this);
                     if (SpatialSplit != null && SpatialSplit.ShapesReplaced > 0) UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeShapeRetries(), this);
                 }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -371,7 +372,7 @@ namespace Zantetsu.PhysicsCut
                 // what they retired in this frame holds it, and before this frame's collection, which reflects it.
                 StepSpatialSplit();
 
-                // The convex trim (off by default): after the split's turn, which it gives way to, and before this
+                // The convex trim (on by default): after the split's turn, which it gives way to, and before this
                 // frame's collection.
                 StepConvexTrim();
 

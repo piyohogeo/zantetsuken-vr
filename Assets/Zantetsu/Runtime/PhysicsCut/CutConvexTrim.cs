@@ -16,13 +16,14 @@ using Zantetsu.Rendering;
 namespace Zantetsu.PhysicsCut
 {
     /// <summary>
-    /// The settings of the convex trim (<see cref="CutConvexTrim"/>). The two lengths are provisional values of the first
-    /// version (2026-11-20), kept here so that an evaluation changes them in one place.
+    /// The settings of the convex trim (<see cref="CutConvexTrim"/>). On by default on every platform, with the two
+    /// lengths of the first version (2026-11-20) as they were evaluated: adopted 2026-11-21 (D-265). They are kept here
+    /// so that a comparison changes them in one place.
     /// </summary>
     [Serializable]
     public struct CutConvexTrimSettings
     {
-        /// <summary>Off by default: an evaluation's switch (<see cref="CutWorldRoot.ConvexTrimArgument"/>).</summary>
+        /// <summary>On by default (D-265, 2026-11-21); <see cref="CutWorldRoot.ConvexTrimOffArgument"/> is the way back for a run.</summary>
         public bool enabled;
 
         /// <summary>Metres. A body is looked at when two or more of the three extents of its whole collision box, along axes fixed to the fragment, are above this.</summary>
@@ -52,7 +53,7 @@ namespace Zantetsu.PhysicsCut
 
         public static CutConvexTrimSettings Default => new CutConvexTrimSettings
         {
-            enabled = false,
+            enabled = true,
             minSizeMeters = 0.2f,
             minOverhangMeters = 0.1f,
             minKeptVolume = 1e-6f,
@@ -347,7 +348,7 @@ namespace Zantetsu.PhysicsCut
     }
 
     /// <summary>
-    /// The convex trim (2026-11-20, off by default): where a convex of a large fragment reaches beyond its own drawn mesh,
+    /// The convex trim (2026-11-20; on by default since 2026-11-21, D-265): where a convex of a large fragment reaches beyond its own drawn mesh,
     /// the part beyond is cut off, so that what a piece rests on is nearer to what is seen of it -- a felled tree's branch
     /// held in the air by its hull.
     /// <para>
@@ -601,6 +602,44 @@ namespace Zantetsu.PhysicsCut
             _slowWaiting = slow;
             _slowWaitingBegan = began;
             SlowFrame?.Invoke(slow);
+        }
+
+        /// <summary>
+        /// The most characters of one line of <see cref="DescribeLines"/>: a device's log cuts a line of this program off
+        /// at 1,023 characters (seen on the Quest 3S, 2026-11-17: the end lines of 1,382 and 1,494 characters arrived as
+        /// 1,023), and the world puts its own name before each.
+        /// </summary>
+        public const int DescribeLineMost = 900;
+
+        /// <summary>
+        /// The tallies of <see cref="Describe"/> in lines of at most <see cref="DescribeLineMost"/> characters, cut where
+        /// its parts end ("; "): the first begins as Describe does, each later one with "convex trim (k of n): ". Nothing
+        /// of Describe is left out and nothing is added to its parts.
+        /// </summary>
+        public string[] DescribeLines() => SplitForLog(Describe(), "convex trim", DescribeLineMost);
+
+        internal static string[] SplitForLog(string whole, string name, int most)
+        {
+            var lines = new List<string>();
+            string[] parts = whole.Split(new[] { "; " }, StringSplitOptions.None);
+            var line = new StringBuilder(most);
+            // (room is left for the head of a later line, which is not known until the lines are counted)
+            int room = most - (name.Length + 16);
+            foreach (string part in parts)
+            {
+                if (line.Length > 0 && line.Length + 2 + part.Length > room)
+                {
+                    lines.Add(line.ToString());
+                    line.Length = 0;
+                }
+
+                if (line.Length > 0) line.Append("; ");
+                line.Append(part);   // (a part longer than a line stands alone: it is not cut in its middle)
+            }
+
+            if (line.Length > 0) lines.Add(line.ToString());
+            for (int k = 1; k < lines.Count; k++) lines[k] = name + " (" + (k + 1).ToString(CultureInfo.InvariantCulture) + " of " + lines.Count.ToString(CultureInfo.InvariantCulture) + "): " + lines[k];
+            return lines.ToArray();
         }
 
         /// <summary>The newest record of an attempt on the fragment, if one is kept.</summary>

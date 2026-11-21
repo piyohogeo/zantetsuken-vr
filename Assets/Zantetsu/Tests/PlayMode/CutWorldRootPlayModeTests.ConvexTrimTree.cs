@@ -194,6 +194,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         private sealed class TrimEvalFile
         {
             public bool trimOn;
+
+            // What was in effect, read from the trim itself: before the first cut and after the last; and what it issued and
+            // published in the whole run (0 and 0 for the control, proved before its file is written).
+            public bool trimEnabledBeforeTheCuts, trimEnabledAtTheEnd;
+            public long trimIssued, trimPublished;
             public string input, trim, split, splitSeveral, splitTimeline, splitShapeRetries, splitCandidateWaits;
             public int splitIssued, slowFrames;
             public List<string> shapeRetryLines = new List<string>(), slowFrameLines = new List<string>();
@@ -321,8 +326,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             CutWorldRoot root = NewPlacedHullWorld();
             yield return null;
             CutSpatialSplit split = SplitOpen(root);   // the additional split as the product has it (on), its budget open
-            CutConvexTrim trim = root.ConvexTrim;
-            if (trimOn) trim = TrimOn(root);
+            // The trim is on by default (D-265): each side of the comparison says what it is before the first cut -- the
+            // control is off because it was switched off, not because a default left it so.
+            CutConvexTrim trim = trimOn ? TrimOn(root) : TrimOff(root);
+            Assert.That(trim.Settings.enabled, Is.EqualTo(trimOn), "the trim is " + (trimOn ? "on" : "off") + " in effect before the first cut");
+            Assert.That(trim.Issued, Is.Zero);
             string overhang = Environment.GetEnvironmentVariable(TrimEvalOverhangVariable);
             if (!string.IsNullOrEmpty(overhang))
             {
@@ -332,6 +340,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
 
             var file = new TrimEvalFile { trimOn = trimOn, input = CompoundTreeInputPath, minSize = trim.Settings.minSizeMeters, minOverhang = trim.Settings.minOverhangMeters };
+            file.trimEnabledBeforeTheCuts = trim.Settings.enabled;
 
             // A floor wide enough that a piece that rolls stays on it, its top where the world's own floor has it; and the
             // lanes pieces are laid in: a grid from the middle outwards, clear of the trees' row.
@@ -565,6 +574,24 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             var owned = new List<LogicalFragmentId>();
             root.Owners.CopyFragmentsTo(owned);
             Assert.That(split.ShapeRetryFragmentsKept, Is.LessThanOrEqualTo(3 * owned.Count), "the diagnosis keeps nothing of fragments that have no owner");
+            file.trimEnabledAtTheEnd = trim.Settings.enabled;
+            file.trimIssued = trim.Issued;
+            file.trimPublished = trim.Published;
+            Assert.That(file.trimEnabledAtTheEnd, Is.EqualTo(trimOn), "the trim stayed " + (trimOn ? "on" : "off") + " through the run");
+            if (!trimOn)
+            {
+                // The control: off in effect and nothing issued, proved before trim-off.json is written.
+                Assert.That(trim.Issued, Is.Zero, "the control issued no trim. " + file.trim);
+                Assert.That(trim.Published, Is.Zero);
+                Assert.That(trim.Examined, Is.Zero, "and looked at nothing");
+                Assert.That(split.ShapesReplaced, Is.Zero, "no shape was replaced under the split");
+                Assert.That(file.cases.All(c => c.records.Count == 0), Is.True, "no case of the control holds a trim record");
+            }
+            else
+            {
+                Assert.That(trim.Published, Is.GreaterThan(0), "the trimmed side published");
+            }
+
             File.WriteAllText(TrimEvalPath(folder, trimOn), JsonUtility.ToJson(file, true));
             TestContext.Out.WriteLine("written: " + TrimEvalPath(folder, trimOn));
             TestContext.Out.WriteLine(file.trim);

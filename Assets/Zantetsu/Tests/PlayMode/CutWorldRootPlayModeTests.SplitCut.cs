@@ -499,6 +499,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         public IEnumerator SplitCut_AMeshThatCannotBeMade_EndsTheAttemptOnce_WithWhatWasMade_AndTheInputIsNotTriedAgain()
         {
             CutWorldRoot root = NewWorld(out Shader _);
+            // "The input is not tried again" is about an input that stays as it was: the convex trim (on by default,
+            // D-265) would replace the shape, and the split would try the new input, as it is meant to.
+            TrimOff(root);
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitCutClosed(root, remaining, 12);

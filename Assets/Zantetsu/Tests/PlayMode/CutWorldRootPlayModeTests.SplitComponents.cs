@@ -76,6 +76,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             try
             {
                 CutWorldRoot root = NewWorld(out Shader _);
+                // The split's own counts, with the shapes as the cut left them: the convex trim (on by default, D-265)
+                // would replace a side's shape, and the split would try that side again, as it is meant to.
+                TrimOff(root);
                 root.Driver.RemainingMainSeconds = () => 1.0;
                 var remaining = new double[1];
                 CutSpatialSplit split = SplitCutClosed(root, remaining, CutSpatialSplitSettings.DefaultMinCutSideTriangles);

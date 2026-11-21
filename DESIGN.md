@@ -1933,13 +1933,13 @@ Main Threadの構築・公開・回収も通常予算内とし、収まらなけ
 
 NotFoundは「分離不能」の正解ラベルではない（有限探索の結果）。捕捉中のゲーム全体の性能（フレーム時間など）は評価に使わない（写しがMainを止め、発行順・Stale・形状の分布にも影響しうる）。一方、固定した入力を同じ条件でオフライン再実行して探索費用を比べる用途には使える。調整の比較では回帰・作業量・裾の時間・一時メモリを見て、調整用と最終確認用の標本は元物体またはセッションで分ける。保存物と資産固有の結果には許諾データが含まれるため公開リポジトリに入れず、非公開の場所に置く（リポジトリには実行器・形式・合成Fixtureの試験だけ）。PC PlayerはIL2CPP、EditorはMonoで浮動小数の結果が末尾で違いうるので、Development Playerでも同じ実行器で再実行できる（`-zantetsuSplitReplay <セッション> -zantetsuSplitReplayOut <新フォルダ>`：最初のシーンの前に再実行して同じ終了コードで終わり、シナリオは始めない。どちらかの引数があれば値が欠けていても再実行の要求とみなし、不正なら終了コード1で終わって通常のゲームへは進まない。XRの初期化はPlayerの通常の処理のままで、起動スクリプトが存在しないランタイムを指定することでXRセッションを使わずに再実行する。`SpatialSplitReplayPlayer`）。結果行と再実行の行には探索の節の全項目とKernelがBurst／managedのどちらで動いたかを残し、ハッシュの違いを項目ごとにたどれるようにする。
 
-#### 7.9.9 Convexの切り詰め（Convex Trim、評価用・既定OFF）
+#### 7.9.9 Convexの切り詰め（Convex Trim、採用・既定ON）
 
-大型破片のConvexが描画Meshより張り出し、切り倒した木の枝などが空中で止まる現象を減らすための任意処理（2026-11-20、TL指示）。同じ破片のMeshを片側にすべて残せる平面で、物理Convexの余分な部分を切り落とす。評価用の切替であり既定は無効（`CutConvexTrimSettings.Default.enabled = false`）。無効のときは候補の仕事をしない。即時応答には影響しない（通常切断と追加空間分割が先）。幾何精度は変えない（描画Meshは不変）。物理整合はConvexを小さくする方向にだけ変える。性能予算は低優先処理の費用とConvexの頂点数へ影響する。
+大型破片のConvexが描画Meshより張り出し、切り倒した木の枝などが空中で止まる現象を減らすための処理（2026-11-20、TL指示。2026-11-21に採用し、PC・Quest共通で既定ONとした。D-265）。同じ破片のMeshを片側にすべて残せる平面で、物理Convexの余分な部分を切り落とす。起動引数なしで有効（`CutConvexTrimSettings.Default.enabled = true`）。Editorと非VRのAndroidも、Worldを作る同じ経路で既定ONになる。`-zantetsuConvexTrimOff` で無効にでき、無効のときは候補の仕事をしない。即時応答には影響しない（通常切断と追加空間分割が先）。幾何精度は変えない（描画Meshは不変）。物理整合はConvexを小さくする方向にだけ変える。性能予算は低優先処理の費用とConvexの頂点数へ影響する。
 
 | 項目 | 内容 |
 | --- | --- |
-| 切替 | `-zantetsuConvexTrim` で有効、`-zantetsuConvexTrimOff` で無効（併記はOFF優先）。`-zantetsuConvexTrimSize <m>`（大きさ、既定0.2）、`-zantetsuConvexTrimOverhang <m>`（張り出し、既定0.1）。2つの値は暫定で `CutConvexTrimSettings` に持つ。起動時に `CONVEX TRIM:` の1行、Worldの終了時に集計の1行を出す |
+| 切替 | 引数なしで有効（既定ON）。`-zantetsuConvexTrimOff` で無効（切り戻し）。OFFの引数は単独でも、`-zantetsuConvexTrim` との併記でも、順序によらず優先する。`-zantetsuConvexTrim` は既定OFFだった間の有効化引数で、明示のONとして引き続き受け付ける。`-zantetsuConvexTrimSize <m>`（大きさ、既定0.2）、`-zantetsuConvexTrimOverhang <m>`（張り出し、既定0.1）は、ON・OFFのどの指定とも併用できる。2つの値は `CutConvexTrimSettings` に持つ。Worldを作るたびに `CONVEX TRIM:` の1行で実効設定と理由を出す（`on -- the default`、`on, asked for by -zantetsuConvexTrim`、`off, asked for by -zantetsuConvexTrimOff`）。Worldの終了時に集計を出す（900文字以内の行に分ける。最初から無効のWorldは出さない）。コマンドラインのないホストと試験は `CutWorldRoot.EnableConvexTrim`／`DisableConvexTrim` で切り替え、そのときも同じ1行を出す |
 | 対象 | 切断で生まれ、自分のRigidbodyを持つ破片。Rigidbody全体の衝突形状を破片に固定した軸の箱（実m）で測り、3辺のうち2辺が0.2 mを超えるもの。単一Convex・単一Componentの破片も含む。初版の対象外：未切断の物体、建物由来、NPC片（Bone別Convex・Mesh frame）、形状frameが剛体変換でないもの、Rootにscaleがあるもの |
 | 平面 | 破片の確定済み描画Mesh（現在のGeometryの索引が実際に参照する頂点。切断面を含む）を形状と同じ座標系へ写し、26方向（軸と対角）それぞれの最大射影を支持平面とする。Convexごとに、平面を越える最大距離（張り出し）を求める |
 | 切り詰め | 張り出し0.1 m以上を候補とし、大きい順に `ConvexClipKernel.Cut` で切る。Mesh側に有効な体積のConvexが残るときだけ採用し、採用後のConvexで判定を繰り返す。全部が消える・退化する・残る体積が不足する・頂点上限（128）を超える候補は見送り、理由を数えて他の候補を続ける。頂点の削減はしない（`ConvexTrimSearch`） |
@@ -1954,7 +1954,7 @@ NotFoundは「分離不能」の正解ラベルではない（有限探索の結
 - 26方向の張り出しは指定どおり減る（公開28体。例 0.413→0.086 m、0.589→0.086 m）。頂点は切り詰めたConvex 55個のうち増加47・同数2・減少6、最大の増加は39→47。Rigidbody合計は28体のうち26体で増え（+1〜+12）、2体で減った（28体の合計5,192→5,346、+3.0 %）。見送り（全消失・退化・体積不足・頂点上限）は0件、閾値未満で何もしなかった物体は10体。
 - 浮きへの効果は確認できていない。OFFで静止した後の床との隙間は最大0.081 mで、0.1 m以上は0件。静止姿勢での床方向の張り出しは最大0.080 mで閾値より小さく、ONでも変わらない。この条件は人力プレイで見える浮きを再現していない。OFF・ONとも眠ったのは494組のうち459組。
 - 隙間は、浮き（正の隙間）と沈み込み（描画Meshが床より0.02 mを超えて下）を分けて数える。どちらの方式でも沈み込みのない467組では、ONで5 mm以上小さくなった組が47、同じが398、大きくなった組が22。OFFで0.02 mを超えて浮いていた160組のうち、ONで0.02 m未満になったのは6組。
-- 沈み込みは、両方式に共通が24組、ONで新たに発生が2組、ONで解消が1組。新規の2組はどちらも両方式で眠り、隙間ほぼ0から約0.24 mの沈み込みに変わった。Convexが描画Meshを覆っていない箇所は切り詰めの前からあるが、切り詰めで最終姿勢が変わった理由は未確定で、切り詰めが原因でないとは言えない。新規の2組は「level 4.0 m」の破片916を方向21（+1 0 0）を下にして置いた組と、「level 5.0 m, then two slanted」の破片572を方向18（+1 −1 0）を下にして置いた組で、既定をONにする判断の未解決事項として残す（`eval3/report.txt` の末尾の集計）。
+- 沈み込みは、両方式に共通が24組、ONで新たに発生が2組、ONで解消が1組。新規の2組はどちらも両方式で眠り、隙間ほぼ0から約0.24 mの沈み込みに変わった。Convexが描画Meshを覆っていない箇所は切り詰めの前からあるが、切り詰めで最終姿勢が変わった理由は未確定で、切り詰めが原因でないとは言えない。新規の2組は「level 4.0 m」の破片916を方向21（+1 0 0）を下にして置いた組と、「level 5.0 m, then two slanted」の破片572を方向18（+1 −1 0）を下にして置いた組である（`eval3/report.txt` の末尾の集計）。この2組は、浮きを減らす効果との兼ね合いで許容する（TL、2026-11-21）。原因調査・修正・再採取は既定ONの完了条件に含めない。原因は未確定のままである。
 - 閾値を0.03 mにすると、沈み込みのない465組のうち、OFFで0.02 mを超えて浮いていた160組の25組が0.02 m未満になる（5 mm以上小さく77、大きく22）。沈み込みは共通22組、新規4組、解消3組。頂点の増加が大きい（Convex 1個で最大50→119、公開36体の合計7,931→9,630、+21 %）。
 - 費用（Editor、中央値／最大）：workerの探索0.210／0.369 ms、Clip 0.037／0.145 ms、Bake 0.233／0.538 ms。Mainは確認0.003、発行0.008、回収0.000、Mesh作成0.026、Hull確認0.024、公開0.032 ms（最大0.094 ms）。形状を差し替えると追加分割が同じ破片をもう一度試すので、分割の試行は37→64件に増えた（すべて分離なし、1件約0.15 ms）。分割の待ち時間（平均0.01〜0.1 ms）は変わらなかった。
 
@@ -2082,6 +2082,34 @@ Trim ONの試遊（2026-11-20、Release・Link、閾値0.1 m、約168,000フレ�
 - 分割候補の待ち（直した判定で）：試し直しと重なった通常の候補は80件で、すべて見つけたフレームで発行された（待ちは平均0.028 ms、最大0.047 ms）。重ならなかった通常の候補3,304件もすべて見つけたフレームで発行（平均0.025 ms、最大1.111 ms）。試し直しの候補1,689件も同じ。試行数の上限で候補が待たされたターンは、試し直しの有無にかかわらず0。この計測は走査が候補を見つけた後の待ちで、走査そのものが保留された時間は含まない。
 - 追加分割の試し直し：形状の差し替え3,616件のうち1,689件（分割の全発行5,073件に対する件数の割合で33 %）。どれも差し替え前の発行は1回。差し替え直前の判定と結果の対応は、分離なし→分離なし1,402、未完→未完228、分離なし→未完42、未完→分離なし11、分離なし→公開3、未完→公開3。旧形状で「未完」だった242件から3件が公開された。3回目は297件から0件だったが、「未完」の引き継ぎでも公開を失うことがこの回で観測された。差し替え後に発行のなかった1,927件のうち1,926件は、差し替え前にも発行がなく軽い印で外れていた破片である。差し替えから発行までは中央値2フレーム（95 %点3、最大8）・22.2 ms、発行から終了までは中央値1フレーム（最大5）・11.1 ms（最大55.8 ms。壁時計の時間）。
 - 頂点数（Bake入力、公開3,616体）：合計274,742→284,006（+3.4 %）。Rigidbody単位で増加2,216・同数440・減少960（−58〜+84）。切り詰め後のConvexの最大は107（上限128）、頂点上限による見送り0件。公開後も26方向の張り出しが0.1 mを超えて残ったのは622体で、うち575体に「全部が消える」見送りがあった。
+
+**採用と既定ON（2026-11-21、TL指示。D-265）。** Convex TrimをPC・Quest共通で既定ONにする。
+
+| 項目 | 決めたこと |
+| --- | --- |
+| 既定 | 起動引数なしで有効。`CutConvexTrimSettings.Default` と `CutWorldRoot.ReadConvexTrim` の両方を更新した。Editor、非VRのAndroid、Questも、Worldを作る同じ経路（`CutWorldRoot.MakeConvexTrim`）で既定ONになる。機種やビルドごとの分岐はない |
+| 切り戻し | `-zantetsuConvexTrimOff`。単独でも `-zantetsuConvexTrim` との併記でも、順序によらずOFFが優先する。Questでは起動Intentの `unity` extraで渡す（`Tools\Quest3s\Run-Play.ps1 -ConvexTrimOff`） |
+| 維持する条件 | 対象は当たり判定の箱の3辺のうち2辺が0.2 mを超える破片。張り出しの閾値0.1 m。探索は26方向。切るとConvexが全部消える候補は見送る。追加空間分割を優先する。寸法と閾値の引数（`-zantetsuConvexTrimSize`、`-zantetsuConvexTrimOverhang`）は残す |
+| 分割の試し直し | 形状の差し替え後に追加分割が同じ破片をもう一度試す動作は維持する。旧形状で「分離なし」だった破片（3回目6件、4回目3件）と「未完」だった破片（4回目3件）のどちらからも、試し直しで公開が成立している |
+| 許容した沈み込み | `tree_012` の評価で、ONのときだけ約0.24 m沈んだ2組（破片916の方向21、破片572の方向18）は、浮きを減らす効果との兼ね合いで許容する。原因は未確定のままで、原因調査・修正・再採取は完了条件に含めない |
+| 詳細採取 | 人力プレイの保存と試行ごとの記録（`-zantetsuFloatCollect`）は、引き続き明示指定のときだけ有効 |
+| 終了時の集計 | Worldの終了時に出すTrimの集計は、900文字以内の行に分けて出す（`CutConvexTrim.DescribeLines`。2行目以降は `convex trim (k of n): ` で始まる）。実機のログは1行を1,023文字で切る（Quest 3S、2026-11-17の採取で、1,382文字と1,494文字の集計行が1,023文字で届いた）。Trimの集計は1行だと約1,740文字あり、後半の所要時間と遅いターンの数が失われるためである。分けるのは区切り（`; `）の位置だけで、内容は1行のときと同じ |
+
+既定ONに合わせた試験の変更：
+
+- 起動の切替：引数なしON、明示ON、明示OFF、ON・OFF併記の両順（OFF優先）、寸法・閾値の引数との併用、読めない値のときに既定が残ることを確かめる（`ConvexTrimLaunch_IsOnWithoutAnArgument_...`）。引数のないWorldが起動行で既定ONを告げ、誰も有効化しなくても切り詰めを公開すること（`ConvexTrimLaunch_AWorldMadeWithoutAnArgument_...`）、明示OFFのWorldが何も見ず何も発行しないこと（`ConvexTrimLaunch_SwitchedOff_...`）も確かめる。
+- OFFの対照は「既定がOFFだから」ではなく、明示して無効にする。`tree_012` の比較のOFF側は、最初の切断の前にTrimを無効にし、実効OFF・発行0・公開0・確認0・形状の差し替え0を確かめてから `trim-off.json` を書く（結果のファイルにも、切断前後の実効設定と発行数・公開数を残す）。浮いた棒を準備する保存再生の試験、小道具の障害物地図の差し替え前後を見る試験、ほかのTrimの試験も、準備の段階で明示してOFFにし、試験が意図した箇所でONにする。
+- 実行中にOFFへ切り替えたWorldは、ONだった間の購読を続ける。その間にできた破片は確認待ちの列に入るが、OFFの間は確認も発行もされない。起動時からOFFのWorldは購読しない。保存した破片の「Trimの状態」は、前者では「Queued」、後者では確認の結果になる。
+- 追加分割の4つの試験は、分割だけの数（発行回数、Maintenanceの仕事数、形状が変わらないこと）を見ているので、明示してTrimをOFFにした（`SpatialSplitTimeline_APublishedAttempt_...`、`SplitComponents_AnUnknownCount_...`、`SplitComponents_AOnePieceSide_...`、`SplitCut_AMeshThatCannotBeMade_...`）。既定ONのままでは、Trimの公開で形状が差し替わって分割が試し直し、Trimの仕事がMaintenanceの数に加わるので、4つとも落ちた。明示OFFで4つとも通ることを確かめて、原因をTrimの既定ONと特定した。
+
+既定ONでの回帰（2026-11-21、Editor・PlayMode）：
+
+| 範囲 | 結果 |
+| --- | --- |
+| Trim・起動の切替・保存再生・再切断・障害物地図・`tree_012` の比較・保存済みの破片22件の再生 | 18件すべて成功。`tree_012` の比較は、OFF側が実効OFF・発行0・分割の発行37件、ON側が発行38件・公開28件・分割の発行64件で、既定を変える前と同じ数。保存済み22件の再生結果も前回と同じ |
+| 追加分割（名前に `Split` を含む試験） | 113件のうち成功101・失敗9・スキップ3。直近の112件（成功100・失敗9・スキップ3）に、その後追加した診断の試験1件を足した数と一致する。失敗9件とスキップ3件は直近と同じ試験 |
+| World全体の試験（Playerを終了させる試験7件を除く） | 522件のうち成功482・失敗16・スキップ24。失敗16件は、上の追加分割の9件と、ほかの7件。この7件はコミット済みのコード（`e1fb0b1e`）でも同じメッセージで落ちる。Playerを終了させる試験は、同じ実行の後続の試験を止める作りなので除いた |
+| ほかのFixture | 238件を実行し、失敗4件。3件はコミット済みのコードでも同じメッセージで落ちる。残る1件（群衆の準備が180秒以内に終わらない）は、全体をまとめて実行したときだけ落ち、単独では既定ONでも通る |
 
 ### 7.10 任意のLogicalFragment GC
 
@@ -2451,7 +2479,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-262 | Direct3D 12ネイティブ経路で、定数ブロックの組立てをPassごとに1回、影スライスの選別をフレームに1回のComputeにまとめ、主光源のカスケードのスライスをGPU選別とCasterPassで共有する | 4.5.8「Computeの集約と影カスケード行列の共有」のとおり。`VpNativeConstantCopy.compute` の `AssembleGlobalsBatch`、`VpInstanceCull.compute` の `CullShadowSlices`、`VpMainLightSlices`。定数組立ての集約とスライスの共有はVulkanにも適用する（Quest 3S実機で確認、`-zantetsuVpNativeUnbatchedConstants` で戻せる）。影スライスの集約はDirect3D 12だけの機能。Unity描画は変えない | 2026-11-11、TL指示（CPUサンプリングで見つけた上位2箇所を進める）。mitra-host・RX 5500 XT・Simulator 90 Hz・Release、CPUサンプリング付きの街歩きで変更前後を各1回：Mainの描画は1フレーム0.933→0.904 ms（ディスパッチ0.031→0.015 ms、カスケード行列0.021→0.003 ms）。同じビルドのUnity描画との描画部分の差は+0.147→+0.116 ms。記録 `C:\log\zantetsuken-vr\main-route-etw-20261111\RESULT.md`。番号は実装担当の付番でTL未確認 | 暫定採用（TL指示で実装、2026-11-11） |
 | D-263 | NPC片の追加分割を、保護つきペア判定（`pair-or-protect`、mode 2）とフォールバックのグラフ段の再利用（結合チェックによる段省略を含む）を既定にする。PC・Quest共通、全ビルド | 7.9.2「NPC片の保護つきペア判定と、フォールバックのグラフ段の再利用」のとおり。`CutWorldRoot.ReadNpcPairProtect`、`CutSpatialSplit.SetPairProtect`／`PairReuse`、`SpatialSplitGraph.Kept`／`ConvexesHeld`。切り戻し：`-zantetsuNpcPairProtectOff`（Bone-aware＋既存設定のフォールバックへ。ONとの併記はOFF優先）、`-zantetsuNpcPairReuseOff`（ペア判定は使い、再利用と段省略だけOFF）。結合チェックで段を省略した後はbentへ進まない（実行した段がUnfinishedのときは従来どおり進む）。NPC試行の自動採取は `-zantetsuNpcPairProtectOff` を明示する | 2026-11-14、TL指示。保存入力（3,640入力・28選択）で成立・配分・子の骨記録に差がなく成立の損失なし。終了理由の変化（Unfinished→NotFound）230件・8件。省略後にbentへ進まないのは費用を優先した探索方針で、他の入力ではbentによる分離機会が減る可能性を受け入れた。保存入力・暖機なし各1回の合計で、グラフ段に入ったフォールバックの判定時間 5,046.7→2,969.1 ms（Development Player。フレーム時間・Releaseでの効果は未計測）。Link・Quest 3Sの通常プレイで例外0 | 採用（TL指示、2026-11-14） |
 | D-264 | 切断された小道具片の障害物地図と、それに合わせた計画器設定（目標場1 m、復帰、低速Clipの待機費用、目標への誘導＋断念。確定済み部分の再検査は無効）を既定にする。窓の余白は20 m。PC・Quest共通、全ビルド | 20.7のとおり。`PropObstacleSource`／`PropObstacleMap`／`PropObstacleWindow`、`MobPlanCrowd.BeginProps`、`PlannerConfig.ApplyPropTrial`、`CutFragmentLifetime.MarkPropLineage`。切り戻し：`-zantetsuPropObstaclesOff`（地図なし・従来の計画器）。`-zantetsuPropObstacles` は受け付けるが効果なし | 2026-11-17、TL指示。保存入力の再生で、地図ONは1.7 m断面内の時間を84 %減らし、誘導＋断念は到達数を保って立ち止まっての回転を12 %減らした（断面内の時間の増加は受け入れた）。PC（Link、Release／Development）とQuest 3S（Release）の通常プレイで例外0・全版公開・利用者所見は問題なし。侵入は残る（計画の確定済み部分、窓の外、1.7 mより低い片）。Quest 3SのMain収集の最大7.674 ms／公開の遅れの最大66.7 msは原因未特定。地図OFFとの性能比較・全体の性能判定は行っていない | 採用（TL指示、2026-11-17） |
-| D-265 | 大型破片のConvexを、同じ破片のMeshを片側にすべて残せる平面で切り詰める任意処理（Convex Trim）を評価用に設ける。既定OFF | 7.9.9のとおり。`CutConvexTrim`、`ConvexTrimSearch`、`PhysicsOwnerShape.Trimmed`、`PhysicsOwnerRegistry.ReplaceShape`、`CutSpatialSplit.LeavesRoomForLowerPriority`。有効化は `-zantetsuConvexTrim`（`-zantetsuConvexTrimOff` が優先）。人力プレイの保存と再生は `FloatCollector`（`-zantetsuFloatCollect`）、`ConvexTrimCapture`、`ConvexTrimCaptureReplay` | 2026-11-20、TL指示。`tree_012` 単体（494組）では26方向の張り出しは減った（例 0.413→0.086 m、頂点159→168）が、床との隙間0.1 m以上が再現しなかった。人力プレイで保存した浮き（破片12個、隙間0.035〜0.348 m）の再生では、8個が0.02 m未満まで下がり、4個は浮きが残り、定義した「新たな沈み込み」は0個だった。Trim ONの試遊（Release・Link）では試行2,041件のうち1,650件を公開し、失敗0件、Mainの1フレーム合計は中央値0.023 ms・最大2.927 ms。残った浮きとして保存された2件はどちらも公開済みで、形状に張り出しが残っていた。Convexが丸ごと平面の外にあって見送る候補は現仕様のまま残す。番号は TL 未確認 | 評価中（既定OFF） |
+| D-265 | 大型破片のConvexを、同じ破片のMeshを片側にすべて残せる平面で切り詰める（Convex Trim）。PC・Quest共通、全ビルドで既定ON | 7.9.9のとおり。`CutConvexTrim`、`ConvexTrimSearch`、`PhysicsOwnerShape.Trimmed`、`PhysicsOwnerRegistry.ReplaceShape`、`CutSpatialSplit.LeavesRoomForLowerPriority`。引数なしで有効（`CutConvexTrimSettings.Default`、`CutWorldRoot.ReadConvexTrim`）。切り戻しは `-zantetsuConvexTrimOff`（`-zantetsuConvexTrim` との併記でも順序によらず優先）。対象は3辺のうち2辺が0.2 m超、閾値0.1 m、26方向、全部が消える候補は見送り、追加空間分割を優先、形状差し替え後の分割の試し直しは維持。人力プレイの保存と再生（`FloatCollector`、`-zantetsuFloatCollect`、`ConvexTrimCapture`、`ConvexTrimCaptureReplay`）は明示指定のときだけ | 2026-11-20にTL指示で評価用（既定OFF）として導入し、2026-11-21にTL指示で採用・既定ONとした。`tree_012` 単体（494組）では26方向の張り出しは減った（例 0.413→0.086 m、頂点159→168）が、床との隙間0.1 m以上は再現しなかった。人力プレイで保存した浮き（破片12個、隙間0.035〜0.348 m）の再生では、8個が0.02 m未満まで下がり、4個は浮きが残った。Trim ONの試遊（Release・Link、4回）では失敗・Cook不成立0件で、試遊の所見は「浮きは減った」。4回目（133,771フレーム）は、0.5 ms以上のターンが11、最大1.973 msで、その11フレームに長引いたフレームはなかった。`tree_012` の評価でONのときだけ約0.24 m沈んだ2組は、浮きを減らす効果との兼ね合いで許容した（原因は未確定。調査・修正・再採取は完了条件に含めない）。Questの実機費用は、既定化の時点では未測定 | 採用・既定ON（2026-11-21） |
 
 ## 13. 未決事項
 

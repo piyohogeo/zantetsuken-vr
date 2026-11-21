@@ -24,6 +24,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(CutSpatialSplit.TimelineObserve, Is.True, "the timeline is on by default");
             Assert.That(DispatchObservation.Enabled, Is.True);
             CutWorldRoot root = NewWorld(out Shader _);
+            // The dispatcher's tallies of this case are the split's own: the convex trim (on by default, D-265) is
+            // Maintenance work of the same dispatcher and would be counted beside the split's one attempt.
+            TrimOff(root);
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
